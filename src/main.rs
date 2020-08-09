@@ -1,4 +1,5 @@
 use directories::ProjectDirs;
+use python_requirements::Requirement;
 use regex::Regex;
 use std::fmt::Write;
 use std::{
@@ -171,6 +172,53 @@ fn register_distribution_files(
     copy_directory(&dist_info, &target);
 }
 
+fn install_and_register_distributions(distribs: Vec<Requirement>) -> Result<(), Box<dyn Error>> {
+    std::fs::write(
+        "__tmp_requirements.txt",
+        serialize_requirements_txt(distribs),
+    )?;
+    let tmp_dir = tempdir::TempDir::new("")?;
+    let output = std::process::Command::new("python3")
+        .args(&[
+            "-m",
+            "pip",
+            "install",
+            "--no-deps",
+            "--no-compile",
+            "-r",
+            "__tmp_requirements.txt",
+            "-t",
+            tmp_dir.as_ref().as_os_str().to_str().unwrap(),
+            "-v",
+            "--no-cache-dir",
+        ])
+        .output()?;
+
+    let pip_log = String::from_utf8(output.stdout)?;
+
+    let new_distribs = newly_installed_distributions(pip_log);
+
+    let proj_dir = proj_dir().unwrap();
+    let data_dir = proj_dir.data_dir();
+
+    let package_files = data_dir.join("package_files");
+    let dist_infos = data_dir.join("dist-infos");
+    std::fs::create_dir_all(&package_files)?;
+    std::fs::create_dir_all(&dist_infos)?;
+
+    for distrib in new_distribs {
+        register_distribution_files(
+            &package_files,
+            &dist_infos,
+            tmp_dir.as_ref(),
+            &distrib.name,
+            &distrib.version,
+            distrib.sha,
+        );
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     // TODO: create on demand
     ensure_project_dir_exists()?;
@@ -194,49 +242,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 })
                 .collect::<Vec<_>>();
 
-            std::fs::write(
-                "__tmp_requirements.txt",
-                serialize_requirements_txt(requirements),
-            )?;
-            let tmp_dir = tempdir::TempDir::new("")?;
-            let output = std::process::Command::new("python3")
-                .args(&[
-                    "-m",
-                    "pip",
-                    "install",
-                    "--no-deps",
-                    "--no-compile",
-                    "-r",
-                    "__tmp_requirements.txt",
-                    "-t",
-                    tmp_dir.as_ref().as_os_str().to_str().unwrap(),
-                    "-v",
-                    "--no-cache-dir",
-                ])
-                .output()?;
-
-            let pip_log = String::from_utf8(output.stdout)?;
-
-            let new_distribs = newly_installed_distributions(pip_log);
-
-            let proj_dir = proj_dir().unwrap();
-            let data_dir = proj_dir.data_dir();
-
-            let package_files = data_dir.join("package_files");
-            let dist_infos = data_dir.join("dist-infos");
-            std::fs::create_dir_all(&package_files)?;
-            std::fs::create_dir_all(&dist_infos)?;
-
-            for distrib in new_distribs {
-                register_distribution_files(
-                    &package_files,
-                    &dist_infos,
-                    tmp_dir.as_ref(),
-                    &distrib.name,
-                    &distrib.version,
-                    distrib.sha,
-                );
-            }
+            install_and_register_distributions(requirements)?;
         }
         Command::New { path } => {
             let path = path.unwrap_or(DEFAULT_VIRTPY_PATH.into());
