@@ -1,9 +1,8 @@
 use directories::ProjectDirs;
-use fs_extra::file::CopyOptions;
 use regex::Regex;
 use std::fmt::Write;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     error::Error,
     path::{Path, PathBuf},
 };
@@ -122,10 +121,6 @@ fn register_distribution_files(
     //let package_files = data_dir.join("package_files");
     let dist_info_foldername = format!("{}-{}.dist-info", distribution_name, version);
     let dist_info = install_folder.join(&dist_info_foldername);
-    let copy_options = CopyOptions {
-        skip_exist: true,
-        ..CopyOptions::new()
-    };
 
     println!("dist-info: {}", dist_info.display());
 
@@ -172,18 +167,7 @@ fn register_distribution_files(
     if target.exists() {
         return;
     }
-    // should be move
-    /*
-    fs_extra::dir::move_dir(
-        &dist_info,
-        target,
-        &fs_extra::dir::CopyOptions {
-            copy_inside: true,
-            ..fs_extra::dir::CopyOptions::new()
-        },
-    )
-    .unwrap_or_else(|err| panic!("{}", err));
-    */
+    // TODO: should try to move instead of copy, if possible
     copy_directory(&dist_info, &target);
 }
 
@@ -210,14 +194,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 })
                 .collect::<Vec<_>>();
 
-            //let mut f = std::fs::File::create("__tmp_requirements.txt")?;
             std::fs::write(
                 "__tmp_requirements.txt",
                 serialize_requirements_txt(requirements),
             )?;
             let tmp_dir = tempdir::TempDir::new("")?;
-            //let tmp_dir = Path::new("/tmp/virtpy");
-            //std::fs::create_dir(tmp_dir);
             let output = std::process::Command::new("python3")
                 .args(&[
                     "-m",
@@ -284,29 +265,14 @@ struct Distribution {
 }
 
 fn newly_installed_distributions(pip_log: String) -> Vec<Distribution> {
-    //let mut url_to_sha_and_version = HashMap::new();
     let mut installed_distribs = Vec::new();
 
-    //let found_url_pattern =
-    //    Regex::new(r"(https://.*?)/([a-zA-Z0-9_]+)-\d.*#sha256=([0-9a-fA-F]{64}) .* version: ([^\s]+)").unwrap();
     let install_url_pattern = Regex::new(
         r"Added ([\w_-]+)==(.*) from (https://[^\s]+)/([\w_]+)-[\w_\-\.]+#(sha256=[0-9a-fA-F]{64})",
     )
     .unwrap();
 
     for line in pip_log.lines() {
-        /*
-        if let Some(captures) = found_url_pattern.captures(line) {
-            let url = captures.get(1).unwrap().as_str();
-            let sha = captures.get(2).unwrap().as_str();
-            let version = captures.get(3).unwrap().as_str();
-
-            url_to_sha_and_version.insert(url, (sha, version));
-        } else if line.contains("#sha256=") && line.contains("Found link") {
-            panic!("1: {}", line);
-        }
-        */
-
         if let Some(install_captures) = install_url_pattern.captures(line) {
             let get = |idx| install_captures.get(idx).unwrap().as_str().to_owned();
             // false name, may not have right case
@@ -323,21 +289,6 @@ fn newly_installed_distributions(pip_log: String) -> Vec<Distribution> {
         }
     }
 
-    /*
-    installed_distribs
-        .into_iter()
-        .map(|(url, name, version1)| {
-            let sha_start = url.
-            let (sha, version2) = url_to_sha_and_version[url];
-            assert_eq!(version1, version2);
-            Distribution {
-                name: name.to_owned(),
-                version: version1.to_owned(),
-                sha: sha.to_owned(),
-            }
-        })
-        .collect::<Vec<_>>()
-    */
     installed_distribs
 }
 
