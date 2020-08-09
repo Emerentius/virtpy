@@ -3,7 +3,7 @@ use python_requirements::Requirement;
 use regex::Regex;
 use std::fmt::Write;
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     error::Error,
     path::{Path, PathBuf},
 };
@@ -28,7 +28,15 @@ enum Command {
 const DEFAULT_VIRTPY_PATH: &str = ".virtpy";
 const INSTALLED_DISTRIBUTIONS: &str = "installed_distributions.json";
 
-fn python_version() -> Result<String, Box<dyn Error>> {
+// probably missing prereleases and such
+// TODO: check official scheme
+struct PythonVersion {
+    major: i32,
+    minor: i32,
+    patch: i32,
+}
+
+fn python_version() -> Result<PythonVersion, Box<dyn Error>> {
     let mut path = PathBuf::from(DEFAULT_VIRTPY_PATH);
     path.push("bin");
     path.push("python3");
@@ -39,34 +47,64 @@ fn python_version() -> Result<String, Box<dyn Error>> {
         .unwrap()
         .trim()
         .to_owned();
-    Ok(version)
+    let captures = regex::Regex::new(r"Python (\d+)\.(\d+)\.(\d+)")
+        .unwrap()
+        .captures(&version)
+        .unwrap();
+
+    let get_num = |idx: usize| captures[idx].parse::<i32>().unwrap();
+    Ok(PythonVersion {
+        major: get_num(1),
+        minor: get_num(2),
+        patch: get_num(3),
+    })
 }
 
 #[derive(Clone, Hash, Debug, PartialEq, Eq)]
 pub struct DependencyHash(String);
 
-fn already_installed(python_version: String) -> Result<HashSet<DependencyHash>, Box<dyn Error>> {
-    let proj_dir = proj_dir().unwrap();
-    let data_dir = proj_dir.data_dir();
-    // FIXME: this file may not exist
+// The same distribution installed with different python versions
+// might result in incompatible files.
+// This implementation used a separate file in which the distribution sha could be mapped
+// to a specific dist-info.
+//
+// fn already_installed(python_version: String) -> Result<HashSet<DependencyHash>, Box<dyn Error>> {
+//     let proj_dir = proj_dir().unwrap();
+//     let data_dir = proj_dir.data_dir();
+//     // FIXME: this file may not exist
 
-    let data = std::fs::read_to_string(data_dir.join(INSTALLED_DISTRIBUTIONS))?;
-    let mut json_ = json::parse(&data)?;
-    let hashes = match &mut json_[&python_version] {
-        json::JsonValue::Array(values) => values,
-        _ => unreachable!(),
-    };
-    hashes
-        .into_iter()
-        .map(|val| val.take_string().map(crate::DependencyHash))
-        .collect::<Option<HashSet<_>>>()
-        .ok_or_else(|| {
-            format!(
-                "{} contains non-hash values for {}",
-                INSTALLED_DISTRIBUTIONS, python_version
-            )
-            .into()
+//     let data = std::fs::read_to_string(data_dir.join(INSTALLED_DISTRIBUTIONS))?;
+//     let mut json_ = json::parse(&data)?;
+//     let hashes = match &mut json_[&python_version] {
+//         json::JsonValue::Array(values) => values,
+//         _ => unreachable!(),
+//     };
+//     hashes
+//         .into_iter()
+//         .map(|val| val.take_string().map(crate::DependencyHash))
+//         .collect::<Option<HashSet<_>>>()
+//         .ok_or_else(|| {
+//             format!(
+//                 "{} contains non-hash values for {}",
+//                 INSTALLED_DISTRIBUTIONS, python_version
+//             )
+//             .into()
+//         })
+// }
+
+fn already_installed(
+    // python_version: String,
+    dist_infos: &Path,
+) -> Result<HashMap<DependencyHash, PathBuf>, Box<dyn Error>> {
+    std::fs::read_dir(dist_infos)?
+        .map(|entry_res| {
+            let dir_entry = entry_res?;
+            let filename = dir_entry.file_name();
+            let filename_str = filename.clone().into_string().unwrap();
+            let hash = filename_str.split(",").last().unwrap();
+            Ok((DependencyHash(hash.to_owned()), dist_infos.join(filename)))
         })
+        .collect()
 }
 
 fn proj_dir() -> Option<ProjectDirs> {
@@ -79,7 +117,7 @@ fn ensure_project_dir_exists() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn serialize_requirements_txt(reqs: Vec<python_requirements::Requirement>) -> String {
+fn serialize_requirements_txt(reqs: &[Requirement]) -> String {
     let mut output = String::new();
     for req in reqs {
         let _ = write!(&mut output, "{}=={}", req.name, req.version);
@@ -89,7 +127,7 @@ fn serialize_requirements_txt(reqs: Vec<python_requirements::Requirement>) -> St
         let _ = writeln!(&mut output, " \\");
         let hashes = req
             .available_hashes
-            .into_iter()
+            .iter()
             .map(|hash| format!("    --hash={}", hash.0))
             .collect::<Vec<_>>();
         let _ = writeln!(&mut output, "{}", hashes.join(" \\\n"));
@@ -151,7 +189,7 @@ fn register_distribution_files(
         let path = Path::new(path);
         let hash = components.next().unwrap();
         debug_assert_ne!(hash, "");
-        // TODO: docs say rename fails if from and to are on different filesystems.
+        // TODO: use rename, if on same filesystem
         std::fs::copy(install_folder.join(path), package_files_target.join(hash)).unwrap();
     }
 
@@ -172,7 +210,11 @@ fn register_distribution_files(
     copy_directory(&dist_info, &target);
 }
 
-fn install_and_register_distributions(distribs: Vec<Requirement>) -> Result<(), Box<dyn Error>> {
+fn install_and_register_distributions(
+    distribs: &[Requirement],
+    package_files: &Path,
+    dist_infos: &Path,
+) -> Result<(), Box<dyn Error>> {
     std::fs::write(
         "__tmp_requirements.txt",
         serialize_requirements_txt(distribs),
@@ -198,14 +240,6 @@ fn install_and_register_distributions(distribs: Vec<Requirement>) -> Result<(), 
 
     let new_distribs = newly_installed_distributions(pip_log);
 
-    let proj_dir = proj_dir().unwrap();
-    let data_dir = proj_dir.data_dir();
-
-    let package_files = data_dir.join("package_files");
-    let dist_infos = data_dir.join("dist-infos");
-    std::fs::create_dir_all(&package_files)?;
-    std::fs::create_dir_all(&dist_infos)?;
-
     for distrib in new_distribs {
         register_distribution_files(
             &package_files,
@@ -230,7 +264,15 @@ fn main() -> Result<(), Box<dyn Error>> {
             let requirements = std::fs::read_to_string(requirements)?;
             let requirements = python_requirements::read_requirements_txt(requirements);
 
-            let existing_deps = already_installed(python_version)?;
+            let proj_dir = proj_dir().unwrap();
+            let data_dir = proj_dir.data_dir();
+
+            let package_files = data_dir.join("package_files");
+            let dist_infos = data_dir.join("dist-infos");
+            std::fs::create_dir_all(&package_files)?;
+            std::fs::create_dir_all(&dist_infos)?;
+
+            let existing_deps = already_installed(&dist_infos)?;
 
             let new_deps = requirements
                 .clone()
@@ -238,11 +280,19 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .filter(|req| {
                     req.available_hashes
                         .iter()
-                        .any(|hash| existing_deps.contains(hash))
+                        .any(|hash| existing_deps.contains_key(hash))
                 })
                 .collect::<Vec<_>>();
 
-            install_and_register_distributions(requirements)?;
+            //install_and_register_distributions(&requirements, &package_files, &dist_infos)?;
+            install_and_register_distributions(&new_deps, &package_files, &dist_infos)?;
+
+            link_requirements_into_virtpy(
+                &format!("python{}.{}", python_version.major, python_version.minor),
+                &dist_infos,
+                &package_files,
+                &requirements,
+            )?;
         }
         Command::New { path } => {
             let path = path.unwrap_or(DEFAULT_VIRTPY_PATH.into());
@@ -257,6 +307,104 @@ fn main() -> Result<(), Box<dyn Error>> {
                 println!("failed to create virtpy {}: {}", path, error);
                 std::process::exit(1);
             }
+        }
+    }
+
+    Ok(())
+}
+
+fn symlink_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        std::os::unix::fs::symlink(from, to)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::os::windows::fs::symlink_dir(from, to)
+    }
+}
+
+fn symlink_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        std::os::unix::fs::symlink(from, to)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::os::windows::fs::symlink_file(from, to)
+    }
+}
+
+fn link_requirements_into_virtpy(
+    python_version: &str,
+    dist_infos: &Path,
+    package_files: &Path,
+    requirements: &[Requirement],
+) -> Result<(), Box<dyn Error>> {
+    let virtpy_dir = Path::new(".virtpy");
+    let site_packages = virtpy_dir.join(format!("lib/{}/site-packages", python_version));
+
+    let existing_deps = already_installed(&dist_infos)?;
+    "sha256=a6237df3c32ccfaee4fd201c8f5f9d9df619b93121d01353a64a73ce8c6ef9a8";
+    "sha256:a6237df3c32ccfaee4fd201c8f5f9d9df619b93121d01353a64a73ce8c6ef9a8";
+    for distribution in requirements {
+        // find compatible hash
+        // TODO: version compatibility check. Right now it just picks the first one
+        //       that's already installed
+        let dist_info_path = match distribution.available_hashes.iter().find_map(|hash| {
+            // println!("searching installed dep, hash = {}", hash.0);
+            //       installation uses <hash_type>=<value>
+            //       requirements.txt <hash_type>:<value>
+            // TODO: split hash type and hash into separate values
+            let hash = DependencyHash(hash.0.replace(":", "="));
+            existing_deps.get(&hash)
+        }) {
+            Some(path) => path,
+            None => {
+                println!(
+                    "failed to find dist_info for distribution: {:?}",
+                    distribution
+                );
+                continue;
+            }
+        };
+
+        let dist_info_foldername =
+            format!("{}-{}.dist-info", distribution.name, distribution.version);
+        println!(
+            "symlinking dist info, src exists = {}, path = {}",
+            dist_info_path.exists(),
+            dist_info_path.display()
+        );
+        let target = site_packages.join(dist_info_foldername);
+        //std::fs::create_dir(&target);
+        if !target.exists() {
+            symlink_dir(dist_info_path, &target).unwrap();
+        }
+
+        let record = std::fs::read_to_string(dist_info_path.join("RECORD")).unwrap();
+        for (path, hash) in record
+            .lines()
+            .map(|line| {
+                let mut parts = line.split(",");
+                let mut next = || parts.next().unwrap();
+                let path = next();
+                let hash = next();
+                // let filesize = next();
+                (path, hash)
+            })
+            .filter(|(path, _)| {
+                path.split("/")
+                    .next()
+                    .map_or(true, |first| !first.ends_with(".dist-info"))
+            })
+        {
+            let dest = site_packages.join(path);
+            let dir = dest.parent().unwrap();
+            std::fs::create_dir_all(&dir).unwrap();
+            symlink_file(&package_files.join(hash), &dest).unwrap();
         }
     }
 
