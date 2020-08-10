@@ -353,8 +353,13 @@ fn link_requirements_into_virtpy(
     let site_packages = virtpy_dir.join(format!("lib/{}/site-packages", python_version));
 
     let existing_deps = already_installed(&dist_infos)?;
-    "sha256=a6237df3c32ccfaee4fd201c8f5f9d9df619b93121d01353a64a73ce8c6ef9a8";
-    "sha256:a6237df3c32ccfaee4fd201c8f5f9d9df619b93121d01353a64a73ce8c6ef9a8";
+    let ignore_target_exists = |err: std::io::Error| {
+        if err.kind() == std::io::ErrorKind::AlreadyExists {
+            Ok(())
+        } else {
+            Err(err)
+        }
+    };
     for distribution in requirements {
         // find compatible hash
         // TODO: version compatibility check. Right now it just picks the first one
@@ -386,9 +391,9 @@ fn link_requirements_into_virtpy(
         );
         let target = site_packages.join(dist_info_foldername);
         //std::fs::create_dir(&target);
-        if !target.exists() {
-            symlink_dir(dist_info_path, &target).unwrap();
-        }
+        symlink_dir(dist_info_path, &target)
+            .or_else(ignore_target_exists)
+            .unwrap();
 
         let record = std::fs::read_to_string(dist_info_path.join("RECORD")).unwrap();
         for (path, hash) in record
@@ -410,7 +415,10 @@ fn link_requirements_into_virtpy(
             let dest = site_packages.join(path);
             let dir = dest.parent().unwrap();
             std::fs::create_dir_all(&dir).unwrap();
-            symlink_file(&package_files.join(hash), &dest).unwrap();
+
+            symlink_file(&package_files.join(hash), &dest)
+                .or_else(ignore_target_exists)
+                .unwrap();
         }
     }
 
