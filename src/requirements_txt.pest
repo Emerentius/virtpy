@@ -3,7 +3,7 @@
 // Full format specs: https://pip.pypa.io/en/stable/reference/pip_install/#requirements-file-format
 
 requirements = { (requirement ~ (NEWLINE ~ requirement)*)? ~ NEWLINE? ~ &EOI }
-requirement = { ident ~ "==" ~ version ~ system_condition ~ hash* }
+requirement = { ident ~ "==" ~ version ~ ";"? ~ system_condition ~ hash* }
 
 // distributions may contain hyphens ("-"), but module names
 // don't
@@ -11,7 +11,7 @@ ident = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_" | "-")* }
 hash = ${ "--hash=" ~ sha_hash }
 sha_hash = { "sha256:" ~ ASCII_HEX_DIGIT{64} }
 
-system_condition = { (";" ~ "sys_platform" ~ ("==" | "!=") ~ system)? }
+system_condition = { ("sys_platform" ~ ("==" | "!=") ~ system)? }
 system = @{ "\"" ~ ASCII_ALPHANUMERIC+ ~ "\"" }
 
 // https://www.python.org/dev/peps/pep-0440/#public-version-identifiers

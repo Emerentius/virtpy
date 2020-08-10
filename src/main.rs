@@ -121,8 +121,8 @@ fn serialize_requirements_txt(reqs: &[Requirement]) -> String {
     let mut output = String::new();
     for req in reqs {
         let _ = write!(&mut output, "{}=={}", req.name, req.version);
-        if req.sys_condition != "" {
-            let _ = write!(&mut output, "{}", req.sys_condition);
+        if let Some(sys_condition) = req.sys_condition.as_ref() {
+            let _ = write!(&mut output, "{}", sys_condition);
         }
         let _ = writeln!(&mut output, " \\");
         let hashes = req
@@ -262,7 +262,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Command::Add { requirements } => {
             let python_version = python_version()?;
             let requirements = std::fs::read_to_string(requirements)?;
-            let requirements = python_requirements::read_requirements_txt(requirements);
+            let requirements = python_requirements::read_requirements_txt(&requirements);
 
             let proj_dir = proj_dir().unwrap();
             let data_dir = proj_dir.data_dir();
@@ -287,6 +287,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             //install_and_register_distributions(&requirements, &package_files, &dist_infos)?;
             install_and_register_distributions(&new_deps, &package_files, &dist_infos)?;
 
+            let mut requirements = requirements;
+            requirements.retain(|req| {
+                req.sys_condition
+                    .as_ref()
+                    .map_or(true, |cond| cond.matches_system())
+            });
             link_requirements_into_virtpy(
                 &format!("python{}.{}", python_version.major, python_version.minor),
                 &dist_infos,
