@@ -189,6 +189,7 @@ fn register_distribution_files(
         // a regular environment, so it contains leading ".."s that need to
         // be stripped.
 
+        // FIXME: replace manual parsing with records()
         let mut components = line.split(",");
         // assuming paths in RECORD use forward slashes even on windows
         // TODO: verify
@@ -215,6 +216,49 @@ fn register_distribution_files(
     }
     // TODO: should try to move instead of copy, if possible
     copy_directory(&dist_info, &target);
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct InstalledFile {
+    path: PathBuf,
+    hash: String,
+    filesize: u64,
+}
+
+// returns all files recorded in RECORDS, except for .dist-info files
+fn records(record: &Path) -> csv::Result<impl Iterator<Item = csv::Result<InstalledFile>>> {
+    Ok(csv::ReaderBuilder::new()
+        .has_headers(false)
+        .from_path(record)?
+        .into_records()
+        .filter_map(|record| {
+            let record = match record {
+                Ok(rec) => rec,
+                Err(err) => return Some(Err(err)),
+            };
+            let path = &record[0];
+            let path = Path::new(path);
+            // this isn't true, the path may be absolute but that's not supported yet
+            assert!(path.is_relative());
+            let first = path
+                .components()
+                .find_map(|comp| match comp {
+                    std::path::Component::Normal(path) => Some(path),
+                    _ => None,
+                })
+                .unwrap();
+            let is_dist_info = first
+                .to_owned()
+                .into_string()
+                .unwrap()
+                .ends_with(".dist-info");
+
+            if is_dist_info {
+                return None;
+            }
+
+            Some(record.deserialize(None))
+        }))
 }
 
 fn install_and_register_distributions(
@@ -445,28 +489,25 @@ fn link_requirements_into_virtpy(
             .or_else(ignore_target_exists)
             .unwrap();
 
-        let record = std::fs::read_to_string(dist_info_path.join("RECORD")).unwrap();
-        for (path, hash) in record
-            .lines()
-            .map(|line| {
-                let mut parts = line.split(",");
-                let mut next = || parts.next().unwrap();
-                let path = next();
-                let hash = next();
-                // let filesize = next();
-                (path, hash)
-            })
-            .filter(|(path, _)| {
-                path.split("/")
-                    .next()
-                    .map_or(true, |first| !first.ends_with(".dist-info"))
-            })
+        for record in records(&dist_info_path.join("RECORD"))
+            .unwrap()
+            .map(Result::unwrap)
         {
-            let dest = site_packages.join(path);
-            let dir = dest.parent().unwrap();
-            std::fs::create_dir_all(&dir).unwrap();
+            let dest = match remove_leading_parent_dirs(&record.path) {
+                Ok(path) => {
+                    let toplevel_dirs = ["bin", "Scripts", "include", "lib", "lib64", "share"];
+                    assert!(toplevel_dirs.iter().any(|dir| path.starts_with(dir)));
+                    virtpy_dir.join(path)
+                }
+                Err(path) => {
+                    let dest = site_packages.join(path);
+                    let dir = dest.parent().unwrap();
+                    std::fs::create_dir_all(&dir).unwrap();
+                    dest
+                }
+            };
 
-            symlink_file(&package_files.join(hash), &dest)
+            symlink_file(&package_files.join(record.hash), &dest)
                 .or_else(ignore_target_exists)
                 .unwrap();
         }
@@ -475,6 +516,18 @@ fn link_requirements_into_virtpy(
     Ok(())
 }
 
+fn remove_leading_parent_dirs(mut path: &Path) -> Result<&Path, &Path> {
+    let mut anything_removed = false;
+    while let Ok(stripped_path) = path.strip_prefix("..") {
+        path = stripped_path;
+        anything_removed = true;
+    }
+    if anything_removed {
+        Ok(path)
+    } else {
+        Err(path)
+    }
+}
 #[derive(Debug)]
 struct Distribution {
     name: String,
@@ -518,3 +571,16 @@ fn test_pip_log_parsing() {
     panic!("{:?}", distribs);
 }
 */
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_records() {
+        records("test_files/RECORD".as_ref())
+            .unwrap()
+            .map(Result::unwrap)
+            .for_each(drop);
+    }
+}
