@@ -30,10 +30,13 @@ enum Command {
     Install {
         package: String,
     },
+    Uninstall {
+        package: String,
+    },
 }
 
 const DEFAULT_VIRTPY_PATH: &str = ".virtpy";
-const INSTALLED_DISTRIBUTIONS: &str = "installed_distributions.json";
+//const INSTALLED_DISTRIBUTIONS: &str = "installed_distributions.json";
 
 // probably missing prereleases and such
 // TODO: check official scheme
@@ -401,6 +404,19 @@ fn main() -> Result<(), Box<dyn Error>> {
                 &requirements,
             )?;
         }
+        Command::Uninstall { package } => {
+            // FIXME: remove duplication of project dir code
+            let proj_dir = proj_dir().unwrap();
+            let data_dir = proj_dir.data_dir();
+            let installations = data_dir.join("installations");
+
+            std::fs::create_dir_all(&installations)?;
+
+            let package_folder = installations.join(&format!("{}.virtpy", package));
+            println!("{}", package_folder.display());
+            assert!(!package_folder.exists() || package_folder.join("pyvenv.cfg").exists());
+            std::fs::remove_dir_all(package_folder).or_else(ignore_target_doesnt_exist)?;
+        }
     }
 
     Ok(())
@@ -447,13 +463,6 @@ fn link_requirements_into_virtpy(
     let site_packages = virtpy_dir.join(format!("lib/{}/site-packages", python_version));
 
     let existing_deps = already_installed(&dist_infos)?;
-    let ignore_target_exists = |err: std::io::Error| {
-        if err.kind() == std::io::ErrorKind::AlreadyExists {
-            Ok(())
-        } else {
-            Err(err)
-        }
-    };
     for distribution in requirements {
         // find compatible hash
         // TODO: version compatibility check. Right now it just picks the first one
@@ -528,6 +537,23 @@ fn remove_leading_parent_dirs(mut path: &Path) -> Result<&Path, &Path> {
         Err(path)
     }
 }
+
+fn ignore_target_doesnt_exist(err: std::io::Error) -> std::io::Result<()> {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        Ok(())
+    } else {
+        Err(err)
+    }
+}
+
+fn ignore_target_exists(err: std::io::Error) -> std::io::Result<()> {
+    if err.kind() == std::io::ErrorKind::AlreadyExists {
+        Ok(())
+    } else {
+        Err(err)
+    }
+}
+
 #[derive(Debug)]
 struct Distribution {
     name: String,
