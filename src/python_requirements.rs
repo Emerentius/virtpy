@@ -1,4 +1,5 @@
 use pest::Parser;
+use std::process::Command;
 
 #[derive(pest_derive::Parser)]
 #[grammar = "requirements_txt.pest"] // relative to src
@@ -122,6 +123,54 @@ pub fn read_requirements_txt(data: &str) -> Vec<Requirement> {
         .into_inner()
         .map(Requirement::from_token)
         .collect()
+}
+
+// Meant for installation of single packages with executables
+// into a self-contained venv, like pipx does.
+pub fn get_requirements(package: &str) -> Vec<Requirement> {
+    let tmp_dir = tempdir::TempDir::new("virtpy").unwrap();
+
+    Command::new("poetry")
+        .current_dir(&tmp_dir)
+        .args(&["init", "-n"])
+        .status()
+        .expect("failed to run poetry init");
+
+    // TODO: copy in a valid, minimal venv with pip.
+    //       Otherwise poetry will create one (even though it's never used)
+    //       and it will take multiple seconds.
+
+    let toml_path = tmp_dir.as_ref().join("pyproject.toml");
+    let mut doc = std::fs::read_to_string(&toml_path)
+        .unwrap()
+        .parse::<toml_edit::Document>()
+        .unwrap();
+
+    doc["tool"]["poetry"]["dependencies"][package] = toml_edit::value("*");
+    std::fs::write(&toml_path, doc.to_string()).expect("failed to write pyproject.toml");
+
+    // Generating the poetry.lock file without actually installing anything.
+    // This still creates a useless venv that won't be used for anything.
+    //
+    // Alternatively, just calling `poetry export` will also create the lockfile without
+    // installing anything if it doesn't exist, but it also
+    // emits a message that it does so that can not be silenced, prepended to the actual
+    // desired output.
+    Command::new("poetry")
+        .current_dir(&tmp_dir)
+        .args(&["update", "--lock"])
+        .status()
+        .expect("failed to run poetry update");
+
+    let output = Command::new("poetry")
+        .current_dir(&tmp_dir)
+        .args(&["export", "-f", "requirements.txt"])
+        .output()
+        .expect("failed to run poetry export")
+        .stdout;
+    let output = std::str::from_utf8(&output).unwrap();
+
+    read_requirements_txt(&output)
 }
 
 #[cfg(test)]

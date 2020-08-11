@@ -20,9 +20,16 @@ struct Opt {
 #[derive(StructOpt)]
 enum Command {
     /// Create a new virtpy environment
-    New { path: Option<PathBuf> },
+    New {
+        path: Option<PathBuf>,
+    },
     /// Add dependency to virtpy
-    Add { requirements: PathBuf },
+    Add {
+        requirements: PathBuf,
+    },
+    Install {
+        package: String,
+    },
 }
 
 const DEFAULT_VIRTPY_PATH: &str = ".virtpy";
@@ -253,6 +260,23 @@ fn install_and_register_distributions(
     Ok(())
 }
 
+fn new_dependencies(
+    requirements: &[Requirement],
+    dist_infos: &Path,
+) -> Result<Vec<Requirement>, Box<dyn Error>> {
+    let existing_deps = already_installed(&dist_infos)?;
+
+    Ok(requirements
+        .iter()
+        .filter(|req| {
+            !req.available_hashes
+                .iter()
+                .any(|hash| existing_deps.contains_key(hash))
+        })
+        .cloned()
+        .collect::<Vec<_>>())
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     // TODO: create on demand
     ensure_project_dir_exists()?;
@@ -272,18 +296,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             std::fs::create_dir_all(&package_files)?;
             std::fs::create_dir_all(&dist_infos)?;
 
-            let existing_deps = already_installed(&dist_infos)?;
-
-            let new_deps = requirements
-                .clone()
-                .into_iter()
-                .filter(|req| {
-                    req.available_hashes
-                        .iter()
-                        .any(|hash| existing_deps.contains_key(hash))
-                })
-                .collect::<Vec<_>>();
-
+            let new_deps = new_dependencies(&requirements, &dist_infos)?;
             //install_and_register_distributions(&requirements, &package_files, &dist_infos)?;
             install_and_register_distributions(&new_deps, &package_files, &dist_infos)?;
 
@@ -294,6 +307,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .map_or(true, |cond| cond.matches_system())
             });
             link_requirements_into_virtpy(
+                ".virtpy".as_ref(),
                 &format!("python{}.{}", python_version.major, python_version.minor),
                 &dist_infos,
                 &package_files,
@@ -302,21 +316,57 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Command::New { path } => {
             let path = path.unwrap_or(DEFAULT_VIRTPY_PATH.into());
-            let path = path.as_os_str().to_string_lossy();
-            let mut command = std::process::Command::new("python3");
-            let output = command
-                .args(&["-m", "venv", "--without-pip", &path])
-                .output()?;
+            let output = create_bare_venv(&path)?;
 
             if !output.status.success() {
                 let error = std::str::from_utf8(&output.stderr).unwrap();
-                println!("failed to create virtpy {}: {}", path, error);
+                println!("failed to create virtpy {}: {}", path.display(), error);
                 std::process::exit(1);
             }
+        }
+        Command::Install { package } => {
+            let requirements = python_requirements::get_requirements(&package);
+
+            let proj_dir = proj_dir().unwrap();
+            let data_dir = proj_dir.data_dir();
+            let installations = data_dir.join("installations");
+
+            let package_files = data_dir.join("package_files");
+            let dist_infos = data_dir.join("dist-infos");
+
+            std::fs::create_dir_all(&installations)?;
+
+            let package_folder = installations.join(&format!("{}.virtpy", package));
+
+            if package_folder.exists() {
+                println!("package is already installed.");
+                return Ok(());
+            }
+            create_bare_venv(&package_folder)?;
+
+            let new_deps = new_dependencies(&requirements, &dist_infos)?;
+            //install_and_register_distributions(&requirements, &package_files, &dist_infos)?;
+            install_and_register_distributions(&new_deps, &package_files, &dist_infos)?;
+
+            let python_version = python_version()?;
+            link_requirements_into_virtpy(
+                &package_folder,
+                &format!("python{}.{}", python_version.major, python_version.minor),
+                &dist_infos,
+                &package_files,
+                &requirements,
+            )?;
         }
     }
 
     Ok(())
+}
+
+fn create_bare_venv(path: &Path) -> std::io::Result<std::process::Output> {
+    std::process::Command::new("python3")
+        .args(&["-m", "venv", "--without-pip"])
+        .arg(&path)
+        .output()
 }
 
 fn symlink_dir(from: &Path, to: &Path) -> std::io::Result<()> {
@@ -344,12 +394,12 @@ fn symlink_file(from: &Path, to: &Path) -> std::io::Result<()> {
 }
 
 fn link_requirements_into_virtpy(
+    virtpy_dir: &Path,
     python_version: &str,
     dist_infos: &Path,
     package_files: &Path,
     requirements: &[Requirement],
 ) -> Result<(), Box<dyn Error>> {
-    let virtpy_dir = Path::new(".virtpy");
     let site_packages = virtpy_dir.join(format!("lib/{}/site-packages", python_version));
 
     let existing_deps = already_installed(&dist_infos)?;
