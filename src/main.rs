@@ -265,10 +265,9 @@ fn install_and_register_distributions(
             "-r",
             "__tmp_requirements.txt",
             "-t",
-            tmp_dir.as_ref().as_os_str().to_str().unwrap(),
-            "-v",
-            "--no-cache-dir",
         ])
+        .arg(tmp_dir.as_ref().as_os_str())
+        .args(&["-v", "--no-cache-dir"])
         .output()?;
 
     let pip_log = String::from_utf8(output.stdout)?;
