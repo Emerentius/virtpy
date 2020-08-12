@@ -167,53 +167,33 @@ fn register_distribution_files(
     version: &str,
     sha: String,
 ) {
-    //let package_files = data_dir.join("package_files");
     let dist_info_foldername = format!("{}-{}.dist-info", distribution_name, version);
     let dist_info = install_folder.join(&dist_info_foldername);
 
-    println!("dist-info: {}", dist_info.display());
-
-    let record = std::fs::read_to_string(dist_info.join("RECORD")).unwrap();
-
-    println!("{}", distribution_name);
-    println!("record len: {}", record.len());
-    for line in record
-        .lines()
-        .filter(|line| !line.starts_with(&dist_info_foldername))
+    println!("Adding {} {} to central store.", distribution_name, version);
+    // println!("record len: {}", record.len());
+    for file in records(&dist_info.join("RECORD"))
+        .unwrap()
+        .map(Result::unwrap)
     {
-        println!("{}", line);
         // Sanity check. We're not caching compiled code so pip is told not to compile python code.
         // If this folder exists, something went wrong.
-        debug_assert!(!line.contains("__pycache__"));
+        debug_assert!(file.path.iter().all(|part| part != "__pycache__"));
 
-        // when pip is told to install distributions to target folder
-        // with -t flag, the bin folder will be right next to the packages.
-        // The path in RECORD is the path where it would be if installed in
-        // a regular environment, so it contains leading ".."s that need to
-        // be stripped.
+        let path = remove_leading_parent_dirs(&file.path).unwrap_or_else(std::convert::identity);
+        debug_assert_ne!(file.hash, "");
 
-        // FIXME: replace manual parsing with records()
-        let mut components = line.split(",");
-        // assuming paths in RECORD use forward slashes even on windows
-        // TODO: verify
-        let path = components.next().unwrap().trim_start_matches("../");
-        let path = Path::new(path);
-        let hash = components.next().unwrap();
-        debug_assert_ne!(hash, "");
         // TODO: use rename, if on same filesystem
-        std::fs::copy(install_folder.join(path), package_files_target.join(hash)).unwrap();
+        std::fs::copy(
+            install_folder.join(path),
+            package_files_target.join(file.hash),
+        )
+        .unwrap();
     }
 
-    println!("source exists: {}", dist_info.exists());
+    // println!("source exists: {}", dist_info.exists());
     let target = dist_infos_target.join(format!("{},{},{}", distribution_name, version, sha));
 
-    println!(
-        "target: (exists = {}) {}",
-        target.exists(),
-        target.display()
-    );
-
-    // fs_extra will otherwise append the source dir name
     if target.exists() {
         return;
     }
