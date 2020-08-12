@@ -352,15 +352,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         Command::Install { package } => {
-            let requirements = python_requirements::get_requirements(&package);
-
             let proj_dir = proj_dir().unwrap();
             let data_dir = proj_dir.data_dir();
             let installations = data_dir.join("installations");
-
-            let package_files = data_dir.join("package_files");
-            let dist_infos = data_dir.join("dist-infos");
-
             std::fs::create_dir_all(&installations)?;
 
             let package_folder = installations.join(&format!("{}.virtpy", package));
@@ -369,6 +363,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 println!("package is already installed.");
                 return Ok(());
             }
+
+            let requirements = python_requirements::get_requirements(&package);
+
+            let package_files = data_dir.join("package_files");
+            let dist_infos = data_dir.join("dist-infos");
             create_bare_venv(&package_folder)?;
 
             let new_deps = new_dependencies(&requirements, &dist_infos)?;
