@@ -288,9 +288,13 @@ fn new_dependencies(
     Ok(requirements
         .iter()
         .filter(|req| {
-            !req.available_hashes
-                .iter()
-                .any(|hash| existing_deps.contains_key(hash))
+            (req.sys_condition
+                .as_ref()
+                .map_or(true, |cond| cond.matches_system()))
+                && !req
+                    .available_hashes
+                    .iter()
+                    .any(|hash| existing_deps.contains_key(hash))
         })
         .cloned()
         .collect::<Vec<_>>())
