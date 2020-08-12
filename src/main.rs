@@ -360,6 +360,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
 
+            check_poetry_available()?;
+
             let requirements = python_requirements::get_requirements(&package);
 
             create_bare_venv(&package_folder)?;
@@ -401,6 +403,24 @@ fn create_bare_venv(path: &Path) -> std::io::Result<std::process::Output> {
         .args(&["-m", "venv", "--without-pip"])
         .arg(&path)
         .output()
+}
+
+fn check_poetry_available() -> Result<(), Box<dyn Error>> {
+    // TODO: maybe check error code as well and pass the stderr msg up
+    std::process::Command::new("poetry")
+        .arg("--help")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        //.output()
+        .map_err(|err| -> Box<dyn Error> {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                "this command requires poetry to be installed and on the PATH. (https://github.com/python-poetry/poetry)".into()
+            } else {
+                Box::new(err).into()
+            }
+        })
+        .map(drop)
 }
 
 fn symlink_dir(from: &Path, to: &Path) -> std::io::Result<()> {
