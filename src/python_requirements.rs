@@ -101,7 +101,9 @@ impl Requirement {
         let available_hashes = subtokens
             .map(|hash_token| {
                 debug_assert_eq!(hash_token.as_rule(), Rule::hash);
-                crate::DependencyHash(hash_token.into_inner().as_str().to_owned())
+
+                // TODO: split hash type and hash into separate values
+                crate::DependencyHash(hash_token.into_inner().as_str().replace(":", "="))
             })
             .collect();
 

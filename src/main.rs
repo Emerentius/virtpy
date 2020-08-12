@@ -476,8 +476,6 @@ fn link_requirements_into_virtpy(
             // println!("searching installed dep, hash = {}", hash.0);
             //       installation uses <hash_type>=<value>
             //       requirements.txt <hash_type>:<value>
-            // TODO: split hash type and hash into separate values
-            let hash = DependencyHash(hash.0.replace(":", "="));
             existing_deps.get(&hash)
         }) {
             Some(path) => path,
