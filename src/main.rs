@@ -259,7 +259,7 @@ fn install_and_register_distributions(
         .arg(&tmp_requirements)
         .arg("-t")
         .arg(tmp_dir.as_ref())
-        .args(&["-v", "--no-cache-dir"])
+        .args(&["-v"])
         .output()?;
 
     let pip_log = String::from_utf8(output.stdout)?;
