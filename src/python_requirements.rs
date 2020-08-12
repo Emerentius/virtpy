@@ -152,13 +152,21 @@ pub fn get_requirements(package: &str) -> Vec<Requirement> {
     doc["tool"]["poetry"]["dependencies"][package] = toml_edit::value("*");
     std::fs::write(&toml_path, doc.to_string()).expect("failed to write pyproject.toml");
 
+    // Tell poetry not to create a venv. Saves a lot of time.
+    // Could also be done with `poetry config virtualenvs.create false --local`
+    // but that's much slower.
+    std::fs::write(
+        tmp_dir.as_ref().join("poetry.toml"),
+        "[virtualenvs]
+create = false",
+    )
+    .unwrap();
+
     // Generating the poetry.lock file without actually installing anything.
-    // This still creates a useless venv that won't be used for anything.
     //
     // Alternatively, just calling `poetry export` will also create the lockfile without
-    // installing anything if it doesn't exist, but it also
-    // emits a message that it does so that can not be silenced, prepended to the actual
-    // desired output.
+    // installing anything, but it also emits a message telling you so. That message
+    // can not be silenced and would have to be separated from the actual output.
     Command::new("poetry")
         .current_dir(&tmp_dir)
         .args(&["update", "--lock"])
