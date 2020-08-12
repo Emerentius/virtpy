@@ -169,11 +169,19 @@ fn register_distribution_files(
     sha: String,
 ) {
     let dist_info_foldername = format!("{}-{}.dist-info", distribution_name, version);
-    let dist_info = install_folder.join(&dist_info_foldername);
+    let src_dist_info = install_folder.join(&dist_info_foldername);
 
+    // println!("source exists: {}", src_dist_info.exists());
+    let dst_dist_info =
+        dist_infos_target.join(format!("{},{},{}", distribution_name, version, sha));
+
+    if dst_dist_info.exists() {
+        return;
+    }
     println!("Adding {} {} to central store.", distribution_name, version);
+
     // println!("record len: {}", record.len());
-    for file in records(&dist_info.join("RECORD"))
+    for file in records(&src_dist_info.join("RECORD"))
         .unwrap()
         .map(Result::unwrap)
     {
@@ -192,14 +200,8 @@ fn register_distribution_files(
         .unwrap();
     }
 
-    // println!("source exists: {}", dist_info.exists());
-    let target = dist_infos_target.join(format!("{},{},{}", distribution_name, version, sha));
-
-    if target.exists() {
-        return;
-    }
     // TODO: should try to move instead of copy, if possible
-    copy_directory(&dist_info, &target);
+    copy_directory(&src_dist_info, &dst_dist_info);
 }
 
 #[derive(Debug, serde::Deserialize)]
