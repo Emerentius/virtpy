@@ -250,23 +250,14 @@ fn install_and_register_distributions(
     package_files: &Path,
     dist_infos: &Path,
 ) -> Result<(), Box<dyn Error>> {
-    std::fs::write(
-        "__tmp_requirements.txt",
-        serialize_requirements_txt(distribs),
-    )?;
     let tmp_dir = tempdir::TempDir::new("")?;
+    let tmp_requirements = tmp_dir.as_ref().join("__tmp_requirements.txt");
+    std::fs::write(&tmp_requirements, serialize_requirements_txt(distribs))?;
     let output = std::process::Command::new("python3")
-        .args(&[
-            "-m",
-            "pip",
-            "install",
-            "--no-deps",
-            "--no-compile",
-            "-r",
-            "__tmp_requirements.txt",
-            "-t",
-        ])
-        .arg(tmp_dir.as_ref().as_os_str())
+        .args(&["-m", "pip", "install", "--no-deps", "--no-compile", "-r"])
+        .arg(&tmp_requirements)
+        .arg("-t")
+        .arg(tmp_dir.as_ref())
         .args(&["-v", "--no-cache-dir"])
         .output()?;
 
