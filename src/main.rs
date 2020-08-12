@@ -251,6 +251,10 @@ fn install_and_register_distributions(
     package_files: &Path,
     dist_infos: &Path,
 ) -> Result<(), Box<dyn Error>> {
+    if distribs.is_empty() {
+        return Ok(());
+    }
+
     let tmp_dir = tempdir::TempDir::new("")?;
     let tmp_requirements = tmp_dir.as_ref().join("__tmp_requirements.txt");
     std::fs::write(&tmp_requirements, serialize_requirements_txt(distribs))?;
