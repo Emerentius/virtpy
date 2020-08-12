@@ -49,13 +49,10 @@ struct PythonVersion {
     patch: i32,
 }
 
-fn python_version() -> Result<PythonVersion, Box<dyn Error>> {
-    let mut path = PathBuf::from(DEFAULT_VIRTPY_PATH);
-    path.push("bin");
-    path.push("python3");
-    let mut command = std::process::Command::new(path);
-    command.arg("--version");
-    let output = command.output();
+fn python_version(python_path: &Path) -> Result<PythonVersion, Box<dyn Error>> {
+    let output = std::process::Command::new(python_path)
+        .arg("--version")
+        .output();
     let version = String::from_utf8(output.unwrap().stdout)
         .unwrap()
         .trim()
@@ -299,6 +296,15 @@ fn new_dependencies(
         .collect::<Vec<_>>())
 }
 
+fn python_path(virtpy: &Path) -> PathBuf {
+    let bin_dir = if cfg!(target_os = "windows") {
+        "Scripts"
+    } else {
+        "bin"
+    };
+    virtpy.join(bin_dir)
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     // TODO: create on demand
     ensure_project_dir_exists()?;
@@ -316,7 +322,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let opt = Opt::from_args();
     match opt.cmd {
         Command::Add { requirements } => {
-            let python_version = python_version()?;
+            let python_version = python_version(&python_path(DEFAULT_VIRTPY_PATH.as_ref()))?;
             let requirements = std::fs::read_to_string(requirements)?;
             let requirements = python_requirements::read_requirements_txt(&requirements);
 
@@ -370,7 +376,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             //install_and_register_distributions(&requirements, &package_files, &dist_infos)?;
             install_and_register_distributions(&new_deps, &package_files, &dist_infos)?;
 
-            let python_version = python_version()?;
+            // check global python3 version
+            let python_version = python_version("python3".as_ref())?;
             link_requirements_into_virtpy(
                 &package_folder,
                 &format!("python{}.{}", python_version.major, python_version.minor),
