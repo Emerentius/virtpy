@@ -43,6 +43,7 @@ const DEFAULT_VIRTPY_PATH: &str = ".virtpy";
 struct PythonVersion {
     major: i32,
     minor: i32,
+    #[allow(unused)]
     patch: i32,
 }
 

@@ -133,6 +133,7 @@ pub fn get_requirements(package: &str) -> Vec<Requirement> {
     Command::new("poetry")
         .current_dir(&tmp_dir)
         .args(&["init", "-n"])
+        .stdout(std::process::Stdio::null())
         .status()
         .expect("failed to run poetry init");
 
@@ -159,6 +160,7 @@ pub fn get_requirements(package: &str) -> Vec<Requirement> {
     Command::new("poetry")
         .current_dir(&tmp_dir)
         .args(&["update", "--lock"])
+        .stdout(std::process::Stdio::null())
         .status()
         .expect("failed to run poetry update");
 
