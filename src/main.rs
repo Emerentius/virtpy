@@ -494,7 +494,7 @@ fn link_requirements_into_virtpy(
 
         let dist_info_foldername =
             format!("{}-{}.dist-info", distribution.name, distribution.version);
-        println!("symlinking dist info from {}", dist_info_path.display());
+        // println!("symlinking dist info from {}", dist_info_path.display());
         let target = site_packages.join(dist_info_foldername);
         //std::fs::create_dir(&target);
         symlink_dir(dist_info_path, &target)
