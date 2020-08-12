@@ -29,6 +29,8 @@ enum Command {
     },
     Install {
         package: String,
+        #[structopt(short, long)]
+        force: bool,
     },
     Uninstall {
         package: String,
@@ -301,20 +303,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     // TODO: create on demand
     ensure_project_dir_exists()?;
 
+    let proj_dir = proj_dir().unwrap();
+    let data_dir = proj_dir.data_dir();
+    let installations = data_dir.join("installations");
+
+    let package_files = data_dir.join("package_files");
+    let dist_infos = data_dir.join("dist-infos");
+    std::fs::create_dir_all(&package_files)?;
+    std::fs::create_dir_all(&dist_infos)?;
+    std::fs::create_dir_all(&installations)?;
+
     let opt = Opt::from_args();
     match opt.cmd {
         Command::Add { requirements } => {
             let python_version = python_version()?;
             let requirements = std::fs::read_to_string(requirements)?;
             let requirements = python_requirements::read_requirements_txt(&requirements);
-
-            let proj_dir = proj_dir().unwrap();
-            let data_dir = proj_dir.data_dir();
-
-            let package_files = data_dir.join("package_files");
-            let dist_infos = data_dir.join("dist-infos");
-            std::fs::create_dir_all(&package_files)?;
-            std::fs::create_dir_all(&dist_infos)?;
 
             let new_deps = new_dependencies(&requirements, &dist_infos)?;
             //install_and_register_distributions(&requirements, &package_files, &dist_infos)?;
@@ -344,23 +348,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                 std::process::exit(1);
             }
         }
-        Command::Install { package } => {
-            let proj_dir = proj_dir().unwrap();
-            let data_dir = proj_dir.data_dir();
-            let installations = data_dir.join("installations");
-            std::fs::create_dir_all(&installations)?;
-
-            let package_folder = installations.join(&format!("{}.virtpy", package));
+        Command::Install { package, force } => {
+            let package_folder = package_folder(&installations, &package);
 
             if package_folder.exists() {
-                println!("package is already installed.");
-                return Ok(());
+                if force {
+                    delete_executable_virtpy(&package_folder)?;
+                } else {
+                    println!("package is already installed.");
+                    return Ok(());
+                }
             }
 
             let requirements = python_requirements::get_requirements(&package);
 
-            let package_files = data_dir.join("package_files");
-            let dist_infos = data_dir.join("dist-infos");
             create_bare_venv(&package_folder)?;
 
             let new_deps = new_dependencies(&requirements, &dist_infos)?;
@@ -377,21 +378,22 @@ fn main() -> Result<(), Box<dyn Error>> {
             )?;
         }
         Command::Uninstall { package } => {
-            // FIXME: remove duplication of project dir code
-            let proj_dir = proj_dir().unwrap();
-            let data_dir = proj_dir.data_dir();
-            let installations = data_dir.join("installations");
-
-            std::fs::create_dir_all(&installations)?;
-
-            let package_folder = installations.join(&format!("{}.virtpy", package));
-            println!("{}", package_folder.display());
-            assert!(!package_folder.exists() || package_folder.join("pyvenv.cfg").exists());
-            std::fs::remove_dir_all(package_folder).or_else(ignore_target_doesnt_exist)?;
+            delete_executable_virtpy(&package_folder(&installations, &package))?;
         }
     }
 
     Ok(())
+}
+
+fn package_folder(installations: &Path, package: &str) -> PathBuf {
+    installations.join(&format!("{}.virtpy", package))
+}
+
+fn delete_executable_virtpy(package_folder: &Path) -> std::io::Result<()> {
+    println!("removing {}", package_folder.display());
+    assert!(!package_folder.exists() || package_folder.join("pyvenv.cfg").exists());
+    assert_eq!(package_folder.extension(), Some("virtpy".as_ref()));
+    std::fs::remove_dir_all(package_folder).or_else(ignore_target_doesnt_exist)
 }
 
 fn create_bare_venv(path: &Path) -> std::io::Result<std::process::Output> {
@@ -459,11 +461,7 @@ fn link_requirements_into_virtpy(
 
         let dist_info_foldername =
             format!("{}-{}.dist-info", distribution.name, distribution.version);
-        println!(
-            "symlinking dist info, src exists = {}, path = {}",
-            dist_info_path.exists(),
-            dist_info_path.display()
-        );
+        println!("symlinking dist info from {}", dist_info_path.display());
         let target = site_packages.join(dist_info_foldername);
         //std::fs::create_dir(&target);
         symlink_dir(dist_info_path, &target)
