@@ -140,7 +140,7 @@ fn serialize_requirements_txt(reqs: &[Requirement]) -> String {
         let hashes = req
             .available_hashes
             .iter()
-            .map(|hash| format!("    --hash={}", hash.0))
+            .map(|hash| format!("    --hash={}", hash.0.replace("=", ":")))
             .collect::<Vec<_>>();
         let _ = writeln!(&mut output, "{}", hashes.join(" \\\n"));
     }
