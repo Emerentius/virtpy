@@ -188,14 +188,8 @@ impl EntryPoint {
         }
     }
 
-    fn generate_executable(&self, virtpy_path: &Path) {
-        let executables_path = virtpy_path.join(match cfg!(target_os = "windows") {
-            true => "Scripts",
-            false => "bin",
-        });
-        let python_path = executables_path.join("python");
-        let own_path = executables_path.join(&self.name);
-        let content = format!(
+    fn executable_code(&self, python_path: &Path) -> String {
+        format!(
             r"#!{}
 # -*- coding: utf-8 -*-
 import re
@@ -208,8 +202,11 @@ if __name__ == '__main__':
             python_path.display(),
             self.module,
             qualname = self.qualname.clone().unwrap()
-        );
+        )
+    }
 
+    fn generate_executable(&self, dest: &Path, python_path: &Path) {
+        let content = self.executable_code(&python_path);
         let mut opts = std::fs::OpenOptions::new();
         opts.write(true).create(true).truncate(true);
         #[cfg(target_family = "unix")]
@@ -217,7 +214,13 @@ if __name__ == '__main__':
             use std::os::unix::fs::OpenOptionsExt;
             opts.mode(0o744);
         }
-        let mut f = opts.open(own_path).unwrap();
+
+        let dest = match dest.is_dir() {
+            true => dest.join(&self.name),
+            false => dest.to_owned(),
+        };
+
+        let mut f = opts.open(dest).unwrap();
         use std::io::Write;
         f.write_all(content.as_bytes()).unwrap();
     }
@@ -447,13 +450,15 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let proj_dir = proj_dir().unwrap();
     let data_dir = proj_dir.data_dir();
-    let installations = data_dir.join("installations");
 
+    let installations = data_dir.join("installations");
     let package_files = data_dir.join("package_files");
     let dist_infos = data_dir.join("dist-infos");
+    let executables = data_dir.join("bin");
     std::fs::create_dir_all(&package_files)?;
     std::fs::create_dir_all(&dist_infos)?;
     std::fs::create_dir_all(&installations)?;
+    std::fs::create_dir_all(&executables)?;
 
     let opt = Opt::from_args();
     let options = Options {
@@ -482,6 +487,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 &package_files,
                 &requirements,
                 options,
+                None,
             )?;
         }
         Command::New { path } => {
@@ -530,6 +536,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 &package_files,
                 &requirements,
                 options,
+                Some(&executables),
             )?;
 
             // if everything succeeds, keep the venv
@@ -610,6 +617,7 @@ fn link_requirements_into_virtpy(
     package_files: &Path,
     requirements: &[Requirement],
     options: Options,
+    additional_executables_path: Option<&Path>,
 ) -> Result<(), Box<dyn Error>> {
     let site_packages = virtpy_dir.join(format!("lib/{}/site-packages", python_version));
 
@@ -679,7 +687,17 @@ fn link_requirements_into_virtpy(
         }
 
         for entrypoint in entrypoints(&dist_info_path) {
-            entrypoint.generate_executable(virtpy_dir);
+            let executables_path = virtpy_dir.join(match cfg!(target_os = "windows") {
+                true => "Scripts",
+                false => "bin",
+            });
+            let python_path = executables_path.join("python");
+            entrypoint.generate_executable(&executables_path, &python_path);
+
+            // FIXME: this will silently overwrite old files with the same name
+            if let Some(additional_path) = additional_executables_path {
+                entrypoint.generate_executable(&additional_path, &python_path);
+            }
         }
     }
 
