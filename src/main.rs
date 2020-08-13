@@ -15,6 +15,8 @@ mod python_requirements;
 struct Opt {
     #[structopt(subcommand)] // Note that we mark a field as a subcommand
     cmd: Command,
+    #[structopt(short, parse(from_occurrences))]
+    verbose: u8,
 }
 
 #[derive(StructOpt)]
@@ -166,20 +168,21 @@ fn register_distribution_files(
     distribution_name: &str,
     version: &str,
     sha: String,
+    options: crate::Options,
 ) {
     let dist_info_foldername = format!("{}-{}.dist-info", distribution_name, version);
     let src_dist_info = install_folder.join(&dist_info_foldername);
 
-    // println!("source exists: {}", src_dist_info.exists());
     let dst_dist_info =
         dist_infos_target.join(format!("{},{},{}", distribution_name, version, sha));
 
     if dst_dist_info.exists() {
         return;
     }
-    println!("Adding {} {} to central store.", distribution_name, version);
+    if options.verbose >= 1 {
+        println!("Adding {} {} to central store.", distribution_name, version);
+    }
 
-    // println!("record len: {}", record.len());
     for file in records(&src_dist_info.join("RECORD"))
         .unwrap()
         .map(Result::unwrap)
@@ -191,12 +194,14 @@ fn register_distribution_files(
         let path = remove_leading_parent_dirs(&file.path).unwrap_or_else(std::convert::identity);
         debug_assert_ne!(file.hash, "");
 
+        let src = install_folder.join(path);
+        let dest = package_files_target.join(file.hash);
+        if options.verbose >= 2 {
+            println!("    copying {} to {}", src.display(), dest.display());
+        }
+
         // TODO: use rename, if on same filesystem
-        std::fs::copy(
-            install_folder.join(path),
-            package_files_target.join(file.hash),
-        )
-        .unwrap();
+        std::fs::copy(src, dest).unwrap();
     }
 
     // TODO: should try to move instead of copy, if possible
@@ -250,12 +255,16 @@ fn install_and_register_distributions(
     distribs: &[Requirement],
     package_files: &Path,
     dist_infos: &Path,
+    options: Options,
 ) -> Result<(), Box<dyn Error>> {
+    if options.verbose >= 1 {
+        println!("Adding {} new distributions", distribs.len());
+    }
     if distribs.is_empty() {
         return Ok(());
     }
 
-    let tmp_dir = tempdir::TempDir::new("")?;
+    let tmp_dir = tempdir::TempDir::new("virtpy")?;
     let tmp_requirements = tmp_dir.as_ref().join("__tmp_requirements.txt");
     std::fs::write(&tmp_requirements, serialize_requirements_txt(distribs))?;
     let output = std::process::Command::new("python3")
@@ -268,7 +277,29 @@ fn install_and_register_distributions(
 
     let pip_log = String::from_utf8(output.stdout)?;
 
-    let new_distribs = newly_installed_distributions(pip_log);
+    let new_distribs = newly_installed_distributions(&pip_log);
+
+    if options.verbose >= 1 {
+        if new_distribs.len() != distribs.len() {
+            // either an error or a sign that the filters in new_dependencies()
+            // need to be improved
+            println!(
+                "Only found {} of {} distributions",
+                new_distribs.len(),
+                distribs.len()
+            );
+
+            let _ = std::fs::write(dist_infos.parent().unwrap().join("pip.log"), pip_log);
+        }
+    }
+    if options.verbose >= 2 {
+        for distrib in new_distribs.iter() {
+            println!(
+                "    New distribution: {}=={}, {}",
+                distrib.name, distrib.version, distrib.sha
+            );
+        }
+    }
 
     for distrib in new_distribs {
         register_distribution_files(
@@ -278,6 +309,7 @@ fn install_and_register_distributions(
             &distrib.name,
             &distrib.version,
             distrib.sha,
+            options,
         );
     }
     Ok(())
@@ -313,6 +345,12 @@ fn python_path(virtpy: &Path) -> PathBuf {
     virtpy.join(bin_dir)
 }
 
+// toplevel options
+#[derive(Copy, Clone)]
+struct Options {
+    verbose: u8,
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     // TODO: create on demand
     ensure_project_dir_exists()?;
@@ -328,6 +366,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     std::fs::create_dir_all(&installations)?;
 
     let opt = Opt::from_args();
+    let options = Options {
+        verbose: opt.verbose,
+    };
     match opt.cmd {
         Command::Add { requirements } => {
             let python_version = python_version(&python_path(DEFAULT_VIRTPY_PATH.as_ref()))?;
@@ -336,7 +377,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             let new_deps = new_dependencies(&requirements, &dist_infos)?;
             //install_and_register_distributions(&requirements, &package_files, &dist_infos)?;
-            install_and_register_distributions(&new_deps, &package_files, &dist_infos)?;
+            install_and_register_distributions(&new_deps, &package_files, &dist_infos, options)?;
 
             let mut requirements = requirements;
             requirements.retain(|req| {
@@ -350,6 +391,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 &dist_infos,
                 &package_files,
                 &requirements,
+                options,
             )?;
         }
         Command::New { path } => {
@@ -382,7 +424,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             let new_deps = new_dependencies(&requirements, &dist_infos)?;
             //install_and_register_distributions(&requirements, &package_files, &dist_infos)?;
-            install_and_register_distributions(&new_deps, &package_files, &dist_infos)?;
+            install_and_register_distributions(&new_deps, &package_files, &dist_infos, options)?;
 
             // check global python3 version
             let python_version = python_version("python3".as_ref())?;
@@ -392,6 +434,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 &dist_infos,
                 &package_files,
                 &requirements,
+                options,
             )?;
         }
         Command::Uninstall { package } => {
@@ -468,6 +511,7 @@ fn link_requirements_into_virtpy(
     dist_infos: &Path,
     package_files: &Path,
     requirements: &[Requirement],
+    options: Options,
 ) -> Result<(), Box<dyn Error>> {
     let site_packages = virtpy_dir.join(format!("lib/{}/site-packages", python_version));
 
@@ -484,18 +528,24 @@ fn link_requirements_into_virtpy(
         }) {
             Some(path) => path,
             None => {
-                println!(
+                return Err(format!(
                     "failed to find dist_info for distribution: {:?}",
                     distribution
-                );
-                continue;
+                )
+                .into());
             }
         };
 
         let dist_info_foldername =
             format!("{}-{}.dist-info", distribution.name, distribution.version);
-        // println!("symlinking dist info from {}", dist_info_path.display());
         let target = site_packages.join(dist_info_foldername);
+        if options.verbose >= 1 {
+            println!(
+                "symlinking dist info from {} to {}",
+                dist_info_path.display(),
+                target.display()
+            );
+        }
         //std::fs::create_dir(&target);
         symlink_dir(dist_info_path, &target)
             .or_else(ignore_target_exists)
@@ -564,7 +614,7 @@ struct Distribution {
     sha: String,
 }
 
-fn newly_installed_distributions(pip_log: String) -> Vec<Distribution> {
+fn newly_installed_distributions(pip_log: &str) -> Vec<Distribution> {
     let mut installed_distribs = Vec::new();
 
     let install_url_pattern = Regex::new(
