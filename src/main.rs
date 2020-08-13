@@ -422,6 +422,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             create_bare_venv(&package_folder)?;
 
+            // if anything goes wrong, try to delete the incomplete installation
+            let venv_deleter = scopeguard::guard((), |_| {
+                let _ = delete_executable_virtpy(&package_folder);
+            });
+
             let new_deps = new_dependencies(&requirements, &dist_infos)?;
             //install_and_register_distributions(&requirements, &package_files, &dist_infos)?;
             install_and_register_distributions(&new_deps, &package_files, &dist_infos, options)?;
@@ -436,6 +441,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 &requirements,
                 options,
             )?;
+
+            // if everything succeeds, keep the venv
+            std::mem::forget(venv_deleter);
         }
         Command::Uninstall { package } => {
             delete_executable_virtpy(&package_folder(&installations, &package))?;
