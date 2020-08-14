@@ -133,8 +133,8 @@ fn serialize_requirements_txt(reqs: &[Requirement]) -> String {
     let mut output = String::new();
     for req in reqs {
         let _ = write!(&mut output, "{}=={}", req.name, req.version);
-        if let Some(sys_condition) = req.sys_condition.as_ref() {
-            let _ = write!(&mut output, "{}", sys_condition);
+        if let Some(marker) = req.marker.as_ref() {
+            let _ = write!(&mut output, "; {}", marker);
         }
         let _ = writeln!(&mut output, " \\");
         let hashes = req
@@ -369,7 +369,8 @@ fn install_and_register_distributions(
 
     let tmp_dir = tempdir::TempDir::new("virtpy")?;
     let tmp_requirements = tmp_dir.as_ref().join("__tmp_requirements.txt");
-    std::fs::write(&tmp_requirements, serialize_requirements_txt(distribs))?;
+    let reqs = serialize_requirements_txt(distribs);
+    std::fs::write(&tmp_requirements, reqs)?;
     let output = std::process::Command::new("python3")
         .args(&["-m", "pip", "install", "--no-deps", "--no-compile", "-r"])
         .arg(&tmp_requirements)
@@ -433,7 +434,7 @@ fn new_dependencies(
     Ok(requirements
         .iter()
         .filter(|req| {
-            (req.sys_condition
+            (req.marker
                 .as_ref()
                 .map_or(true, |cond| cond.matches_system()))
                 && !req
@@ -825,7 +826,7 @@ mod test {
                 name: "".into(),
                 available_hashes: vec![hash],
                 version: "".into(),
-                sys_condition: None,
+                marker: None,
             })
             .collect::<Vec<_>>();
         let new_deps = new_dependencies(&pseudo_reqs, &dist_infos).unwrap();

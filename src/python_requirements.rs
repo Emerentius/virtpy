@@ -9,8 +9,32 @@ struct RequirementsTxtParser;
 pub struct Requirement {
     pub name: String,
     pub version: String,
-    pub sys_condition: Option<SystemCondition>,
+    pub marker: Option<Marker>,
     pub available_hashes: Vec<crate::DependencyHash>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Marker {
+    SystemCondition(SystemCondition),
+    Unknown(String),
+}
+
+impl Marker {
+    pub fn matches_system(&self) -> bool {
+        match self {
+            Marker::SystemCondition(cond) => cond.matches_system(),
+            Marker::Unknown(_) => true, // let pip sort it out
+        }
+    }
+}
+
+impl std::fmt::Display for Marker {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Marker::SystemCondition(cond) => write!(f, "{}", cond),
+            Marker::Unknown(string) => write!(f, "{}", string),
+        }
+    }
 }
 
 fn sys_platform() -> String {
@@ -70,22 +94,22 @@ impl std::fmt::Display for SystemCondition {
 }
 
 impl SystemCondition {
-    fn from_string(string: &str) -> Option<Self> {
+    fn from_string(string: &str) -> Self {
         let mut parts = string.split_whitespace();
-        let key = parts.next()?;
-        if key != "sys_platform" {
-            return None;
-        }
-        let condition = parts.next()?;
+        let key = parts.next().unwrap();
+        debug_assert!(key == "sys_platform");
+        let condition = parts.next().unwrap();
         let must_equal = condition == "==";
-        if !must_equal && condition != "!=" {
-            return None;
-        }
-        let system_name = parts.next()?.trim_matches('"').to_owned();
-        Some(Self {
+        debug_assert!(must_equal || condition == "!=");
+        let system_name = parts.next().unwrap().trim_matches('"').to_owned();
+        Self {
             must_equal,
             system_name,
-        })
+        }
+    }
+
+    fn from_token(token: pest::iterators::Pair<Rule>) -> Self {
+        Self::from_string(token.as_str())
     }
 }
 
@@ -95,7 +119,17 @@ impl Requirement {
         let mut subtokens = token.into_inner();
         let name = subtokens.next().unwrap().as_str().to_owned();
         let version = subtokens.next().unwrap().as_str().to_owned();
-        let sys_condition = subtokens.next().unwrap().as_str().to_owned();
+        let marker = subtokens.next().unwrap();
+        let marker = match marker.clone().into_inner().next() {
+            Some(pair) => Some(Marker::SystemCondition(SystemCondition::from_token(pair))),
+            None if marker.as_str().is_empty() => None,
+            None => Some(Marker::Unknown(
+                marker
+                    .as_str()
+                    .trim_start_matches(&[' ', ';'][..])
+                    .to_owned(),
+            )),
+        };
 
         // all remaining tokens are hashes
         let available_hashes = subtokens
@@ -111,7 +145,7 @@ impl Requirement {
             name,
             version,
             available_hashes,
-            sys_condition: SystemCondition::from_string(&sys_condition),
+            marker,
         }
     }
 }
@@ -196,10 +230,10 @@ mod test {
         let system_condition = "sys_platform == \"darwin\"";
         assert_eq!(
             SystemCondition::from_string(system_condition),
-            Some(SystemCondition {
+            SystemCondition {
                 must_equal: true,
                 system_name: "darwin".into(),
-            })
+            }
         );
     }
 
@@ -208,10 +242,10 @@ mod test {
         let system_condition = "sys_platform != \"win32\"";
         assert_eq!(
             SystemCondition::from_string(system_condition),
-            Some(SystemCondition {
+            SystemCondition {
                 must_equal: false,
                 system_name: "win32".into(),
-            })
+            }
         );
     }
 
@@ -225,10 +259,10 @@ mod test {
             vec![
                 Requirement {
                     name: "appnope".into(),
-                    sys_condition: Some(SystemCondition {
+                    marker: Some(Marker::SystemCondition(SystemCondition {
                         must_equal: true,
                         system_name: "darwin".into()
-                    }),
+                    })),
                     available_hashes: vec![
                     crate::DependencyHash(
                         "sha256:5b26757dc6f79a3b7dc9fab95359328d5747fcb2409d331ea66d0272b90ab2a0"
@@ -243,7 +277,7 @@ mod test {
                 },
                 Requirement {
                     name: "backcall".into(),
-                    sys_condition: None,
+                    marker: None,
                     available_hashes: vec![
                     crate::DependencyHash(
                         "sha256:fbbce6a29f263178a1f7915c1940bde0ec2b2a967566fe1c65c1dfb7422bd255"
