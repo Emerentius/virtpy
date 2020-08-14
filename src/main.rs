@@ -367,6 +367,12 @@ fn install_and_register_distributions(
         .arg(tmp_dir.as_ref())
         .args(&["-v"])
         .output()?;
+    if !output.status.success() {
+        panic!(
+            "pip error:\n{}",
+            std::str::from_utf8(&output.stderr).unwrap()
+        );
+    }
 
     let pip_log = String::from_utf8(output.stdout)?;
 
@@ -639,6 +645,11 @@ fn link_requirements_into_virtpy(
                     distribution
                 )
                 .into());
+                // println!(
+                //     "failed to find dist_info for distribution: {:?}",
+                //     distribution
+                // );
+                // continue;
             }
         };
 
