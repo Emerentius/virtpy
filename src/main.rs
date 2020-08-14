@@ -490,18 +490,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             //install_and_register_distributions(&requirements, &package_files, &dist_infos)?;
             install_and_register_distributions(&new_deps, &package_files, &dist_infos, options)?;
 
-            let mut requirements = requirements;
-            requirements.retain(|req| {
-                req.sys_condition
-                    .as_ref()
-                    .map_or(true, |cond| cond.matches_system())
-            });
             link_requirements_into_virtpy(
                 ".virtpy".as_ref(),
                 &format!("python{}.{}", python_version.major, python_version.minor),
                 &dist_infos,
                 &package_files,
-                &requirements,
+                requirements,
                 options,
                 None,
             )?;
@@ -550,7 +544,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 &format!("python{}.{}", python_version.major, python_version.minor),
                 &dist_infos,
                 &package_files,
-                &requirements,
+                requirements,
                 options,
                 Some(&executables),
             )?;
@@ -631,11 +625,18 @@ fn link_requirements_into_virtpy(
     python_version: &str,
     dist_infos: &Path,
     package_files: &Path,
-    requirements: &[Requirement],
+    mut requirements: Vec<Requirement>,
     options: Options,
     additional_executables_path: Option<&Path>,
 ) -> Result<(), Box<dyn Error>> {
     let site_packages = virtpy_dir.join(format!("lib/{}/site-packages", python_version));
+
+    requirements.retain(|req| {
+        req.marker
+            .as_ref()
+            .map_or(true, |cond| cond.matches_system())
+    });
+    let requirements = requirements;
 
     let existing_deps = already_installed(&dist_infos)?;
     for distribution in requirements {
