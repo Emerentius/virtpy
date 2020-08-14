@@ -294,7 +294,17 @@ fn register_distribution_files(
         }
 
         // TODO: use rename, if on same filesystem
-        std::fs::copy(src, dest).unwrap();
+        let res = std::fs::copy(src, dest);
+        match &res {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => println!(
+                "couldn't find recorded file from {}: {}",
+                dist_info_foldername,
+                file.path.display()
+            ),
+            _ => {
+                res.unwrap();
+            }
+        };
     }
 
     // TODO: should try to move instead of copy, if possible
