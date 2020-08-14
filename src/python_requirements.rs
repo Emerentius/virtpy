@@ -174,6 +174,8 @@ create = false",
         .status()
         .expect("failed to run poetry update");
 
+    debug_assert!(tmp_dir.as_ref().join("poetry.lock").exists());
+
     let output = Command::new("poetry")
         .current_dir(&tmp_dir)
         .args(&["export", "-f", "requirements.txt"])
