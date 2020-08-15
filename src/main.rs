@@ -39,6 +39,7 @@ enum Command {
     Uninstall {
         package: String,
     },
+    PoetryInstall {},
 }
 
 const DEFAULT_VIRTPY_PATH: &str = ".virtpy";
@@ -485,22 +486,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     match opt.cmd {
         Command::Add { requirements } => {
-            let python_version = python_version(&python_path(DEFAULT_VIRTPY_PATH.as_ref()))?;
+            let virtpy_path = DEFAULT_VIRTPY_PATH.as_ref();
+            let python_version = python_version(&python_path(virtpy_path))?;
             let requirements = std::fs::read_to_string(requirements)?;
             let requirements = python_requirements::read_requirements_txt(&requirements);
 
-            let new_deps = new_dependencies(&requirements, &dist_infos)?;
-            //install_and_register_distributions(&requirements, &package_files, &dist_infos)?;
-            install_and_register_distributions(&new_deps, &package_files, &dist_infos, options)?;
-
-            link_requirements_into_virtpy(
-                ".virtpy".as_ref(),
-                &format!("python{}.{}", python_version.major, python_version.minor),
+            virtpy_add_dependencies(
+                virtpy_path,
+                requirements,
                 &dist_infos,
                 &package_files,
-                requirements,
+                python_version,
                 options,
-                None,
             )?;
         }
         Command::New { path } => {
@@ -540,20 +537,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let _ = delete_executable_virtpy(&package_folder);
             });
 
-            let new_deps = new_dependencies(&requirements, &dist_infos)?;
-            //install_and_register_distributions(&requirements, &package_files, &dist_infos)?;
-            install_and_register_distributions(&new_deps, &package_files, &dist_infos, options)?;
-
-            // check global python3 version
             let python_version = python_version("python3".as_ref())?;
-            link_requirements_into_virtpy(
+
+            virtpy_add_dependencies(
                 &package_folder,
-                &format!("python{}.{}", python_version.major, python_version.minor),
+                requirements,
                 &dist_infos,
                 &package_files,
-                requirements,
+                python_version,
                 options,
-                Some(&executables),
             )?;
 
             // if everything succeeds, keep the venv
@@ -562,9 +554,45 @@ fn main() -> Result<(), Box<dyn Error>> {
         Command::Uninstall { package } => {
             delete_executable_virtpy(&package_folder(&installations, &package))?;
         }
+        Command::PoetryInstall {} => {
+            let virtpy_path = DEFAULT_VIRTPY_PATH.as_ref();
+            let python_version = python_version(&python_path(virtpy_path))?;
+            let requirements = python_requirements::poetry_get_requirements(Path::new("."));
+            virtpy_add_dependencies(
+                virtpy_path,
+                requirements,
+                &dist_infos,
+                &package_files,
+                python_version,
+                options,
+            )?;
+        }
     }
 
     Ok(())
+}
+
+fn virtpy_add_dependencies(
+    virtpy_path: &Path,
+    requirements: Vec<Requirement>,
+    dist_infos: &Path,
+    package_files: &Path,
+    python_version: PythonVersion,
+    options: Options,
+) -> Result<(), Box<dyn Error>> {
+    let new_deps = new_dependencies(&requirements, &dist_infos)?;
+    //install_and_register_distributions(&requirements, &package_files, &dist_infos)?;
+    install_and_register_distributions(&new_deps, &package_files, &dist_infos, options)?;
+
+    link_requirements_into_virtpy(
+        virtpy_path,
+        &format!("python{}.{}", python_version.major, python_version.minor),
+        &dist_infos,
+        &package_files,
+        requirements,
+        options,
+        None,
+    )
 }
 
 fn package_folder(installations: &Path, package: &str) -> PathBuf {

@@ -1,5 +1,5 @@
 use pest::Parser;
-use std::process::Command;
+use std::{path::Path, process::Command};
 
 #[derive(pest_derive::Parser)]
 #[grammar = "requirements_txt.pest"] // relative to src
@@ -191,15 +191,14 @@ pub fn get_requirements(package: &str, allow_prereleases: bool) -> Vec<Requireme
     doc["tool"]["poetry"]["dependencies"][package] = toml_edit::Item::Table(dep_table);
     std::fs::write(&toml_path, doc.to_string()).expect("failed to write pyproject.toml");
 
+    poetry_get_requirements(tmp_dir.as_ref())
+}
+
+pub fn poetry_get_requirements(poetry_proj: &Path) -> Vec<Requirement> {
     // Tell poetry not to create a venv. Saves a lot of time.
     // Could also be done with `poetry config virtualenvs.create false --local`
     // but that's much slower.
-    std::fs::write(
-        tmp_dir.as_ref().join("poetry.toml"),
-        "[virtualenvs]
-create = false",
-    )
-    .unwrap();
+    poetry_deactivate_venv_creation(poetry_proj);
 
     // Generating the poetry.lock file without actually installing anything.
     //
@@ -207,16 +206,16 @@ create = false",
     // installing anything, but it also emits a message telling you so. That message
     // can not be silenced and would have to be separated from the actual output.
     Command::new("poetry")
-        .current_dir(&tmp_dir)
+        .current_dir(poetry_proj)
         .args(&["update", "--lock"])
         .stdout(std::process::Stdio::null())
         .status()
         .expect("failed to run poetry update");
 
-    debug_assert!(tmp_dir.as_ref().join("poetry.lock").exists());
+    debug_assert!(poetry_proj.join("poetry.lock").exists());
 
     let output = Command::new("poetry")
-        .current_dir(&tmp_dir)
+        .current_dir(poetry_proj)
         .args(&["export", "-f", "requirements.txt"])
         .output()
         .expect("failed to run poetry export")
@@ -224,6 +223,15 @@ create = false",
     let output = std::str::from_utf8(&output).unwrap();
 
     read_requirements_txt(&output)
+}
+
+fn poetry_deactivate_venv_creation(poetry_proj: &Path) {
+    std::fs::write(
+        poetry_proj.join("poetry.toml"),
+        "[virtualenvs]
+create = false",
+    )
+    .unwrap();
 }
 
 #[cfg(test)]
