@@ -23,7 +23,7 @@ struct Opt {
 enum Command {
     /// Create a new virtpy environment
     New {
-        path: Option<PathBuf>,
+        // path: Option<PathBuf>,
     },
     /// Add dependency to virtpy
     Add {
@@ -500,8 +500,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 options,
             )?;
         }
-        Command::New { path } => {
-            let path = path.unwrap_or(DEFAULT_VIRTPY_PATH.into());
+        Command::New {} => {
+            let path = PathBuf::from(DEFAULT_VIRTPY_PATH);
             let output = create_bare_venv(&path)?;
 
             if !output.status.success() {
