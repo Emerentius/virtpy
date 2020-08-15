@@ -226,12 +226,17 @@ pub fn poetry_get_requirements(poetry_proj: &Path) -> Vec<Requirement> {
 }
 
 fn poetry_deactivate_venv_creation(poetry_proj: &Path) {
-    std::fs::write(
-        poetry_proj.join("poetry.toml"),
-        "[virtualenvs]
-create = false",
-    )
+    let toml_path = poetry_proj.join("poetry.toml");
+    let mut doc = match std::fs::read_to_string(&toml_path) {
+        Ok(string) => string,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => "[virtualenvs]".to_owned(),
+        Err(err) => panic!("failed to read poetry.toml: {}", err),
+    }
+    .parse::<toml_edit::Document>()
     .unwrap();
+
+    doc["virtualenvs"]["create"] = toml_edit::value(false);
+    std::fs::write(&toml_path, doc.to_string()).expect("failed to write poetry.toml");
 }
 
 #[cfg(test)]
