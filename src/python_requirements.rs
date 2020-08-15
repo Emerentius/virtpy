@@ -163,7 +163,7 @@ pub fn read_requirements_txt(data: &str) -> Vec<Requirement> {
 
 // Meant for installation of single packages with executables
 // into a self-contained venv, like pipx does.
-pub fn get_requirements(package: &str) -> Vec<Requirement> {
+pub fn get_requirements(package: &str, allow_prereleases: bool) -> Vec<Requirement> {
     let tmp_dir = tempdir::TempDir::new("virtpy").unwrap();
 
     Command::new("poetry")
@@ -183,7 +183,12 @@ pub fn get_requirements(package: &str) -> Vec<Requirement> {
         .parse::<toml_edit::Document>()
         .unwrap();
 
-    doc["tool"]["poetry"]["dependencies"][package] = toml_edit::value("*");
+    let mut dep_table = toml_edit::Table::new();
+    dep_table["version"] = toml_edit::value("*");
+    if allow_prereleases {
+        dep_table["allow-prereleases"] = toml_edit::value(true);
+    }
+    doc["tool"]["poetry"]["dependencies"][package] = toml_edit::Item::Table(dep_table);
     std::fs::write(&toml_path, doc.to_string()).expect("failed to write pyproject.toml");
 
     // Tell poetry not to create a venv. Saves a lot of time.

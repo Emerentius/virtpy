@@ -33,6 +33,8 @@ enum Command {
         package: String,
         #[structopt(short, long)]
         force: bool,
+        #[structopt(long)]
+        allow_prereleases: bool,
     },
     Uninstall {
         package: String,
@@ -511,7 +513,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 std::process::exit(1);
             }
         }
-        Command::Install { package, force } => {
+        Command::Install {
+            package,
+            force,
+            allow_prereleases,
+        } => {
             let package_folder = package_folder(&installations, &package);
 
             if package_folder.exists() {
@@ -525,7 +531,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             check_poetry_available()?;
 
-            let requirements = python_requirements::get_requirements(&package);
+            let requirements = python_requirements::get_requirements(&package, allow_prereleases);
 
             create_bare_venv(&package_folder)?;
 
