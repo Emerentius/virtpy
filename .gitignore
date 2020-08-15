@@ -1,2 +1,6 @@
 /target
 .virtpy/
+.vscode
+
+# for the time being
+Cargo.lock
