@@ -454,7 +454,7 @@ fn python_path(virtpy: &Path) -> PathBuf {
     } else {
         "bin"
     };
-    virtpy.join(bin_dir)
+    virtpy.join(bin_dir).join("python")
 }
 
 // toplevel options
