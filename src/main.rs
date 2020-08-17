@@ -9,6 +9,7 @@ use std::{
 };
 use structopt::StructOpt;
 
+mod python_detection;
 mod python_requirements;
 
 #[derive(StructOpt)]
@@ -24,6 +25,8 @@ enum Command {
     /// Create a new virtpy environment
     New {
         // path: Option<PathBuf>,
+        #[structopt(short, long, default_value = "python3")]
+        python: String,
     },
     /// Add dependency to virtpy
     Add {
@@ -35,6 +38,8 @@ enum Command {
         force: bool,
         #[structopt(long)]
         allow_prereleases: bool,
+        #[structopt(short, long, default_value = "python3")]
+        python: String,
     },
     Uninstall {
         package: String,
@@ -358,6 +363,7 @@ fn records(record: &Path) -> csv::Result<impl Iterator<Item = csv::Result<Instal
 }
 
 fn install_and_register_distributions(
+    python_path: &Path,
     distribs: &[Requirement],
     package_files: &Path,
     dist_infos: &Path,
@@ -374,7 +380,7 @@ fn install_and_register_distributions(
     let tmp_requirements = tmp_dir.as_ref().join("__tmp_requirements.txt");
     let reqs = serialize_requirements_txt(distribs);
     std::fs::write(&tmp_requirements, reqs)?;
-    let output = std::process::Command::new("python3")
+    let output = std::process::Command::new(python_path)
         .args(&["-m", "pip", "install", "--no-deps", "--no-compile", "-r"])
         .arg(&tmp_requirements)
         .arg("-t")
@@ -500,9 +506,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 options,
             )?;
         }
-        Command::New {} => {
+        Command::New { python } => {
             let path = PathBuf::from(DEFAULT_VIRTPY_PATH);
-            let output = create_bare_venv(&path)?;
+            let python_path = python_detection::detect(&python)
+                .ok_or(format!("Couldn't find python executable '{}'", python))?;
+            let output = create_bare_venv(&python_path, &path)?;
 
             if !output.status.success() {
                 let error = std::str::from_utf8(&output.stderr).unwrap();
@@ -514,8 +522,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             package,
             force,
             allow_prereleases,
+            python,
         } => {
             let package_folder = package_folder(&installations, &package);
+
+            let python_path = python_detection::detect(&python)
+                .ok_or(format!("Couldn't find python executable '{}'", python))?;
 
             if package_folder.exists() {
                 if force {
@@ -530,14 +542,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             let requirements = python_requirements::get_requirements(&package, allow_prereleases);
 
-            create_bare_venv(&package_folder)?;
+            create_bare_venv(&python_path, &package_folder)?;
 
             // if anything goes wrong, try to delete the incomplete installation
             let venv_deleter = scopeguard::guard((), |_| {
                 let _ = delete_executable_virtpy(&package_folder);
             });
 
-            let python_version = python_version("python3".as_ref())?;
+            let python_version = python_version(&python_path)?;
 
             virtpy_add_dependencies(
                 &package_folder,
@@ -581,8 +593,18 @@ fn virtpy_add_dependencies(
     options: Options,
 ) -> Result<(), Box<dyn Error>> {
     let new_deps = new_dependencies(&requirements, &dist_infos)?;
+
+    // The virtpy doesn't contain pip so get the appropriate global python
+    let python_path = global_python(virtpy_path);
+
     //install_and_register_distributions(&requirements, &package_files, &dist_infos)?;
-    install_and_register_distributions(&new_deps, &package_files, &dist_infos, options)?;
+    install_and_register_distributions(
+        &python_path,
+        &new_deps,
+        &package_files,
+        &dist_infos,
+        options,
+    )?;
 
     link_requirements_into_virtpy(
         virtpy_path,
@@ -593,6 +615,12 @@ fn virtpy_add_dependencies(
         options,
         None,
     )
+}
+
+fn global_python(virtpy_path: &Path) -> PathBuf {
+    // FIXME: On windows, the virtpy python is a copy, so there's no symlink to resolve.
+    //        We need to take the version and then do a search for the real python.
+    python_path(virtpy_path).canonicalize().unwrap()
 }
 
 fn package_folder(installations: &Path, package: &str) -> PathBuf {
@@ -606,8 +634,8 @@ fn delete_executable_virtpy(package_folder: &Path) -> std::io::Result<()> {
     std::fs::remove_dir_all(package_folder).or_else(ignore_target_doesnt_exist)
 }
 
-fn create_bare_venv(path: &Path) -> std::io::Result<std::process::Output> {
-    std::process::Command::new("python3")
+fn create_bare_venv(python_path: &Path, path: &Path) -> std::io::Result<std::process::Output> {
+    std::process::Command::new(python_path)
         .args(&["-m", "venv", "--without-pip"])
         .arg(&path)
         .output()
