@@ -815,7 +815,11 @@ fn link_requirements_into_virtpy(
                         continue;
                     }
 
-                    virtpy_dir.join(path)
+                    let dest = virtpy_dir.join(path);
+                    if path.starts_with("include") || path.starts_with("share") {
+                        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+                    }
+                    dest
                 }
                 Err(path) => {
                     let dest = site_packages.join(path);
@@ -825,7 +829,8 @@ fn link_requirements_into_virtpy(
                 }
             };
 
-            symlink_file(&proj_dirs.package_files().join(record.hash), &dest)
+            let src = proj_dirs.package_files().join(record.hash);
+            symlink_file(&src, &dest)
                 .or_else(ignore_target_exists)
                 .unwrap();
         }
