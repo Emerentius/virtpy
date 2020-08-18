@@ -554,6 +554,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 virtpy_path,
                 requirements,
                 python_version,
+                false,
                 options,
             )?;
         }
@@ -607,6 +608,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 &package_folder,
                 requirements,
                 python_version,
+                true,
                 options,
             )?;
 
@@ -625,6 +627,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 virtpy_path,
                 requirements,
                 python_version,
+                false,
                 options,
             )?;
         }
@@ -638,6 +641,7 @@ fn virtpy_add_dependencies(
     virtpy_path: &Path,
     requirements: Vec<Requirement>,
     python_version: PythonVersion,
+    install_global_executable: bool,
     options: Options,
 ) -> Result<(), Box<dyn Error>> {
     let new_deps = new_dependencies(&requirements, proj_dirs, python_version)?;
@@ -660,7 +664,7 @@ fn virtpy_add_dependencies(
         python_version,
         requirements,
         options,
-        None,
+        install_global_executable,
     )
 }
 
@@ -732,7 +736,7 @@ fn link_requirements_into_virtpy(
     python_version: PythonVersion,
     mut requirements: Vec<Requirement>,
     options: Options,
-    additional_executables_path: Option<&Path>,
+    install_global_executable: bool,
 ) -> Result<(), Box<dyn Error>> {
     let site_packages = virtpy_dir.join(format!(
         "lib/python{}/site-packages",
@@ -844,8 +848,8 @@ fn link_requirements_into_virtpy(
             entrypoint.generate_executable(&executables_path, &python_path);
 
             // FIXME: this will silently overwrite old files with the same name
-            if let Some(additional_path) = additional_executables_path {
-                entrypoint.generate_executable(&additional_path, &python_path);
+            if install_global_executable {
+                entrypoint.generate_executable(&proj_dirs.executables(), &python_path);
             }
         }
     }
