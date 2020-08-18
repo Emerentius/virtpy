@@ -799,7 +799,16 @@ fn link_requirements_into_virtpy(
             let dest = match remove_leading_parent_dirs(&record.path) {
                 Ok(path) => {
                     let toplevel_dirs = ["bin", "Scripts", "include", "lib", "lib64", "share"];
-                    assert!(toplevel_dirs.iter().any(|dir| path.starts_with(dir)));
+                    let starts_with_venv_dir =
+                        toplevel_dirs.iter().any(|dir| path.starts_with(dir));
+                    if !starts_with_venv_dir {
+                        println!(
+                            "{}: attempted file placement outside virtpy, ignoring: {}",
+                            distribution.name,
+                            record.path.display()
+                        );
+                        continue;
+                    }
 
                     // executables need to be generated on demand
                     if is_path_of_executable(path) {
