@@ -1,4 +1,3 @@
-use directories::ProjectDirs;
 use python_requirements::Requirement;
 use regex::Regex;
 use std::fmt::Write;
@@ -110,8 +109,8 @@ pub struct DependencyHash(String);
 struct StoredDistributions(HashMap<String, HashMap<DependencyHash, PathBuf>>);
 
 impl StoredDistributions {
-    fn load(data_dir: &Path) -> Result<Self, Box<dyn Error>> {
-        let file = match File::open(data_dir.join(INSTALLED_DISTRIBUTIONS)) {
+    fn load(proj_dirs: &ProjectDirs) -> Result<Self, Box<dyn Error>> {
+        let file = match File::open(proj_dirs.installed_distributions()) {
             Ok(f) => f,
             Err(err) if err.kind() == ErrorKind::NotFound => {
                 return Ok(StoredDistributions(HashMap::new()));
@@ -122,22 +121,12 @@ impl StoredDistributions {
         Ok(serde_json::from_reader(reader)?)
     }
 
-    fn save(&self, data_dir: &Path) -> Result<(), Box<dyn Error>> {
-        let file = File::create(data_dir.join(INSTALLED_DISTRIBUTIONS))?;
+    fn save(&self, proj_dirs: &ProjectDirs) -> Result<(), Box<dyn Error>> {
+        let file = File::create(proj_dirs.installed_distributions())?;
         // NOTE: does this need a BufWriter?
         serde_json::to_writer_pretty(file, self)?;
         Ok(())
     }
-}
-
-fn proj_dir() -> Option<ProjectDirs> {
-    ProjectDirs::from("", "", "virtpy")
-}
-
-fn ensure_project_dir_exists() -> Result<(), Box<dyn Error>> {
-    let proj_dirs = proj_dir().ok_or_else(|| "Couldn't create project directory")?;
-    std::fs::create_dir_all(proj_dirs.data_dir())?;
-    Ok(())
 }
 
 fn serialize_requirements_txt(reqs: &[Requirement]) -> String {
@@ -259,8 +248,7 @@ fn entrypoints(dist_info: &Path) -> Vec<EntryPoint> {
 }
 
 fn register_distribution_files(
-    package_files_target: &Path,
-    dist_infos_target: &Path,
+    proj_dirs: &ProjectDirs,
     install_folder: &Path,
     distribution_name: &str,
     version: &str,
@@ -272,7 +260,7 @@ fn register_distribution_files(
     let src_dist_info = install_folder.join(&dist_info_foldername);
 
     let dst_dist_info_dirname = format!("{},{},{}", distribution_name, version, sha);
-    let dst_dist_info = dist_infos_target.join(&dst_dist_info_dirname);
+    let dst_dist_info = proj_dirs.dist_infos().join(&dst_dist_info_dirname);
 
     if dst_dist_info.exists() {
         // add it here, because it may have been installed by a different
@@ -304,7 +292,7 @@ fn register_distribution_files(
         debug_assert_ne!(file.hash, "");
 
         let src = install_folder.join(path);
-        let dest = package_files_target.join(file.hash);
+        let dest = proj_dirs.package_files().join(file.hash);
         if options.verbose >= 2 {
             println!("    copying {} to {}", src.display(), dest.display());
         }
@@ -373,10 +361,8 @@ fn records(record: &Path) -> csv::Result<impl Iterator<Item = csv::Result<Instal
 
 fn install_and_register_distributions(
     python_path: &Path,
-    data_dir: &Path,
+    proj_dirs: &ProjectDirs,
     distribs: &[Requirement],
-    package_files: &Path,
-    dist_infos: &Path,
     python_version: PythonVersion,
     options: Options,
 ) -> Result<(), Box<dyn Error>> {
@@ -419,7 +405,7 @@ fn install_and_register_distributions(
                 distribs.len()
             );
 
-            let _ = std::fs::write(dist_infos.parent().unwrap().join("pip.log"), pip_log);
+            let _ = std::fs::write(proj_dirs.data().join("pip.log"), pip_log);
         }
     }
     if options.verbose >= 2 {
@@ -431,15 +417,14 @@ fn install_and_register_distributions(
         }
     }
 
-    let mut all_stored_distributions = StoredDistributions::load(data_dir)?;
+    let mut all_stored_distributions = StoredDistributions::load(proj_dirs)?;
     let stored_distributions = all_stored_distributions
         .0
         .entry(python_version.as_string_without_patch())
         .or_default();
     for distrib in new_distribs {
         register_distribution_files(
-            &package_files,
-            &dist_infos,
+            proj_dirs,
             tmp_dir.as_ref(),
             &distrib.name,
             &distrib.version,
@@ -449,17 +434,17 @@ fn install_and_register_distributions(
         );
     }
 
-    all_stored_distributions.save(data_dir)?;
+    all_stored_distributions.save(proj_dirs)?;
 
     Ok(())
 }
 
 fn new_dependencies(
     requirements: &[Requirement],
-    data_dir: &Path,
+    proj_dirs: &ProjectDirs,
     python_version: PythonVersion,
 ) -> Result<Vec<Requirement>, Box<dyn Error>> {
-    let stored_distributions = StoredDistributions::load(data_dir)?;
+    let stored_distributions = StoredDistributions::load(proj_dirs)?;
     let existing_deps = match stored_distributions
         .0
         .get(&python_version.as_string_without_patch())
@@ -498,21 +483,60 @@ struct Options {
     verbose: u8,
 }
 
+struct ProjectDirs(directories::ProjectDirs);
+
+impl ProjectDirs {
+    fn new() -> Option<Self> {
+        directories::ProjectDirs::from("", "", "virtpy").map(Self)
+    }
+
+    fn create_dirs(&self) -> std::io::Result<()> {
+        use std::fs;
+        fs::create_dir_all(self.0.data_dir())?;
+        for path in &[
+            self.installations(),
+            self.dist_infos(),
+            self.package_files(),
+            self.executables(),
+        ] {
+            fs::create_dir(path).or_else(ignore_target_exists)?;
+        }
+        Ok(())
+    }
+
+    fn data(&self) -> &Path {
+        self.0.data_dir()
+    }
+
+    fn installations(&self) -> PathBuf {
+        self.data().join("installations")
+    }
+
+    fn dist_infos(&self) -> PathBuf {
+        self.data().join("dist-infos")
+    }
+
+    fn package_files(&self) -> PathBuf {
+        self.data().join("package_files")
+    }
+
+    fn executables(&self) -> PathBuf {
+        self.data().join("bin")
+    }
+
+    fn installed_distributions(&self) -> PathBuf {
+        self.data().join(INSTALLED_DISTRIBUTIONS)
+    }
+
+    fn package_folder(&self, package: &str) -> PathBuf {
+        self.installations().join(&format!("{}.virtpy", package))
+    }
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
+    let proj_dirs = ProjectDirs::new().unwrap();
     // TODO: create on demand
-    ensure_project_dir_exists()?;
-
-    let proj_dir = proj_dir().unwrap();
-    let data_dir = proj_dir.data_dir();
-
-    let installations = data_dir.join("installations");
-    let package_files = data_dir.join("package_files");
-    let dist_infos = data_dir.join("dist-infos");
-    let executables = data_dir.join("bin");
-    std::fs::create_dir_all(&package_files)?;
-    std::fs::create_dir_all(&dist_infos)?;
-    std::fs::create_dir_all(&installations)?;
-    std::fs::create_dir_all(&executables)?;
+    proj_dirs.create_dirs()?;
 
     let opt = Opt::from_args();
     let options = Options {
@@ -526,11 +550,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             let requirements = python_requirements::read_requirements_txt(&requirements);
 
             virtpy_add_dependencies(
-                data_dir,
+                &proj_dirs,
                 virtpy_path,
                 requirements,
-                &dist_infos,
-                &package_files,
                 python_version,
                 options,
             )?;
@@ -553,7 +575,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             allow_prereleases,
             python,
         } => {
-            let package_folder = package_folder(&installations, &package);
+            let package_folder = proj_dirs.package_folder(&package);
 
             let python_path = python_detection::detect(&python)
                 .ok_or(format!("Couldn't find python executable '{}'", python))?;
@@ -581,11 +603,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             let python_version = python_version(&python_path)?;
 
             virtpy_add_dependencies(
-                data_dir,
+                &proj_dirs,
                 &package_folder,
                 requirements,
-                &dist_infos,
-                &package_files,
                 python_version,
                 options,
             )?;
@@ -594,18 +614,16 @@ fn main() -> Result<(), Box<dyn Error>> {
             std::mem::forget(venv_deleter);
         }
         Command::Uninstall { package } => {
-            delete_executable_virtpy(&package_folder(&installations, &package))?;
+            delete_executable_virtpy(&proj_dirs.package_folder(&package))?;
         }
         Command::PoetryInstall {} => {
             let virtpy_path = DEFAULT_VIRTPY_PATH.as_ref();
             let python_version = python_version(&python_path(virtpy_path))?;
             let requirements = python_requirements::poetry_get_requirements(Path::new("."));
             virtpy_add_dependencies(
-                data_dir,
+                &proj_dirs,
                 virtpy_path,
                 requirements,
-                &dist_infos,
-                &package_files,
                 python_version,
                 options,
             )?;
@@ -616,15 +634,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn virtpy_add_dependencies(
-    data_dir: &Path,
+    proj_dirs: &ProjectDirs,
     virtpy_path: &Path,
     requirements: Vec<Requirement>,
-    dist_infos: &Path,
-    package_files: &Path,
     python_version: PythonVersion,
     options: Options,
 ) -> Result<(), Box<dyn Error>> {
-    let new_deps = new_dependencies(&requirements, data_dir, python_version)?;
+    let new_deps = new_dependencies(&requirements, proj_dirs, python_version)?;
 
     // The virtpy doesn't contain pip so get the appropriate global python
     let python_path = global_python(virtpy_path);
@@ -632,20 +648,16 @@ fn virtpy_add_dependencies(
     //install_and_register_distributions(&requirements, &package_files, &dist_infos)?;
     install_and_register_distributions(
         &python_path,
-        data_dir,
+        proj_dirs,
         &new_deps,
-        &package_files,
-        &dist_infos,
         python_version,
         options,
     )?;
 
     link_requirements_into_virtpy(
-        data_dir,
+        proj_dirs,
         virtpy_path,
         python_version,
-        &package_files,
-        &dist_infos,
         requirements,
         options,
         None,
@@ -656,10 +668,6 @@ fn global_python(virtpy_path: &Path) -> PathBuf {
     // FIXME: On windows, the virtpy python is a copy, so there's no symlink to resolve.
     //        We need to take the version and then do a search for the real python.
     python_path(virtpy_path).canonicalize().unwrap()
-}
-
-fn package_folder(installations: &Path, package: &str) -> PathBuf {
-    installations.join(&format!("{}.virtpy", package))
 }
 
 fn delete_executable_virtpy(package_folder: &Path) -> std::io::Result<()> {
@@ -719,11 +727,9 @@ fn symlink_file(from: &Path, to: &Path) -> std::io::Result<()> {
 }
 
 fn link_requirements_into_virtpy(
-    data_dir: &Path,
+    proj_dirs: &ProjectDirs,
     virtpy_dir: &Path,
     python_version: PythonVersion,
-    package_files: &Path,
-    dist_infos: &Path,
     mut requirements: Vec<Requirement>,
     options: Options,
     additional_executables_path: Option<&Path>,
@@ -740,7 +746,7 @@ fn link_requirements_into_virtpy(
     });
     let requirements = requirements;
 
-    let stored_distributions = StoredDistributions::load(data_dir)?;
+    let stored_distributions = StoredDistributions::load(proj_dirs)?;
     let existing_deps = stored_distributions
         .0
         .get(&python_version.as_string_without_patch())
@@ -756,7 +762,7 @@ fn link_requirements_into_virtpy(
             //       requirements.txt <hash_type>:<value>
             existing_deps.get(&hash)
         }) {
-            Some(path) => dist_infos.join(path),
+            Some(path) => proj_dirs.dist_infos().join(path),
             None => {
                 return Err(format!(
                     "failed to find dist_info for distribution: {:?}",
@@ -810,7 +816,7 @@ fn link_requirements_into_virtpy(
                 }
             };
 
-            symlink_file(&package_files.join(record.hash), &dest)
+            symlink_file(&proj_dirs.package_files().join(record.hash), &dest)
                 .or_else(ignore_target_exists)
                 .unwrap();
         }
