@@ -889,7 +889,7 @@ fn ignore_target_exists(err: std::io::Error) -> std::io::Result<()> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct Distribution {
     name: String,
     version: String,
@@ -924,18 +924,68 @@ fn newly_installed_distributions(pip_log: &str) -> Vec<Distribution> {
     installed_distribs
 }
 
-/*
-#[test]
-fn test_pip_log_parsing() {
-    let text = include_str!("../output.txt");
-    let distribs = newly_installed_distributions(text.to_owned());
-    panic!("{:?}", distribs);
-}
-*/
-
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_pip_log_parsing() {
+        let text = include_str!("../test_files/pip.log");
+        let distribs = newly_installed_distributions(text);
+        assert_eq!(
+            distribs,
+            &[
+                Distribution {
+                    name: "astroid".into(),
+                    version: "2.4.2".into(),
+                    sha: "sha256=bc58d83eb610252fd8de6363e39d4f1d0619c894b0ed24603b881c02e64c7386"
+                        .into()
+                },
+                Distribution {
+                    name: "isort".into(),
+                    version: "4.3.21".into(),
+                    sha: "sha256=6e811fcb295968434526407adb8796944f1988c5b65e8139058f2014cbe100fd"
+                        .into()
+                },
+                Distribution {
+                    name: "lazy_object_proxy".into(),
+                    version: "1.4.3".into(),
+                    sha: "sha256=a6ae12d08c0bf9909ce12385803a543bfe99b95fe01e752536a60af2b7797c62"
+                        .into()
+                },
+                Distribution {
+                    name: "mccabe".into(),
+                    version: "0.6.1".into(),
+                    sha: "sha256=ab8a6258860da4b6677da4bd2fe5dc2c659cff31b3ee4f7f5d64e79735b80d42"
+                        .into()
+                },
+                Distribution {
+                    name: "pylint".into(),
+                    version: "2.5.3".into(),
+                    sha: "sha256=d0ece7d223fe422088b0e8f13fa0a1e8eb745ebffcb8ed53d3e95394b6101a1c"
+                        .into()
+                },
+                Distribution {
+                    name: "six".into(),
+                    version: "1.15.0".into(),
+                    sha: "sha256=8b74bedcbbbaca38ff6d7491d76f2b06b3592611af620f8426e82dddb04a5ced"
+                        .into()
+                },
+                Distribution {
+                    name: "toml".into(),
+                    version: "0.10.1".into(),
+                    sha: "sha256=bda89d5935c2eac546d648028b9901107a595863cb36bae0c73ac804a9b4ce88"
+                        .into()
+                },
+                Distribution {
+                    name: "wrapt".into(),
+                    version: "1.12.1".into(),
+                    sha: "sha256=b62ffa81fb85f4332a4f609cab4ac40709470da05643a082ec1eb88e6d9b97d7"
+                        .into()
+                }
+            ]
+        );
+    }
 
     #[test]
     fn test_records() {
