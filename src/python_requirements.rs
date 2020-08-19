@@ -173,10 +173,6 @@ pub fn get_requirements(package: &str, allow_prereleases: bool) -> Vec<Requireme
         .status()
         .expect("failed to run poetry init");
 
-    // TODO: copy in a valid, minimal venv with pip.
-    //       Otherwise poetry will create one (even though it's never used)
-    //       and it will take multiple seconds.
-
     let toml_path = tmp_dir.as_ref().join("pyproject.toml");
     let mut doc = std::fs::read_to_string(&toml_path)
         .unwrap()
@@ -195,9 +191,6 @@ pub fn get_requirements(package: &str, allow_prereleases: bool) -> Vec<Requireme
 }
 
 pub fn poetry_get_requirements(poetry_proj: &Path) -> Vec<Requirement> {
-    // Tell poetry not to create a venv. Saves a lot of time.
-    // Could also be done with `poetry config virtualenvs.create false --local`
-    // but that's much slower.
     poetry_deactivate_venv_creation(poetry_proj);
 
     // Generating the poetry.lock file without actually installing anything.
@@ -225,7 +218,13 @@ pub fn poetry_get_requirements(poetry_proj: &Path) -> Vec<Requirement> {
     read_requirements_txt(&output)
 }
 
+/// Poetry creates venvs automatically which not only takes a lot of time, it may
+/// also create them in poetry's global directory.
 fn poetry_deactivate_venv_creation(poetry_proj: &Path) {
+    // Manually read the poetry.toml and set the appropriate setting.
+    // Could also be done with `poetry config virtualenvs.create false --local`
+    // but that's much slower, because poetry is a typical python project
+    // that imports EVERYTHING at startup.
     let toml_path = poetry_proj.join("poetry.toml");
     let mut doc = match std::fs::read_to_string(&toml_path) {
         Ok(string) => string,

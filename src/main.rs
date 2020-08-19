@@ -649,7 +649,6 @@ fn virtpy_add_dependencies(
     // The virtpy doesn't contain pip so get the appropriate global python
     let python_path = global_python(virtpy_path);
 
-    //install_and_register_distributions(&requirements, &package_files, &dist_infos)?;
     install_and_register_distributions(
         &python_path,
         proj_dirs,
@@ -758,14 +757,11 @@ fn link_requirements_into_virtpy(
         .unwrap_or_default();
     for distribution in requirements {
         // find compatible hash
-        // TODO: version compatibility check. Right now it just picks the first one
-        //       that's already installed
-        let dist_info_path = match distribution.available_hashes.iter().find_map(|hash| {
-            // println!("searching installed dep, hash = {}", hash.0);
-            //       installation uses <hash_type>=<value>
-            //       requirements.txt <hash_type>:<value>
-            existing_deps.get(&hash)
-        }) {
+        let dist_info_path = match distribution
+            .available_hashes
+            .iter()
+            .find_map(|hash| existing_deps.get(&hash))
+        {
             Some(path) => proj_dirs.dist_infos().join(path),
             None => {
                 // return Err(format!(
@@ -798,7 +794,7 @@ fn link_requirements_into_virtpy(
                 target.display()
             );
         }
-        //std::fs::create_dir(&target);
+
         symlink_dir(&dist_info_path, &target)
             .or_else(ignore_target_exists)
             .unwrap();
