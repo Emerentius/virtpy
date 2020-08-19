@@ -768,16 +768,23 @@ fn link_requirements_into_virtpy(
         }) {
             Some(path) => proj_dirs.dist_infos().join(path),
             None => {
-                return Err(format!(
-                    "failed to find dist_info for distribution: {:?}",
-                    distribution
-                )
-                .into());
-                // println!(
+                // return Err(format!(
                 //     "failed to find dist_info for distribution: {:?}",
                 //     distribution
-                // );
-                // continue;
+                // )
+                // .into());
+                println!(
+                    "failed to find dist_info for distribution: {} {} {}",
+                    distribution.name,
+                    distribution.version,
+                    distribution
+                        .marker
+                        .map_or(String::new(), |m| format!(", {}", m))
+                );
+                if options.verbose >= 2 {
+                    println!("available_hashes: {:#?}", distribution.available_hashes);
+                }
+                continue;
             }
         };
 
