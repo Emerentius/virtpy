@@ -562,13 +562,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let path = PathBuf::from(DEFAULT_VIRTPY_PATH);
             let python_path = python_detection::detect(&python)
                 .ok_or(format!("Couldn't find python executable '{}'", python))?;
-            let output = create_bare_venv(&python_path, &path)?;
-
-            if !output.status.success() {
-                let error = std::str::from_utf8(&output.stderr).unwrap();
-                println!("failed to create virtpy {}: {}", path.display(), error);
-                std::process::exit(1);
-            }
+            create_bare_venv(&python_path, &path)?;
         }
         Command::Install {
             package,
@@ -619,8 +613,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             delete_executable_virtpy(&proj_dirs.package_folder(&package))?;
         }
         Command::PoetryInstall {} => {
-            let virtpy_path = DEFAULT_VIRTPY_PATH.as_ref();
-            let python_version = python_version(&python_path(virtpy_path))?;
+            let virtpy_path: &Path = DEFAULT_VIRTPY_PATH.as_ref();
+            let python_path = match virtpy_path.exists() {
+                true => python_path(virtpy_path).to_owned(),
+                false => python_detection::detect("3").unwrap(),
+            };
+            let python_version = python_version(&python_path)?;
+
+            if !virtpy_path.exists() {
+                create_bare_venv(&python_path, &virtpy_path)?;
+            }
+
             let requirements = python_requirements::poetry_get_requirements(Path::new("."));
             virtpy_add_dependencies(
                 &proj_dirs,
@@ -680,11 +683,16 @@ fn delete_executable_virtpy(package_folder: &Path) -> std::io::Result<()> {
     std::fs::remove_dir_all(package_folder).or_else(ignore_target_doesnt_exist)
 }
 
-fn create_bare_venv(python_path: &Path, path: &Path) -> std::io::Result<std::process::Output> {
-    std::process::Command::new(python_path)
+fn create_bare_venv(python_path: &Path, path: &Path) -> Result<(), Box<dyn Error>> {
+    let output = std::process::Command::new(python_path)
         .args(&["-m", "venv", "--without-pip"])
         .arg(&path)
-        .output()
+        .output()?;
+    if !output.status.success() {
+        let error = std::str::from_utf8(&output.stderr).unwrap();
+        return Err(format!("failed to create virtpy {}: {}", path.display(), error).into());
+    }
+    Ok(())
 }
 
 fn check_poetry_available() -> Result<(), Box<dyn Error>> {
