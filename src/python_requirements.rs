@@ -187,10 +187,13 @@ pub fn get_requirements(package: &str, allow_prereleases: bool) -> Vec<Requireme
     doc["tool"]["poetry"]["dependencies"][package] = toml_edit::Item::Table(dep_table);
     std::fs::write(&toml_path, doc.to_string()).expect("failed to write pyproject.toml");
 
-    poetry_get_requirements(tmp_dir.as_ref())
+    poetry_get_requirements(tmp_dir.as_ref(), false)
 }
 
-pub fn poetry_get_requirements(poetry_proj: &Path) -> Vec<Requirement> {
+pub fn poetry_get_requirements(
+    poetry_proj: &Path,
+    include_dev_dependencies: bool,
+) -> Vec<Requirement> {
     poetry_deactivate_venv_creation(poetry_proj);
 
     // Generating the poetry.lock file without actually installing anything.
@@ -207,9 +210,16 @@ pub fn poetry_get_requirements(poetry_proj: &Path) -> Vec<Requirement> {
 
     debug_assert!(poetry_proj.join("poetry.lock").exists());
 
-    let output = Command::new("poetry")
+    let mut command = Command::new("poetry");
+    command
         .current_dir(poetry_proj)
-        .args(&["export", "-f", "requirements.txt"])
+        .args(&["export", "-f", "requirements.txt"]);
+
+    if include_dev_dependencies {
+        command.arg("--dev");
+    }
+
+    let output = command
         .output()
         .expect("failed to run poetry export")
         .stdout;

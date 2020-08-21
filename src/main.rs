@@ -624,7 +624,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 create_bare_venv(&python_path, &virtpy_path)?;
             }
 
-            let requirements = python_requirements::poetry_get_requirements(Path::new("."));
+            let requirements = python_requirements::poetry_get_requirements(Path::new("."), true);
             virtpy_add_dependencies(
                 &proj_dirs,
                 virtpy_path,
