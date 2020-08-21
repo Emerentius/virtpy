@@ -1,4 +1,5 @@
 use python_requirements::Requirement;
+use rand::Rng;
 use regex::Regex;
 use std::fmt::Write;
 use std::{
@@ -498,6 +499,7 @@ impl ProjectDirs {
             self.dist_infos(),
             self.package_files(),
             self.executables(),
+            self.virtpys(),
         ] {
             fs::create_dir(path).or_else(ignore_target_exists)?;
         }
@@ -510,6 +512,10 @@ impl ProjectDirs {
 
     fn installations(&self) -> PathBuf {
         self.data().join("installations")
+    }
+
+    fn virtpys(&self) -> PathBuf {
+        self.data().join("virtpys")
     }
 
     fn dist_infos(&self) -> PathBuf {
@@ -562,7 +568,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let path = PathBuf::from(DEFAULT_VIRTPY_PATH);
             let python_path = python_detection::detect(&python)
                 .ok_or(format!("Couldn't find python executable '{}'", python))?;
-            create_bare_venv(&python_path, &path)?;
+            create_virtpy(&proj_dirs, &python_path, &path)?;
         }
         Command::Install {
             package,
@@ -588,7 +594,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             let requirements = python_requirements::get_requirements(&package, allow_prereleases);
 
-            create_bare_venv(&python_path, &package_folder)?;
+            create_virtpy(&proj_dirs, &python_path, &package_folder)?;
 
             // if anything goes wrong, try to delete the incomplete installation
             let venv_deleter = scopeguard::guard((), |_| {
@@ -621,7 +627,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let python_version = python_version(&python_path)?;
 
             if !virtpy_path.exists() {
-                create_bare_venv(&python_path, &virtpy_path)?;
+                create_virtpy(&proj_dirs, &python_path, &virtpy_path)?;
             }
 
             let requirements = python_requirements::poetry_get_requirements(Path::new("."), true);
@@ -680,10 +686,42 @@ fn delete_executable_virtpy(package_folder: &Path) -> std::io::Result<()> {
     println!("removing {}", package_folder.display());
     assert!(!package_folder.exists() || package_folder.join("pyvenv.cfg").exists());
     assert_eq!(package_folder.extension(), Some("virtpy".as_ref()));
+
+    let metadata = package_folder.symlink_metadata()?;
+    // seems like a TOCTTOU race condition, but io::ErrorKind doesn't have a variant
+    // for not-a-symlink so we can't deduce it from read_link's error
+    if metadata.file_type().is_symlink() {
+        let real_package_folder = package_folder.read_link()?;
+        std::fs::remove_dir_all(real_package_folder).or_else(ignore_target_doesnt_exist)?;
+    }
+    // TODO: Does this need to call remove_file, if it's a symlink?
     std::fs::remove_dir_all(package_folder).or_else(ignore_target_doesnt_exist)
 }
 
-fn create_bare_venv(python_path: &Path, path: &Path) -> Result<(), Box<dyn Error>> {
+fn create_virtpy(
+    project_dirs: &ProjectDirs,
+    python_path: &Path,
+    path: &Path,
+) -> Result<(), Box<dyn Error>> {
+    let mut rng = rand::thread_rng();
+    let id = std::iter::repeat_with(|| rng.sample(rand::distributions::Alphanumeric))
+        .take(12)
+        .collect::<String>();
+
+    let central_path = project_dirs.virtpys().join(id);
+
+    // TODO: regenerate on collision.
+    // Maybe use a UUID?
+    assert!(!central_path.exists());
+
+    _create_bare_venv(python_path, &central_path)?;
+
+    symlink_dir(&central_path, path)?;
+
+    Ok(())
+}
+
+fn _create_bare_venv(python_path: &Path, path: &Path) -> Result<(), Box<dyn Error>> {
     let output = std::process::Command::new(python_path)
         .args(&["-m", "venv", "--without-pip"])
         .arg(&path)
@@ -803,6 +841,7 @@ fn link_requirements_into_virtpy(
             );
         }
 
+        // TODO: create directory and hardlink contents
         symlink_dir(&dist_info_path, &target)
             .or_else(ignore_target_exists)
             .unwrap();
@@ -845,7 +884,8 @@ fn link_requirements_into_virtpy(
             };
 
             let src = proj_dirs.package_files().join(record.hash);
-            symlink_file(&src, &dest)
+            std::fs::hard_link(&src, &dest)
+                // TODO: can this error exist?
                 .or_else(ignore_target_exists)
                 .unwrap();
         }
