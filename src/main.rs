@@ -47,6 +47,10 @@ enum Command {
         package: String,
     },
     PoetryInstall {},
+    Gc {
+        #[structopt(long)]
+        remove: bool,
+    },
 }
 
 const DEFAULT_VIRTPY_PATH: &str = ".virtpy";
@@ -642,6 +646,39 @@ fn main() -> Result<(), Box<dyn Error>> {
                 options,
             )?;
         }
+        Command::Gc { remove } => {
+            let mut danglers = vec![];
+            for virtpy in proj_dirs.virtpys().read_dir().unwrap() {
+                let virtpy = virtpy.unwrap();
+                assert!(virtpy.file_type().unwrap().is_dir());
+                let path = virtpy.path();
+
+                match check_virtpy(&path) {
+                    Ok(()) => (),
+                    Err(VirtpyError::Dangling { link }) => danglers.push((path, link)),
+                    Err(VirtpyError::Io(err)) => {
+                        println!("failed to check {}: {}", path.display(), err)
+                    }
+                };
+            }
+
+            if danglers.len() != 0 {
+                println!("found {} missing virtpys.", danglers.len());
+
+                if remove {
+                    for (target, _) in danglers {
+                        delete_executable_virtpy(&target).unwrap();
+                    }
+                } else {
+                    // FIXME: see message
+                    println!("If you've moved some of these, run FIXME ADD COMMANDNAME to reconnect them or `virtpy gc --remove` to delete them\n");
+
+                    for (target, virtpy_gone_awol) in danglers {
+                        println!("{} => {}", virtpy_gone_awol.display(), target.display());
+                    }
+                }
+            }
+        }
     }
 
     Ok(())
@@ -759,6 +796,51 @@ fn create_virtpy(
     Ok(())
 }
 
+#[derive(Debug)]
+enum VirtpyError {
+    Dangling { link: PathBuf },
+    Io(std::io::Error),
+}
+
+impl From<std::io::Error> for VirtpyError {
+    fn from(val: std::io::Error) -> Self {
+        Self::Io(val)
+    }
+}
+
+fn check_virtpy(virtpy_path: &Path) -> Result<(), VirtpyError> {
+    let metadata = virtpy_path.join(CENTRAL_METADATA);
+
+    let link_location =
+        PathBuf::from(std::fs::read_to_string(metadata.join("link_location")).unwrap());
+
+    let backlink = link_location.join(LINK_METADATA).join("central_location");
+    std::fs::read_to_string(&backlink)
+        .map(PathBuf::from)
+        .map(|link_target| {
+            match virtpy_path.canonicalize().unwrap() == link_target.canonicalize().unwrap() {
+                true => Ok(()),
+                false => Err(VirtpyError::Dangling {
+                    link: link_location.clone(),
+                }),
+            }
+        })
+        .or_else(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                Ok(Err(VirtpyError::Dangling {
+                    link: link_location.clone(),
+                }))
+            } else {
+                Err(err)
+            }
+        })
+        .unwrap_or_else(|err| {
+            panic!(
+                "failed to read virtpy link target through backlink: {}",
+                err
+            )
+        })
+}
 fn _create_bare_venv(python_path: &Path, path: &Path) -> Result<(), Box<dyn Error>> {
     let output = std::process::Command::new(python_path)
         .args(&["-m", "venv", "--without-pip"])
