@@ -51,6 +51,8 @@ enum Command {
 
 const DEFAULT_VIRTPY_PATH: &str = ".virtpy";
 const INSTALLED_DISTRIBUTIONS: &str = "installed_distributions.json";
+const CENTRAL_METADATA: &str = "virtpy_central_metadata";
+const LINK_METADATA: &str = "virtpy_link_metadata";
 
 // probably missing prereleases and such
 // TODO: check official scheme
@@ -733,7 +735,7 @@ fn create_virtpy(
     }
 
     {
-        let metadata_dir = central_path.join("virtpy_central_metadata");
+        let metadata_dir = central_path.join(CENTRAL_METADATA);
         std::fs::create_dir(&metadata_dir)?;
         std::fs::write(
             metadata_dir.join("link_location"),
@@ -742,7 +744,7 @@ fn create_virtpy(
     }
 
     {
-        let link_metadata_dir = path.join("virtpy_link_metadata");
+        let link_metadata_dir = path.join(LINK_METADATA);
         std::fs::create_dir(&link_metadata_dir)?;
         std::fs::write(
             link_metadata_dir.join("link_location"),
@@ -819,6 +821,17 @@ fn link_requirements_into_virtpy(
     options: Options,
     install_global_executable: bool,
 ) -> Result<(), Box<dyn Error>> {
+    // FIXME: when new top-level directories are created in the central venv,
+    //        they should also be symlinked in the virtpy
+    let central_location =
+        std::fs::read_to_string(&virtpy_dir.join(LINK_METADATA).join("central_location")).unwrap();
+    let central_location = Path::new(&central_location);
+
+    assert!(central_location.exists());
+    assert_eq!(central_location.parent().unwrap(), proj_dirs.virtpys());
+
+    let virtpy_dir = central_location;
+
     let site_packages = virtpy_dir.join(format!(
         "lib/python{}/site-packages",
         python_version.as_string_without_patch()
