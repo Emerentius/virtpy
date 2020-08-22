@@ -716,7 +716,43 @@ fn create_virtpy(
 
     _create_bare_venv(python_path, &central_path)?;
 
-    symlink_dir(&central_path, path)?;
+    std::fs::create_dir(path)?;
+    for entry in central_path.read_dir()? {
+        let entry = entry?;
+        let target = path.join(entry.file_name());
+        let filetype = entry.file_type()?;
+        if filetype.is_dir() {
+            symlink_dir(&entry.path(), &target)?;
+        } else if filetype.is_file() {
+            symlink_file(&entry.path(), &target)?;
+        } else if filetype.is_symlink() {
+            // the only symlink should be lib64 pointing at lib
+            // assert_eq!(entry.file_name(), "lib64");
+            symlink_dir(&entry.path(), &target)?;
+        }
+    }
+
+    {
+        let metadata_dir = central_path.join("virtpy_central_metadata");
+        std::fs::create_dir(&metadata_dir)?;
+        std::fs::write(
+            metadata_dir.join("link_location"),
+            path.as_os_str().to_str().unwrap(),
+        )?;
+    }
+
+    {
+        let link_metadata_dir = path.join("virtpy_link_metadata");
+        std::fs::create_dir(&link_metadata_dir)?;
+        std::fs::write(
+            link_metadata_dir.join("link_location"),
+            path.as_os_str().to_str().unwrap(),
+        )?;
+        std::fs::write(
+            link_metadata_dir.join("central_location"),
+            central_path.as_os_str().to_str().unwrap(),
+        )?;
+    }
 
     Ok(())
 }
