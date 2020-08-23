@@ -589,7 +589,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             if package_folder.exists() {
                 if force {
-                    delete_executable_virtpy(&package_folder)?;
+                    delete_virtpy(&package_folder)?;
                 } else {
                     println!("package is already installed.");
                     return Ok(());
@@ -604,7 +604,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             // if anything goes wrong, try to delete the incomplete installation
             let venv_deleter = scopeguard::guard((), |_| {
-                let _ = delete_executable_virtpy(&package_folder);
+                let _ = delete_virtpy(&package_folder);
             });
 
             let python_version = python_version(&python_path)?;
@@ -622,7 +622,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             std::mem::forget(venv_deleter);
         }
         Command::Uninstall { package } => {
-            delete_executable_virtpy(&proj_dirs.package_folder(&package))?;
+            delete_virtpy(&proj_dirs.package_folder(&package))?;
         }
         Command::PoetryInstall {} => {
             let virtpy_path: &Path = DEFAULT_VIRTPY_PATH.as_ref();
@@ -667,7 +667,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
                 if remove {
                     for (target, _) in danglers {
-                        delete_executable_virtpy(&target).unwrap();
+                        delete_virtpy(&target).unwrap();
                     }
                 } else {
                     // FIXME: see message
@@ -721,10 +721,16 @@ fn global_python(virtpy_path: &Path) -> PathBuf {
     python_path(virtpy_path).canonicalize().unwrap()
 }
 
-fn delete_executable_virtpy(package_folder: &Path) -> std::io::Result<()> {
+fn delete_virtpy(package_folder: &Path) -> std::io::Result<()> {
+    // FIXME: If called on the link, it should also remove the backing store.
+    //        If called on the backing store, it should remove the link, if
+    //        it's still pointing at it.
     println!("removing {}", package_folder.display());
-    assert!(!package_folder.exists() || package_folder.join("pyvenv.cfg").exists());
-    assert_eq!(package_folder.extension(), Some("virtpy".as_ref()));
+    assert!(
+        !package_folder.exists()
+            || package_folder.join(CENTRAL_METADATA).exists()
+            || package_folder.join(LINK_METADATA).exists()
+    );
 
     let metadata = package_folder.symlink_metadata()?;
     // seems like a TOCTTOU race condition, but io::ErrorKind doesn't have a variant
