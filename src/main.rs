@@ -549,6 +549,44 @@ impl ProjectDirs {
     }
 }
 
+// TODO: use for all virtpy paths
+struct VirtpyDirs {
+    location: PathBuf,
+    python_version: PythonVersion,
+}
+
+impl VirtpyDirs {
+    fn from_path(location: PathBuf) -> Self {
+        Self {
+            python_version: python_version(&python_path(&location)).unwrap(),
+            location,
+        }
+    }
+
+    fn dist_info(&self, package: &str) -> Option<PathBuf> {
+        dbg!(self.site_packages())
+            .read_dir()
+            .unwrap()
+            .map(Result::unwrap)
+            .map(|dir_entry| dir_entry.path())
+            .find(|path| {
+                let entry_name = path.file_name().unwrap().to_str().unwrap();
+                entry_name.starts_with(package) && entry_name.ends_with(".dist-info")
+            })
+    }
+
+    fn site_packages(&self) -> PathBuf {
+        if cfg!(target_family = "unix") {
+            self.location.join(format!(
+                "lib/python{}/site-packages",
+                self.python_version.as_string_without_patch()
+            ))
+        } else {
+            unimplemented!()
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let proj_dirs = ProjectDirs::new().unwrap();
     // TODO: create on demand
@@ -595,7 +633,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             if package_folder.exists() {
                 if force {
-                    delete_virtpy_link(&package_folder)?;
+                    delete_executable_virtpy(&proj_dirs, &package)?;
                 } else {
                     println!("package is already installed.");
                     return Ok(());
@@ -629,7 +667,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             std::mem::forget(venv_deleter);
         }
         Command::Uninstall { package } => {
-            delete_virtpy_link(&proj_dirs.package_folder(&package))?;
+            delete_executable_virtpy(&proj_dirs, &package)?;
         }
         Command::PoetryInstall {} => {
             let virtpy_path: &Path = DEFAULT_VIRTPY_PATH.as_ref();
@@ -695,6 +733,41 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[must_use]
+fn delete_global_package_executables(
+    proj_dirs: &ProjectDirs,
+    virtpy_dirs: &VirtpyDirs,
+    package: &str,
+) -> impl Iterator<Item = std::io::Result<()>> {
+    let dist_info = virtpy_dirs.dist_info(package).unwrap();
+
+    println!("searching executables");
+
+    let executables = records(&dist_info.join("RECORD"))
+        .unwrap()
+        .map(Result::unwrap)
+        .flat_map(|record| {
+            remove_leading_parent_dirs(&record.path)
+                .ok()
+                .map(ToOwned::to_owned)
+        })
+        .filter(|path| is_path_of_executable(path))
+        .map(|path| path.file_name().unwrap().to_owned())
+        .collect::<Vec<_>>();
+
+    println!("executables found");
+
+    let exe_dir = proj_dirs.executables();
+    executables
+        .into_iter()
+        .map(move |executable| exe_dir.join(executable))
+        .inspect(|exe| {
+            println!("{}", exe.display());
+            assert!(exe.is_file(), "exe is not a file: {}", exe.display());
+        })
+        .map(std::fs::remove_file)
+}
+
 fn virtpy_add_dependencies(
     proj_dirs: &ProjectDirs,
     virtpy_path: &Path,
@@ -736,6 +809,14 @@ fn global_python(virtpy_path: &Path) -> PathBuf {
 
 fn is_not_found(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::NotFound
+}
+
+fn delete_executable_virtpy(proj_dirs: &ProjectDirs, package: &str) -> Result<(), Box<dyn Error>> {
+    let virtpy_path = proj_dirs.package_folder(&package);
+    let virtpy_dirs = VirtpyDirs::from_path(virtpy_path);
+    delete_global_package_executables(&proj_dirs, &virtpy_dirs, &package).for_each(Result::unwrap);
+
+    delete_virtpy_link(&proj_dirs.package_folder(&package))
 }
 
 fn delete_virtpy_link(package_folder: &Path) -> Result<(), Box<dyn Error>> {
