@@ -653,12 +653,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 assert!(virtpy.file_type().unwrap().is_dir());
                 let path = virtpy.path();
 
-                match check_virtpy(&path) {
-                    Ok(()) => (),
-                    Err(VirtpyError::Dangling { link }) => danglers.push((path, link)),
-                    Err(VirtpyError::Io(err)) => {
-                        println!("failed to check {}: {}", path.display(), err)
-                    }
+                match virtpy_status(&path) {
+                    Ok(VirtpyStatus::Ok { .. }) => (),
+                    Ok(VirtpyStatus::Dangling { link }) => danglers.push((path, link)),
+                    Err(err) => println!("failed to check {}: {}", path.display(), err),
                 };
             }
 
@@ -804,50 +802,59 @@ fn create_virtpy(
     Ok(())
 }
 
+fn paths_match(virtpy: &Path, link_target: &Path) -> std::io::Result<bool> {
+    Ok(virtpy.canonicalize()? == link_target.canonicalize()?)
+}
+
+fn virtpy_link_location(virtpy: &Path) -> std::io::Result<PathBuf> {
+    let backlink = virtpy.join(CENTRAL_METADATA).join("link_location");
+    std::fs::read_to_string(backlink).map(PathBuf::from)
+}
+
+fn virtpy_link_target(virtpy_link: &Path) -> std::io::Result<PathBuf> {
+    let link = virtpy_link.join(LINK_METADATA).join("central_location");
+    std::fs::read_to_string(link).map(PathBuf::from)
+}
+
+fn virtpy_link_supposed_location(virtpy_link: &Path) -> std::io::Result<PathBuf> {
+    let link = virtpy_link.join(LINK_METADATA).join("link_location");
+    std::fs::read_to_string(link).map(PathBuf::from)
+}
+
 #[derive(Debug)]
-enum VirtpyError {
+enum VirtpyStatus {
+    Ok { matching_link: PathBuf },
     Dangling { link: PathBuf },
-    Io(std::io::Error),
 }
 
-impl From<std::io::Error> for VirtpyError {
-    fn from(val: std::io::Error) -> Self {
-        Self::Io(val)
-    }
-}
-
-fn check_virtpy(virtpy_path: &Path) -> Result<(), VirtpyError> {
+fn virtpy_status(virtpy_path: &Path) -> std::io::Result<VirtpyStatus> {
     let metadata = virtpy_path.join(CENTRAL_METADATA);
 
     let link_location =
         PathBuf::from(std::fs::read_to_string(metadata.join("link_location")).unwrap());
 
-    let backlink = link_location.join(LINK_METADATA).join("central_location");
-    std::fs::read_to_string(&backlink)
-        .map(PathBuf::from)
-        .map(|link_target| {
-            match virtpy_path.canonicalize().unwrap() == link_target.canonicalize().unwrap() {
-                true => Ok(()),
-                false => Err(VirtpyError::Dangling {
-                    link: link_location.clone(),
-                }),
-            }
-        })
-        .or_else(|err| {
-            if err.kind() == std::io::ErrorKind::NotFound {
-                Ok(Err(VirtpyError::Dangling {
-                    link: link_location.clone(),
-                }))
-            } else {
-                Err(err)
-            }
-        })
-        .unwrap_or_else(|err| {
-            panic!(
-                "failed to read virtpy link target through backlink: {}",
-                err
-            )
-        })
+    let link_target = match virtpy_link_target(&link_location) {
+        Ok(target) => PathBuf::from(target),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(VirtpyStatus::Dangling {
+                link: link_location,
+            })
+        }
+        Err(err) => panic!(
+            "failed to read virtpy link target through backlink: {}",
+            err
+        ),
+    };
+
+    if !paths_match(virtpy_path, &link_target).unwrap() {
+        return Ok(VirtpyStatus::Dangling {
+            link: link_location,
+        });
+    }
+
+    Ok(VirtpyStatus::Ok {
+        matching_link: link_location,
+    })
 }
 fn _create_bare_venv(python_path: &Path, path: &Path) -> Result<(), Box<dyn Error>> {
     let output = std::process::Command::new(python_path)
