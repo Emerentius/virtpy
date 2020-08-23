@@ -664,7 +664,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
                 match virtpy_status(&path) {
                     Ok(VirtpyStatus::Ok { .. }) => (),
-                    Ok(VirtpyStatus::Dangling { link }) => danglers.push((path, link)),
+                    Ok(VirtpyStatus::Orphaned { link }) => danglers.push((path, link)),
                     Err(err) => println!("failed to check {}: {}", path.display(), err),
                 };
             }
@@ -680,7 +680,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 } else {
                     // FIXME: see message
-                    println!("If you've moved some of these, run FIXME ADD COMMANDNAME to reconnect them or `virtpy gc --remove` to delete them\n");
+                    println!("If you've moved some of these, recreate new ones in their place as they'll break when the orphaned backing stores are deleted.\nRun `virtpy gc --remove` to delete orphans\n");
 
                     for (target, virtpy_gone_awol) in danglers {
                         println!("{} => {}", virtpy_gone_awol.display(), target.display());
@@ -886,7 +886,7 @@ fn virtpy_link_supposed_location(virtpy_link: &Path) -> std::io::Result<PathBuf>
 #[derive(Debug)]
 enum VirtpyStatus {
     Ok { matching_link: PathBuf },
-    Dangling { link: PathBuf },
+    Orphaned { link: PathBuf },
 }
 
 fn virtpy_status(virtpy_path: &Path) -> std::io::Result<VirtpyStatus> {
@@ -895,7 +895,7 @@ fn virtpy_status(virtpy_path: &Path) -> std::io::Result<VirtpyStatus> {
     let link_target = match virtpy_link_target(&link_location) {
         Ok(target) => PathBuf::from(target),
         Err(err) if is_not_found(&err) => {
-            return Ok(VirtpyStatus::Dangling {
+            return Ok(VirtpyStatus::Orphaned {
                 link: link_location,
             })
         }
@@ -906,7 +906,7 @@ fn virtpy_status(virtpy_path: &Path) -> std::io::Result<VirtpyStatus> {
     };
 
     if !paths_match(virtpy_path, &link_target).unwrap() {
-        return Ok(VirtpyStatus::Dangling {
+        return Ok(VirtpyStatus::Orphaned {
             link: link_location,
         });
     }
