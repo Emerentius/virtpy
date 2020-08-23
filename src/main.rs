@@ -221,7 +221,9 @@ if __name__ == '__main__':
     fn generate_executable(&self, dest: &Path, python_path: &Path) {
         let content = self.executable_code(&python_path);
         let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create(true).truncate(true);
+        // create_new causes failure if the target already exists
+        // TODO: handle error
+        opts.write(true).create_new(true).truncate(true);
         #[cfg(target_family = "unix")]
         {
             use std::os::unix::fs::OpenOptionsExt;
@@ -1117,7 +1119,6 @@ fn link_requirements_into_virtpy(
             let python_path = executables_path.join("python");
             entrypoint.generate_executable(&executables_path, &python_path);
 
-            // FIXME: this will silently overwrite old files with the same name
             if install_global_executable {
                 entrypoint.generate_executable(&proj_dirs.executables(), &python_path);
             }
