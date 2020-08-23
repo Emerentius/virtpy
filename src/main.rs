@@ -27,27 +27,33 @@ enum Command {
     /// Create a new virtpy environment
     New {
         // path: Option<PathBuf>,
+        /// The python to use. Either a path or an indicator of the form `python3.7` or `3.7`
         #[structopt(short, long, default_value = "python3")]
         python: String,
     },
     /// Add dependency to virtpy
-    Add {
-        requirements: PathBuf,
-    },
+    Add { requirements: PathBuf },
+    /// Install executable package into an isolated virtpy
     Install {
         package: String,
+        /// Reinstall, if it already exists
         #[structopt(short, long)]
         force: bool,
         #[structopt(long)]
         allow_prereleases: bool,
+        /// The python to use. Either a path or an indicator of the form `python3.7` or `3.7`
         #[structopt(short, long, default_value = "python3")]
         python: String,
     },
-    Uninstall {
-        package: String,
-    },
+    /// Delete the virtpy of a previously installed executable package
+    ///
+    /// FIXME: Does not yet remove the binaries in $PROJECT_DIR/bin
+    Uninstall { package: String },
+    /// Install the dependencies in the local .virtpy according to the poetry config
     PoetryInstall {},
+    /// Find virtpys that have been moved or deleted and unneeded files in the central store.
     Gc {
+        /// Delete unnecessary files
         #[structopt(long)]
         remove: bool,
     },
