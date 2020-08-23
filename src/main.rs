@@ -46,8 +46,6 @@ enum Command {
         python: String,
     },
     /// Delete the virtpy of a previously installed executable package
-    ///
-    /// FIXME: Does not yet remove the binaries in $PROJECT_DIR/bin
     Uninstall { package: String },
     /// Install the dependencies in the local .virtpy according to the poetry config
     PoetryInstall {},
@@ -719,7 +717,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                         delete_virtpy_backing(&backing).unwrap();
                     }
                 } else {
-                    // FIXME: see message
                     println!("If you've moved some of these, recreate new ones in their place as they'll break when the orphaned backing stores are deleted.\nRun `virtpy gc --remove` to delete orphans\n");
 
                     for (target, virtpy_gone_awol) in danglers {
