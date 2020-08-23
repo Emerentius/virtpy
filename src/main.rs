@@ -6,7 +6,7 @@ use std::{
     collections::HashMap,
     error::Error,
     fs::File,
-    io::{BufReader, ErrorKind},
+    io::BufReader,
     path::{Path, PathBuf},
 };
 use structopt::StructOpt;
@@ -119,7 +119,7 @@ impl StoredDistributions {
     fn load(proj_dirs: &ProjectDirs) -> Result<Self, Box<dyn Error>> {
         let file = match File::open(proj_dirs.installed_distributions()) {
             Ok(f) => f,
-            Err(err) if err.kind() == ErrorKind::NotFound => {
+            Err(err) if is_not_found(&err) => {
                 return Ok(StoredDistributions(HashMap::new()));
             }
             Err(err) => return Err(err.into()),
@@ -238,9 +238,7 @@ fn entrypoints(dist_info: &Path) -> Vec<EntryPoint> {
     let ini = ini::Ini::load_from_file(ini);
 
     match ini {
-        Err(ini::ini::Error::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {
-            return vec![]
-        }
+        Err(ini::ini::Error::Io(err)) if is_not_found(&err) => return vec![],
         _ => (),
     };
     let ini = ini.unwrap();
@@ -307,7 +305,7 @@ fn register_distribution_files(
         // TODO: use rename, if on same filesystem
         let res = std::fs::copy(src, dest);
         match &res {
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Err(err) if is_not_found(err) => {
                 print_error_missing_file_in_record(&dist_info_foldername, &file.path)
             }
             _ => {
@@ -890,7 +888,7 @@ fn virtpy_status(virtpy_path: &Path) -> std::io::Result<VirtpyStatus> {
 
     let link_target = match virtpy_link_target(&link_location) {
         Ok(target) => PathBuf::from(target),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+        Err(err) if is_not_found(&err) => {
             return Ok(VirtpyStatus::Dangling {
                 link: link_location,
             })
@@ -932,7 +930,7 @@ fn check_poetry_available() -> Result<(), Box<dyn Error>> {
         .status()
         //.output()
         .map_err(|err| -> Box<dyn Error> {
-            if err.kind() == std::io::ErrorKind::NotFound {
+            if is_not_found(&err) {
                 "this command requires poetry to be installed and on the PATH. (https://github.com/python-poetry/poetry)".into()
             } else {
                 Box::new(err).into()
@@ -1093,7 +1091,7 @@ fn link_requirements_into_virtpy(
                 // TODO: can this error exist? Docs don't say anything about this being a failure
                 //       condition
                 Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => (),
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                Err(err) if is_not_found(&err) => {
                     print_error_missing_file_in_record(&dist_info_foldername, &src)
                 }
                 Err(err) => panic!(
@@ -1144,13 +1142,13 @@ fn remove_leading_parent_dirs(mut path: &Path) -> Result<&Path, &Path> {
     }
 }
 
-fn ignore_target_doesnt_exist(err: std::io::Error) -> std::io::Result<()> {
-    if err.kind() == std::io::ErrorKind::NotFound {
-        Ok(())
-    } else {
-        Err(err)
-    }
-}
+// fn ignore_target_doesnt_exist(err: std::io::Error) -> std::io::Result<()> {
+//     if is_not_found(&err) {
+//         Ok(())
+//     } else {
+//         Err(err)
+//     }
+// }
 
 fn ignore_target_exists(err: std::io::Error) -> std::io::Result<()> {
     if err.kind() == std::io::ErrorKind::AlreadyExists {

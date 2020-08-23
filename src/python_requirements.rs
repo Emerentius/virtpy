@@ -238,7 +238,7 @@ fn poetry_deactivate_venv_creation(poetry_proj: &Path) {
     let toml_path = poetry_proj.join("poetry.toml");
     let mut doc = match std::fs::read_to_string(&toml_path) {
         Ok(string) => string,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => "[virtualenvs]".to_owned(),
+        Err(err) if crate::is_not_found(&err) => "[virtualenvs]".to_owned(),
         Err(err) => panic!("failed to read poetry.toml: {}", err),
     }
     .parse::<toml_edit::Document>()
