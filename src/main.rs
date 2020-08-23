@@ -777,22 +777,24 @@ fn create_virtpy(
         }
     }
 
+    let abs_path = path
+        .canonicalize()
+        .unwrap()
+        .into_os_string()
+        .into_string()
+        .unwrap();
     {
         let metadata_dir = central_path.join(CENTRAL_METADATA);
         std::fs::create_dir(&metadata_dir)?;
-        std::fs::write(
-            metadata_dir.join("link_location"),
-            path.as_os_str().to_str().unwrap(),
-        )?;
+        std::fs::write(metadata_dir.join("link_location"), &abs_path)?;
     }
 
     {
         let link_metadata_dir = path.join(LINK_METADATA);
         std::fs::create_dir(&link_metadata_dir)?;
-        std::fs::write(
-            link_metadata_dir.join("link_location"),
-            path.as_os_str().to_str().unwrap(),
-        )?;
+        std::fs::write(link_metadata_dir.join("link_location"), &abs_path)?;
+
+        debug_assert!(central_path.is_absolute());
         std::fs::write(
             link_metadata_dir.join("central_location"),
             central_path.as_os_str().to_str().unwrap(),
