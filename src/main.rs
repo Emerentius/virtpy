@@ -557,6 +557,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     match opt.cmd {
         Command::Add { requirements } => {
             let virtpy_path = DEFAULT_VIRTPY_PATH.as_ref();
+            let token = check_virtpy_link(virtpy_path)?;
             let python_version = python_version(&python_path(virtpy_path))?;
             let requirements = std::fs::read_to_string(requirements)?;
             let requirements = python_requirements::read_requirements_txt(&requirements);
@@ -568,6 +569,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 python_version,
                 false,
                 options,
+                token,
             )?;
         }
         Command::New { python } => {
@@ -600,7 +602,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             let requirements = python_requirements::get_requirements(&package, allow_prereleases);
 
-            create_virtpy(&proj_dirs, &python_path, &package_folder)?;
+            let token = create_virtpy(&proj_dirs, &python_path, &package_folder)?;
 
             // if anything goes wrong, try to delete the incomplete installation
             let venv_deleter = scopeguard::guard((), |_| {
@@ -616,6 +618,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 python_version,
                 true,
                 options,
+                token,
             )?;
 
             // if everything succeeds, keep the venv
@@ -626,15 +629,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Command::PoetryInstall {} => {
             let virtpy_path: &Path = DEFAULT_VIRTPY_PATH.as_ref();
-            let python_path = match virtpy_path.exists() {
-                true => python_path(virtpy_path).to_owned(),
-                false => python_detection::detect("3").unwrap(),
+            let (python_path, token) = match virtpy_path.exists() {
+                true => (
+                    python_path(virtpy_path).to_owned(),
+                    check_virtpy_link(virtpy_path)?,
+                ),
+                false => {
+                    let python_path = python_detection::detect("3").unwrap();
+                    let token = create_virtpy(&proj_dirs, &python_path, &virtpy_path)?;
+                    (python_path, token)
+                }
             };
             let python_version = python_version(&python_path)?;
-
-            if !virtpy_path.exists() {
-                create_virtpy(&proj_dirs, &python_path, &virtpy_path)?;
-            }
 
             let requirements = python_requirements::poetry_get_requirements(Path::new("."), true);
             virtpy_add_dependencies(
@@ -644,6 +650,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 python_version,
                 false,
                 options,
+                token,
             )?;
         }
         Command::Gc { remove } => {
@@ -689,6 +696,7 @@ fn virtpy_add_dependencies(
     python_version: PythonVersion,
     install_global_executable: bool,
     options: Options,
+    virtpy_checked_token: VirtpyChecked,
 ) -> Result<(), Box<dyn Error>> {
     let new_deps = new_dependencies(&requirements, proj_dirs, python_version)?;
 
@@ -710,6 +718,7 @@ fn virtpy_add_dependencies(
         requirements,
         options,
         install_global_executable,
+        virtpy_checked_token,
     )
 }
 
@@ -745,7 +754,7 @@ fn create_virtpy(
     project_dirs: &ProjectDirs,
     python_path: &Path,
     path: &Path,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<VirtpyChecked, Box<dyn Error>> {
     let mut rng = rand::thread_rng();
     let id = std::iter::repeat_with(|| rng.sample(rand::distributions::Alphanumeric))
         .take(12)
@@ -799,7 +808,55 @@ fn create_virtpy(
         )?;
     }
 
-    Ok(())
+    Ok(VirtpyChecked)
+}
+
+enum VirtpyLinkStatus {
+    Ok { matching_virtpy: PathBuf },
+    WrongLocation { should: PathBuf, actual: PathBuf },
+    Dangling { target: PathBuf },
+}
+
+fn check_virtpy_link(virtpy_link_path: &Path) -> Result<VirtpyChecked, Box<dyn Error>> {
+    let error_msg = |msg| {
+        format!(
+            "this virtpy env is broken, please recreate it. Cause: {}",
+            msg
+        )
+        .into()
+    };
+    match virtpy_link_status(virtpy_link_path)? {
+        VirtpyLinkStatus::WrongLocation { should, .. } => Err(error_msg(format!(
+            "virtpy copied or moved from {}",
+            should.display()
+        ))),
+        VirtpyLinkStatus::Dangling { target } => Err(error_msg(format!(
+            "backing storage for virtpy not found: {}",
+            target.display()
+        ))),
+        VirtpyLinkStatus::Ok { .. } => Ok(VirtpyChecked),
+    }
+}
+
+fn virtpy_link_status(virtpy_link_path: &Path) -> std::io::Result<VirtpyLinkStatus> {
+    let supposed_location = virtpy_link_supposed_location(virtpy_link_path).unwrap();
+    if !paths_match(virtpy_link_path, &supposed_location).unwrap() {
+        return Ok(VirtpyLinkStatus::WrongLocation {
+            should: supposed_location,
+            actual: virtpy_link_path.to_owned(),
+        });
+    }
+
+    let target = virtpy_link_target(virtpy_link_path).unwrap();
+    if !target.exists() {
+        return Ok(VirtpyLinkStatus::Dangling {
+            target: target.clone(),
+        });
+    }
+
+    Ok(VirtpyLinkStatus::Ok {
+        matching_virtpy: target,
+    })
 }
 
 fn paths_match(virtpy: &Path, link_target: &Path) -> std::io::Result<bool> {
@@ -828,10 +885,7 @@ enum VirtpyStatus {
 }
 
 fn virtpy_status(virtpy_path: &Path) -> std::io::Result<VirtpyStatus> {
-    let metadata = virtpy_path.join(CENTRAL_METADATA);
-
-    let link_location =
-        PathBuf::from(std::fs::read_to_string(metadata.join("link_location")).unwrap());
+    let link_location = virtpy_link_location(virtpy_path).unwrap();
 
     let link_target = match virtpy_link_target(&link_location) {
         Ok(target) => PathBuf::from(target),
@@ -910,6 +964,8 @@ fn symlink_file(from: &Path, to: &Path) -> std::io::Result<()> {
     }
 }
 
+struct VirtpyChecked;
+
 fn link_requirements_into_virtpy(
     proj_dirs: &ProjectDirs,
     virtpy_dir: &Path,
@@ -917,6 +973,7 @@ fn link_requirements_into_virtpy(
     mut requirements: Vec<Requirement>,
     options: Options,
     install_global_executable: bool,
+    _virtpy_checked_token: VirtpyChecked,
 ) -> Result<(), Box<dyn Error>> {
     // FIXME: when new top-level directories are created in the central venv,
     //        they should also be symlinked in the virtpy
