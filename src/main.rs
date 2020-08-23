@@ -57,6 +57,8 @@ enum Command {
     },
     /// Print paths where various files are stored
     Path(PathCmd),
+    /// Show how much storage is used
+    Stats,
 }
 
 #[derive(StructOpt)]
@@ -572,14 +574,24 @@ impl VirtpyDirs {
     }
 
     fn dist_info(&self, package: &str) -> Option<PathBuf> {
-        dbg!(self.site_packages())
+        self.dist_infos().find(|path| {
+            let entry_name = path.file_name().unwrap().to_str().unwrap();
+            entry_name.starts_with(package) && entry_name.ends_with(".dist-info")
+        })
+    }
+
+    fn dist_infos(&self) -> impl Iterator<Item = PathBuf> {
+        self.site_packages()
             .read_dir()
             .unwrap()
             .map(Result::unwrap)
             .map(|dir_entry| dir_entry.path())
-            .find(|path| {
-                let entry_name = path.file_name().unwrap().to_str().unwrap();
-                entry_name.starts_with(package) && entry_name.ends_with(".dist-info")
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .ends_with(".dist-info")
             })
     }
 
@@ -738,9 +750,90 @@ fn main() -> Result<(), Box<dyn Error>> {
         Command::Path(PathCmd::Bin) | Command::Path(PathCmd::Executables) => {
             println!("{}", proj_dirs.executables().display());
         }
+        Command::Stats => {
+            print_stats(&proj_dirs);
+        }
     }
 
     Ok(())
+}
+
+fn print_stats(proj_dirs: &ProjectDirs) {
+    let total_size: u64 = proj_dirs
+        .package_files()
+        .read_dir()
+        .unwrap()
+        .into_iter()
+        .map(Result::unwrap)
+        .map(|entry| entry.metadata().unwrap().len())
+        .sum();
+
+    let distribution_sizes = proj_dirs
+        .dist_infos()
+        .read_dir()
+        .unwrap()
+        .into_iter()
+        .map(Result::unwrap)
+        .map(|dist_info_entry| {
+            let distribution = Distribution::from_store_name(
+                dist_info_entry
+                    .path()
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+            );
+            let distribution_size = records(&dist_info_entry.path().join("RECORD"))
+                .unwrap()
+                .map(Result::unwrap)
+                .filter(|record| {
+                    // FIXME: files with ../../
+                    proj_dirs.package_files().join(&record.hash).exists()
+                })
+                .map(|record| record.filesize)
+                .sum::<u64>();
+            assert_ne!(distribution_size, 0);
+            (distribution, distribution_size)
+        })
+        .collect::<HashMap<_, _>>();
+
+    let mut distributions_count = HashMap::new();
+    for distr in proj_dirs
+        .virtpys()
+        .read_dir()
+        .unwrap()
+        .map(Result::unwrap)
+        .map(|entry| entry.path())
+        .map(VirtpyDirs::from_path)
+        .flat_map(distributions_used)
+    {
+        *distributions_count.entry(distr).or_insert(0) += 1;
+    }
+
+    let total_size_with_duplicates = distributions_count
+        .iter()
+        .map(|(distr, count)| distribution_sizes[distr] * count)
+        .sum::<u64>();
+
+    println!("total space used: {}", total_size);
+    println!(
+        "total space used with duplication: {}",
+        total_size_with_duplicates
+    );
+
+    println!(
+        "total space saved: {}",
+        total_size_with_duplicates - total_size
+    );
+}
+
+fn distributions_used(virtpy_dirs: VirtpyDirs) -> impl Iterator<Item = Distribution> {
+    virtpy_dirs
+        .dist_infos()
+        .map(|dist_info_path| dist_info_path.read_link().unwrap())
+        .map(|store_dist_info| {
+            Distribution::from_store_name(store_dist_info.file_name().unwrap().to_str().unwrap())
+        })
 }
 
 #[must_use]
@@ -1256,11 +1349,24 @@ fn ignore_target_exists(err: std::io::Error) -> std::io::Result<()> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 struct Distribution {
     name: String,
     version: String,
     sha: String,
+}
+
+impl Distribution {
+    fn from_store_name(store_name: &str) -> Self {
+        let mut it = store_name.split(",");
+        let mut next = || it.next().unwrap().to_owned();
+        let name = next();
+        let version = next();
+        let sha = next();
+        assert!(it.next().is_none());
+
+        Self { name, version, sha }
+    }
 }
 
 fn newly_installed_distributions(pip_log: &str) -> Vec<Distribution> {
