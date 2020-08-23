@@ -55,6 +55,16 @@ enum Command {
         #[structopt(long)]
         remove: bool,
     },
+    /// Print paths where various files are stored
+    Path(PathCmd),
+}
+
+#[derive(StructOpt)]
+enum PathCmd {
+    /// Directory where executables are placed by `virtpy install`
+    Bin,
+    /// Alias for `bin`
+    Executables,
 }
 
 const DEFAULT_VIRTPY_PATH: &str = ".virtpy";
@@ -724,6 +734,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
             }
+        }
+        Command::Path(PathCmd::Bin) | Command::Path(PathCmd::Executables) => {
+            println!("{}", proj_dirs.executables().display());
         }
     }
 
