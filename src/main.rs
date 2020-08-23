@@ -307,11 +307,9 @@ fn register_distribution_files(
         // TODO: use rename, if on same filesystem
         let res = std::fs::copy(src, dest);
         match &res {
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => println!(
-                "couldn't find recorded file from {}: {}",
-                dist_info_foldername,
-                file.path.display()
-            ),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                print_error_missing_file_in_record(&dist_info_foldername, &file.path)
+            }
             _ => {
                 res.unwrap();
             }
@@ -1035,7 +1033,7 @@ fn link_requirements_into_virtpy(
 
         let dist_info_foldername =
             format!("{}-{}.dist-info", distribution.name, distribution.version);
-        let target = site_packages.join(dist_info_foldername);
+        let target = site_packages.join(&dist_info_foldername);
         if options.verbose >= 1 {
             println!(
                 "symlinking dist info from {} to {}",
@@ -1087,10 +1085,21 @@ fn link_requirements_into_virtpy(
             };
 
             let src = proj_dirs.package_files().join(record.hash);
-            std::fs::hard_link(&src, &dest)
-                // TODO: can this error exist?
-                .or_else(ignore_target_exists)
-                .unwrap();
+            match std::fs::hard_link(&src, &dest) {
+                Ok(_) => (),
+                // TODO: can this error exist? Docs don't say anything about this being a failure
+                //       condition
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => (),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    print_error_missing_file_in_record(&dist_info_foldername, &src)
+                }
+                Err(err) => panic!(
+                    "failed to hardlink file from {} to {}: {}",
+                    src.display(),
+                    dest.display(),
+                    err
+                ),
+            };
         }
 
         for entrypoint in entrypoints(&dist_info_path) {
@@ -1109,6 +1118,14 @@ fn link_requirements_into_virtpy(
     }
 
     Ok(())
+}
+
+fn print_error_missing_file_in_record(dist_info: &str, missing_file: &Path) {
+    println!(
+        "couldn't find recorded file from {}: {}",
+        dist_info,
+        missing_file.display()
+    )
 }
 
 fn remove_leading_parent_dirs(mut path: &Path) -> Result<&Path, &Path> {
