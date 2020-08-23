@@ -589,7 +589,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             if package_folder.exists() {
                 if force {
-                    delete_virtpy(&package_folder)?;
+                    delete_virtpy_link(&package_folder)?;
                 } else {
                     println!("package is already installed.");
                     return Ok(());
@@ -604,7 +604,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             // if anything goes wrong, try to delete the incomplete installation
             let venv_deleter = scopeguard::guard((), |_| {
-                let _ = delete_virtpy(&package_folder);
+                let _ = delete_virtpy_link(&package_folder);
             });
 
             let python_version = python_version(&python_path)?;
@@ -623,7 +623,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             std::mem::forget(venv_deleter);
         }
         Command::Uninstall { package } => {
-            delete_virtpy(&proj_dirs.package_folder(&package))?;
+            delete_virtpy_link(&proj_dirs.package_folder(&package))?;
         }
         Command::PoetryInstall {} => {
             let virtpy_path: &Path = DEFAULT_VIRTPY_PATH.as_ref();
@@ -669,8 +669,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 println!("found {} missing virtpys.", danglers.len());
 
                 if remove {
-                    for (target, _) in danglers {
-                        delete_virtpy(&target).unwrap();
+                    for (backing, link) in danglers {
+                        debug_assert!(virtpy_link_target(&link)
+                            .map_or(true, |link_target| link_target != backing));
+                        delete_virtpy_backing(&backing).unwrap();
                     }
                 } else {
                     // FIXME: see message
@@ -726,26 +728,27 @@ fn global_python(virtpy_path: &Path) -> PathBuf {
     python_path(virtpy_path).canonicalize().unwrap()
 }
 
-fn delete_virtpy(package_folder: &Path) -> std::io::Result<()> {
-    // FIXME: If called on the link, it should also remove the backing store.
-    //        If called on the backing store, it should remove the link, if
-    //        it's still pointing at it.
-    println!("removing {}", package_folder.display());
-    assert!(
-        !package_folder.exists()
-            || package_folder.join(CENTRAL_METADATA).exists()
-            || package_folder.join(LINK_METADATA).exists()
-    );
+fn is_not_found(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::NotFound
+}
 
-    let metadata = package_folder.symlink_metadata()?;
-    // seems like a TOCTTOU race condition, but io::ErrorKind doesn't have a variant
-    // for not-a-symlink so we can't deduce it from read_link's error
-    if metadata.file_type().is_symlink() {
-        let real_package_folder = package_folder.read_link()?;
-        std::fs::remove_dir_all(real_package_folder).or_else(ignore_target_doesnt_exist)?;
-    }
-    // TODO: Does this need to call remove_file, if it's a symlink?
-    std::fs::remove_dir_all(package_folder).or_else(ignore_target_doesnt_exist)
+fn delete_virtpy_link(package_folder: &Path) -> Result<(), Box<dyn Error>> {
+    println!("removing {}", package_folder.display());
+    let backing = match virtpy_link_target(&package_folder) {
+        Ok(target) => target,
+        Err(err) if is_not_found(&err) => {
+            return Err(format!("not a valid virtpy: {}", package_folder.display()).into())
+        }
+        Err(err) => return Err(err.into()),
+    };
+    std::fs::remove_dir_all(package_folder)?;
+    delete_virtpy_backing(&backing)?;
+    Ok(())
+}
+
+fn delete_virtpy_backing(backing_folder: &Path) -> std::io::Result<()> {
+    assert!(backing_folder.join(CENTRAL_METADATA).exists());
+    std::fs::remove_dir_all(backing_folder)
 }
 
 fn create_virtpy(
