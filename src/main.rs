@@ -1,6 +1,7 @@
 use python_requirements::Requirement;
 use rand::Rng;
 use regex::Regex;
+use sha2::{Digest, Sha256};
 use std::fmt::Write;
 use std::{
     collections::HashMap,
@@ -59,6 +60,14 @@ enum Command {
     Path(PathCmd),
     /// Show how much storage is used
     Stats,
+    /// Check integrity of the files of all python modules in the internal store.
+    ///
+    /// If someone edited a file in any virtpy, those changes are visible in every virtpy
+    /// using that file. This command detects if any changes were made to any file
+    /// in the internal store.
+    // FIXME: Currently, we're not verifying the file hashes on installation, so
+    // if a module's RECORD is faulty, those files will also appear here
+    VerifyStore,
 }
 
 #[derive(StructOpt)]
@@ -753,9 +762,51 @@ fn main() -> Result<(), Box<dyn Error>> {
         Command::Stats => {
             print_stats(&proj_dirs);
         }
+        Command::VerifyStore => {
+            print_verify_store(&proj_dirs);
+        }
     }
 
     Ok(())
+}
+
+fn print_verify_store(proj_dirs: &ProjectDirs) {
+    // TODO: if there are errors, link them back to their original distribution
+    let mut any_error = false;
+    for file in proj_dirs
+        .package_files()
+        .read_dir()
+        .unwrap()
+        .map(Result::unwrap)
+    {
+        // the path is also the hash
+        let path = file.path();
+        let mut file = std::fs::File::open(&path).unwrap();
+        let mut hasher = Sha256::new();
+        std::io::copy(&mut file, &mut hasher).unwrap();
+        let hash = hasher.finalize();
+
+        let base64_hash = base64::encode_config(&hash, base64::URL_SAFE_NO_PAD);
+        if base64_hash
+            != path
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .strip_prefix("sha256=")
+                .unwrap()
+        {
+            println!(
+                "doesn't match hash: {}, hash = {}",
+                path.display(),
+                base64_hash
+            );
+            any_error = true;
+        }
+    }
+    if !any_error {
+        println!("everything valid");
+    }
 }
 
 fn print_stats(proj_dirs: &ProjectDirs) {
@@ -763,7 +814,6 @@ fn print_stats(proj_dirs: &ProjectDirs) {
         .package_files()
         .read_dir()
         .unwrap()
-        .into_iter()
         .map(Result::unwrap)
         .map(|entry| entry.metadata().unwrap().len())
         .sum();
@@ -772,7 +822,6 @@ fn print_stats(proj_dirs: &ProjectDirs) {
         .dist_infos()
         .read_dir()
         .unwrap()
-        .into_iter()
         .map(Result::unwrap)
         .map(|dist_info_entry| {
             let distribution = Distribution::from_store_name(
@@ -1002,6 +1051,7 @@ fn create_virtpy(
     Ok(VirtpyChecked)
 }
 
+#[allow(unused)]
 enum VirtpyLinkStatus {
     Ok { matching_virtpy: PathBuf },
     WrongLocation { should: PathBuf, actual: PathBuf },
