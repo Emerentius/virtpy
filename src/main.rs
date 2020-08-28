@@ -279,6 +279,10 @@ fn entrypoints(dist_info: &Path) -> Vec<EntryPoint> {
         })
 }
 
+fn dist_info_dirname(name: &str, version: &str, hash: &str) -> String {
+    format!("{},{},{}", name, version, hash)
+}
+
 fn register_distribution_files(
     proj_dirs: &ProjectDirs,
     install_folder: &Path,
@@ -291,7 +295,7 @@ fn register_distribution_files(
     let dist_info_foldername = format!("{}-{}.dist-info", distribution_name, version);
     let src_dist_info = install_folder.join(&dist_info_foldername);
 
-    let dst_dist_info_dirname = format!("{},{},{}", distribution_name, version, sha);
+    let dst_dist_info_dirname = dist_info_dirname(distribution_name, version, &sha);
     let dst_dist_info = proj_dirs.dist_infos().join(&dst_dist_info_dirname);
 
     if dst_dist_info.exists() {
@@ -346,7 +350,7 @@ fn register_distribution_files(
     stored_distributions.insert(DependencyHash(sha), PathBuf::from(dst_dist_info_dirname));
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, PartialEq, Eq, Hash, Clone)]
 struct InstalledFile {
     path: PathBuf,
     hash: String,
@@ -566,6 +570,24 @@ impl ProjectDirs {
     fn package_folder(&self, package: &str) -> PathBuf {
         self.installations().join(&format!("{}.virtpy", package))
     }
+
+    // TODO: rename the old installed_distributions
+    fn installed_distributions_2(&self) -> impl Iterator<Item = Distribution> + '_ {
+        self.dist_infos()
+            .read_dir()
+            .unwrap()
+            .map(Result::unwrap)
+            .map(|dist_info_entry| {
+                Distribution::from_store_name(
+                    dist_info_entry
+                        .path()
+                        .file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap(),
+                )
+            })
+    }
 }
 
 // TODO: use for all virtpy paths
@@ -760,7 +782,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!("{}", proj_dirs.executables().display());
         }
         Command::Stats => {
-            print_stats(&proj_dirs);
+            print_stats(&proj_dirs, options);
         }
         Command::VerifyStore => {
             print_verify_store(&proj_dirs);
@@ -809,7 +831,7 @@ fn print_verify_store(proj_dirs: &ProjectDirs) {
     }
 }
 
-fn print_stats(proj_dirs: &ProjectDirs) {
+fn print_stats(proj_dirs: &ProjectDirs, options: Options) {
     let total_size: u64 = proj_dirs
         .package_files()
         .read_dir()
@@ -818,50 +840,12 @@ fn print_stats(proj_dirs: &ProjectDirs) {
         .map(|entry| entry.metadata().unwrap().len())
         .sum();
 
-    let distribution_sizes = proj_dirs
-        .dist_infos()
-        .read_dir()
-        .unwrap()
-        .map(Result::unwrap)
-        .map(|dist_info_entry| {
-            let distribution = Distribution::from_store_name(
-                dist_info_entry
-                    .path()
-                    .file_name()
-                    .unwrap()
-                    .to_str()
-                    .unwrap(),
-            );
-            let distribution_size = records(&dist_info_entry.path().join("RECORD"))
-                .unwrap()
-                .map(Result::unwrap)
-                .filter(|record| {
-                    // FIXME: files with ../../
-                    proj_dirs.package_files().join(&record.hash).exists()
-                })
-                .map(|record| record.filesize)
-                .sum::<u64>();
-            assert_ne!(distribution_size, 0);
-            (distribution, distribution_size)
-        })
-        .collect::<HashMap<_, _>>();
+    let distribution_files = files_of_distribution(proj_dirs);
+    let distribution_dependents = distributions_dependents(proj_dirs);
 
-    let mut distributions_count = HashMap::new();
-    for distr in proj_dirs
-        .virtpys()
-        .read_dir()
-        .unwrap()
-        .map(Result::unwrap)
-        .map(|entry| entry.path())
-        .map(VirtpyDirs::from_path)
-        .flat_map(distributions_used)
-    {
-        *distributions_count.entry(distr).or_insert(0) += 1;
-    }
-
-    let total_size_with_duplicates = distributions_count
+    let total_size_with_duplicates = distribution_dependents
         .iter()
-        .map(|(distr, count)| distribution_sizes[distr] * count)
+        .map(|(distr, dependents)| distribution_files[distr].1 * dependents.len() as u64)
         .sum::<u64>();
 
     println!("total space used: {}", total_size);
@@ -874,6 +858,84 @@ fn print_stats(proj_dirs: &ProjectDirs) {
         "total space saved: {}",
         total_size_with_duplicates - total_size
     );
+
+    if options.verbose >= 1 {
+        println!();
+        for (distr, dependents) in distribution_dependents {
+            println!(
+                "{:30} {} dependents    ({})",
+                format!("{} {}", distr.name, distr.version,),
+                dependents.len(),
+                distr.sha
+            );
+            if options.verbose >= 2 {
+                for dependent in dependents {
+                    let link_location = virtpy_link_location(&dependent).unwrap();
+                    print!("    {}", link_location.display());
+                    if options.verbose >= 3 {
+                        print!("  =>  {}", dependent.display());
+                    }
+                    println!();
+                }
+            }
+        }
+    }
+}
+
+// return value: path to virtpy
+fn distributions_dependents(proj_dirs: &ProjectDirs) -> HashMap<Distribution, Vec<PathBuf>> {
+    let mut distributions_dependents = HashMap::new();
+
+    // Add all distributions to map without dependencies.
+    // Orphaned distributions would otherwise be missed.
+    for distr in proj_dirs.installed_distributions_2() {
+        distributions_dependents.entry(distr).or_default();
+    }
+
+    for virtpy_path in proj_dirs
+        .virtpys()
+        .read_dir()
+        .unwrap()
+        .map(Result::unwrap)
+        .map(|entry| entry.path())
+    {
+        let virtpy_dirs = VirtpyDirs::from_path(virtpy_path.clone());
+        for distr in distributions_used(virtpy_dirs) {
+            // if the data directory is in a consistent state, the keys are guaranteed to exist already
+            debug_assert!(distributions_dependents.contains_key(&distr));
+            distributions_dependents
+                .entry(distr)
+                .or_insert_with(Vec::new)
+                .push(virtpy_path.clone());
+        }
+    }
+
+    distributions_dependents
+}
+
+// Find distributions in $DATA_DIR/dist-infos/ and read their files from their RECORD file.
+// Also computes the total size of all distribution files
+fn files_of_distribution(
+    proj_dirs: &ProjectDirs,
+) -> HashMap<Distribution, (Vec<InstalledFile>, u64)> {
+    proj_dirs
+        .installed_distributions_2()
+        .map(|distribution| {
+            let records = distribution
+                .records(proj_dirs)
+                .unwrap()
+                .map(Result::unwrap)
+                .filter(|record| {
+                    // FIXME: files with ../../
+                    proj_dirs.package_files().join(&record.hash).exists()
+                })
+                .collect::<Vec<_>>();
+
+            let total_size = records.iter().map(|record| record.filesize).sum::<u64>();
+            assert_ne!(total_size, 0);
+            (distribution, (records, total_size))
+        })
+        .collect()
 }
 
 fn distributions_used(virtpy_dirs: VirtpyDirs) -> impl Iterator<Item = Distribution> {
@@ -1399,7 +1461,7 @@ fn ignore_target_exists(err: std::io::Error) -> std::io::Result<()> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 struct Distribution {
     name: String,
     version: String,
@@ -1416,6 +1478,23 @@ impl Distribution {
         assert!(it.next().is_none());
 
         Self { name, version, sha }
+    }
+
+    fn path(&self, project_dirs: &ProjectDirs) -> PathBuf {
+        project_dirs
+            .dist_infos()
+            .join(dist_info_dirname(&self.name, &self.version, &self.sha))
+    }
+
+    fn record(&self, project_dirs: &ProjectDirs) -> PathBuf {
+        self.path(project_dirs).join("RECORD")
+    }
+
+    fn records(
+        &self,
+        project_dirs: &ProjectDirs,
+    ) -> csv::Result<impl Iterator<Item = csv::Result<InstalledFile>>> {
+        records(&self.record(project_dirs))
     }
 }
 
