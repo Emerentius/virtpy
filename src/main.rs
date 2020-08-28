@@ -125,6 +125,9 @@ fn python_version(python_path: &Path) -> Result<PythonVersion, Box<dyn Error>> {
 )]
 pub struct DependencyHash(String);
 
+// TODO: make into newtype
+type PackageFileHash = String;
+
 // We don't know what environments and what python versions a
 // given distribution is compatible with, so we let pip decide
 // what distribution is compatible and only remember afterwards
@@ -777,6 +780,46 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
             }
+
+            {
+                let unused_dists = unused_distributions(&proj_dirs).collect::<Vec<_>>();
+                if !unused_dists.is_empty() {
+                    println!("found {} modules without users.", unused_dists.len());
+
+                    if remove {
+                        let dist_info_dir = proj_dirs.dist_infos();
+                        for dist in unused_dists {
+                            let path = dist.path(&proj_dirs);
+                            assert!(path.starts_with(&dist_info_dir));
+
+                            println!("Removing {} {} ({})", dist.name, dist.version, dist.sha);
+
+                            std::fs::remove_dir_all(path).unwrap();
+                        }
+                    }
+                }
+            }
+
+            {
+                let unused_package_files = unused_package_files(&proj_dirs).collect::<Vec<_>>();
+                if !unused_package_files.is_empty() {
+                    println!(
+                        "found {} package files without distribution dependents.",
+                        unused_package_files.len()
+                    );
+
+                    if remove {
+                        let package_files_dir = proj_dirs.package_files();
+                        for file in unused_package_files {
+                            assert!(file.starts_with(&package_files_dir));
+                            if options.verbose >= 1 {
+                                println!("Removing {}", file.display());
+                            }
+                            std::fs::remove_file(file).unwrap();
+                        }
+                    }
+                }
+            }
         }
         Command::Path(PathCmd::Bin) | Command::Path(PathCmd::Executables) => {
             println!("{}", proj_dirs.executables().display());
@@ -882,6 +925,42 @@ fn print_stats(proj_dirs: &ProjectDirs, options: Options) {
     }
 }
 
+fn file_dependents<'a>(
+    proj_dirs: &ProjectDirs,
+    distribution_files: &HashMap<Distribution, (Vec<InstalledFile>, u64)>,
+) -> HashMap<PackageFileHash, Vec<Distribution>> {
+    let mut dependents = HashMap::new();
+
+    for file in proj_dirs
+        .package_files()
+        .read_dir()
+        .unwrap()
+        .map(Result::unwrap)
+        .map(|dir_entry| {
+            dir_entry
+                .path()
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_owned()
+        })
+    {
+        let hash = file;
+        dependents.entry(hash).or_default();
+    }
+
+    for (distribution, (records, _)) in distribution_files.iter() {
+        for record in records {
+            dependents
+                .entry(record.hash.clone())
+                .or_insert_with(Vec::new)
+                .push(distribution.clone());
+        }
+    }
+    dependents
+}
+
 // return value: path to virtpy
 fn distributions_dependents(proj_dirs: &ProjectDirs) -> HashMap<Distribution, Vec<PathBuf>> {
     let mut distributions_dependents = HashMap::new();
@@ -945,6 +1024,24 @@ fn distributions_used(virtpy_dirs: VirtpyDirs) -> impl Iterator<Item = Distribut
         .map(|store_dist_info| {
             Distribution::from_store_name(store_dist_info.file_name().unwrap().to_str().unwrap())
         })
+}
+
+fn unused_distributions(proj_dirs: &ProjectDirs) -> impl Iterator<Item = Distribution> + '_ {
+    let distribution_dependents = distributions_dependents(proj_dirs);
+    distribution_dependents
+        .into_iter()
+        .filter(|(_, dependents)| dependents.is_empty())
+        .map(|(distribution, _)| distribution)
+}
+
+fn unused_package_files(proj_dirs: &ProjectDirs) -> impl Iterator<Item = PathBuf> {
+    let distribution_files = files_of_distribution(proj_dirs);
+    let file_dependents = file_dependents(proj_dirs, &distribution_files);
+    let package_files = proj_dirs.package_files();
+    file_dependents
+        .into_iter()
+        .filter(|(_, dependents)| dependents.is_empty())
+        .map(move |(file, _)| package_files.join(file))
 }
 
 #[must_use]
