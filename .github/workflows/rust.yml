@@ -20,6 +20,10 @@ jobs:
       uses: dschep/install-poetry-action@v1.3
       with:
         version: "1.0.10"
+    - name: check pip version
+      run: python3 -m pip --version
+    - name: update pip version
+      run: python3 -m pip install -v -U pip
     - name: Build
       run: cargo build --verbose
     - name: Run tests
