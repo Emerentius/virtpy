@@ -520,16 +520,25 @@ struct Options {
     verbose: u8,
 }
 
-struct ProjectDirs(directories::ProjectDirs);
+struct ProjectDirs {
+    data_dir: PathBuf,
+}
 
 impl ProjectDirs {
     fn new() -> Option<Self> {
-        directories::ProjectDirs::from("", "", "virtpy").map(Self)
+        directories::ProjectDirs::from("", "", "virtpy").map(|proj_dirs| Self {
+            data_dir: proj_dirs.data_dir().to_owned(),
+        })
+    }
+
+    #[cfg(test)]
+    fn from_path(data_dir: PathBuf) -> Self {
+        Self { data_dir }
     }
 
     fn create_dirs(&self) -> std::io::Result<()> {
         use std::fs;
-        fs::create_dir_all(self.0.data_dir())?;
+        fs::create_dir_all(self.data())?;
         for path in &[
             self.installations(),
             self.dist_infos(),
@@ -543,7 +552,7 @@ impl ProjectDirs {
     }
 
     fn data(&self) -> &Path {
-        self.0.data_dir()
+        &self.data_dir
     }
 
     fn installations(&self) -> PathBuf {
