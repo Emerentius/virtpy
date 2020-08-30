@@ -36,7 +36,7 @@ enum Command {
     Add { requirements: PathBuf },
     /// Install executable package into an isolated virtpy
     Install {
-        package: String,
+        package: Vec<String>,
         /// Reinstall, if it already exists
         #[structopt(short, long)]
         force: bool,
@@ -47,7 +47,7 @@ enum Command {
         python: String,
     },
     /// Delete the virtpy of a previously installed executable package
-    Uninstall { package: String },
+    Uninstall { package: Vec<String> },
     /// Install the dependencies in the local .virtpy according to the poetry config
     PoetryInstall {},
     /// Find virtpys that have been moved or deleted and unneeded files in the central store.
@@ -694,17 +694,21 @@ fn main() -> Result<(), Box<dyn Error>> {
             allow_prereleases,
             python,
         } => {
-            install_executable_package(
-                &proj_dirs,
-                options,
-                &package,
-                force,
-                allow_prereleases,
-                &python,
-            )?;
+            for package in package {
+                install_executable_package(
+                    &proj_dirs,
+                    options,
+                    &package,
+                    force,
+                    allow_prereleases,
+                    &python,
+                )?;
+            }
         }
         Command::Uninstall { package } => {
-            delete_executable_virtpy(&proj_dirs, &package)?;
+            for package in package {
+                delete_executable_virtpy(&proj_dirs, &package)?;
+            }
         }
         Command::PoetryInstall {} => {
             let virtpy_path: &Path = DEFAULT_VIRTPY_PATH.as_ref();
