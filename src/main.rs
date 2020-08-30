@@ -86,7 +86,8 @@ const LINK_METADATA: &str = "virtpy_link_metadata";
 fn check_output(cmd: &mut std::process::Command) -> Result<String, Box<dyn std::error::Error>> {
     let output = cmd.output()?;
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_owned().into());
+        let error = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("command failed\n    {:?}:\n{}", cmd, error).into());
     }
     // TODO: check out what kind error message FromUtf8Error converts into
     //       and whether it's sufficient
