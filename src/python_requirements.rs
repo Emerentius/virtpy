@@ -166,12 +166,13 @@ pub fn read_requirements_txt(data: &str) -> Vec<Requirement> {
 pub fn get_requirements(package: &str, allow_prereleases: bool) -> Vec<Requirement> {
     let tmp_dir = tempdir::TempDir::new("virtpy").unwrap();
 
-    Command::new("poetry")
-        .current_dir(&tmp_dir)
-        .args(&["init", "-n"])
-        .stdout(std::process::Stdio::null())
-        .status()
-        .expect("failed to run poetry init");
+    crate::check_output(
+        Command::new("poetry")
+            .current_dir(&tmp_dir)
+            .args(&["init", "-n"])
+            .stdout(std::process::Stdio::null()),
+    )
+    .unwrap();
 
     let toml_path = tmp_dir.as_ref().join("pyproject.toml");
     let mut doc = std::fs::read_to_string(&toml_path)
@@ -201,12 +202,13 @@ pub fn poetry_get_requirements(
     // Alternatively, just calling `poetry export` will also create the lockfile without
     // installing anything, but it also emits a message telling you so. That message
     // can not be silenced and would have to be separated from the actual output.
-    Command::new("poetry")
-        .current_dir(poetry_proj)
-        .args(&["update", "--lock"])
-        .stdout(std::process::Stdio::null())
-        .status()
-        .expect("failed to run poetry update");
+    crate::check_output(
+        Command::new("poetry")
+            .current_dir(poetry_proj)
+            .args(&["update", "--lock"])
+            .stdout(std::process::Stdio::null()),
+    )
+    .unwrap();
 
     debug_assert!(poetry_proj.join("poetry.lock").exists());
 
@@ -219,11 +221,7 @@ pub fn poetry_get_requirements(
         command.arg("--dev");
     }
 
-    let output = command
-        .output()
-        .expect("failed to run poetry export")
-        .stdout;
-    let output = std::str::from_utf8(&output).unwrap();
+    let output = crate::check_output(&mut command).expect("failed to run poetry export");
 
     read_requirements_txt(&output)
 }

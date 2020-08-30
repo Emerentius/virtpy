@@ -83,6 +83,16 @@ const INSTALLED_DISTRIBUTIONS: &str = "installed_distributions.json";
 const CENTRAL_METADATA: &str = "virtpy_central_metadata";
 const LINK_METADATA: &str = "virtpy_link_metadata";
 
+fn check_output(cmd: &mut std::process::Command) -> Result<String, Box<dyn std::error::Error>> {
+    let output = cmd.output()?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_owned().into());
+    }
+    // TODO: check out what kind error message FromUtf8Error converts into
+    //       and whether it's sufficient
+    Ok(String::from_utf8(output.stdout)?)
+}
+
 // probably missing prereleases and such
 // TODO: check official scheme
 #[derive(Copy, Clone)]
@@ -100,13 +110,8 @@ impl PythonVersion {
 }
 
 fn python_version(python_path: &Path) -> Result<PythonVersion, Box<dyn Error>> {
-    let output = std::process::Command::new(python_path)
-        .arg("--version")
-        .output();
-    let version = String::from_utf8(output.unwrap().stdout)
-        .unwrap()
-        .trim()
-        .to_owned();
+    let output = check_output(std::process::Command::new(python_path).arg("--version"))?;
+    let version = output.trim().to_owned();
     let captures = regex::Regex::new(r"Python (\d+)\.(\d+)\.(\d+)")
         .unwrap()
         .captures(&version)
@@ -1341,14 +1346,13 @@ fn virtpy_status(virtpy_path: &Path) -> std::io::Result<VirtpyStatus> {
     })
 }
 fn _create_bare_venv(python_path: &Path, path: &Path) -> Result<(), Box<dyn Error>> {
-    let output = std::process::Command::new(python_path)
-        .args(&["-m", "venv", "--without-pip"])
-        .arg(&path)
-        .output()?;
-    if !output.status.success() {
-        let error = std::str::from_utf8(&output.stderr).unwrap();
-        return Err(format!("failed to create virtpy {}: {}", path.display(), error).into());
-    }
+    check_output(
+        std::process::Command::new(python_path)
+            .args(&["-m", "venv", "--without-pip"])
+            .arg(&path)
+            .stdout(std::process::Stdio::null()),
+    )
+    .map_err(|err| format!("failed to create virtpy {}: {}", path.display(), err))?;
     Ok(())
 }
 
