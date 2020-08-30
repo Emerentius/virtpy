@@ -672,7 +672,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 virtpy_path,
                 requirements,
                 python_version,
-                false,
+                None,
                 options,
                 token,
             )?;
@@ -689,45 +689,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             allow_prereleases,
             python,
         } => {
-            let package_folder = proj_dirs.package_folder(&package);
-
-            let python_path = python_detection::detect(&python)
-                .ok_or(format!("Couldn't find python executable '{}'", python))?;
-
-            if package_folder.exists() {
-                if force {
-                    delete_executable_virtpy(&proj_dirs, &package)?;
-                } else {
-                    println!("package is already installed.");
-                    return Ok(());
-                }
-            }
-
-            check_poetry_available()?;
-
-            let requirements = python_requirements::get_requirements(&package, allow_prereleases);
-
-            let token = create_virtpy(&proj_dirs, &python_path, &package_folder)?;
-
-            // if anything goes wrong, try to delete the incomplete installation
-            let venv_deleter = scopeguard::guard((), |_| {
-                let _ = delete_virtpy_link(&package_folder);
-            });
-
-            let python_version = python_version(&python_path)?;
-
-            virtpy_add_dependencies(
+            install_executable_package(
                 &proj_dirs,
-                &package_folder,
-                requirements,
-                python_version,
-                true,
                 options,
-                token,
+                &package,
+                force,
+                allow_prereleases,
+                &python,
             )?;
-
-            // if everything succeeds, keep the venv
-            std::mem::forget(venv_deleter);
         }
         Command::Uninstall { package } => {
             delete_executable_virtpy(&proj_dirs, &package)?;
@@ -753,7 +722,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 virtpy_path,
                 requirements,
                 python_version,
-                false,
+                None,
                 options,
                 token,
             )?;
@@ -841,6 +810,56 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
+    Ok(())
+}
+
+fn install_executable_package(
+    proj_dirs: &ProjectDirs,
+    options: Options,
+    package: &str,
+    force: bool,
+    allow_prereleases: bool,
+    python: &str,
+) -> Result<(), Box<dyn Error>> {
+    let package_folder = proj_dirs.package_folder(&package);
+
+    let python_path = python_detection::detect(&python)
+        .ok_or(format!("Couldn't find python executable '{}'", python))?;
+
+    if package_folder.exists() {
+        if force {
+            delete_executable_virtpy(&proj_dirs, &package)?;
+        } else {
+            println!("package is already installed.");
+            return Ok(());
+        }
+    }
+
+    check_poetry_available()?;
+
+    let requirements = python_requirements::get_requirements(&package, allow_prereleases);
+
+    let token = create_virtpy(&proj_dirs, &python_path, &package_folder)?;
+
+    // if anything goes wrong, try to delete the incomplete installation
+    let venv_deleter = scopeguard::guard((), |_| {
+        let _ = delete_virtpy_link(&package_folder);
+    });
+
+    let python_version = python_version(&python_path)?;
+
+    virtpy_add_dependencies(
+        &proj_dirs,
+        &package_folder,
+        requirements,
+        python_version,
+        Some(package),
+        options,
+        token,
+    )?;
+
+    // if everything succeeds, keep the venv
+    std::mem::forget(venv_deleter);
     Ok(())
 }
 
@@ -1058,7 +1077,7 @@ fn delete_global_package_executables(
     proj_dirs: &ProjectDirs,
     virtpy_dirs: &VirtpyDirs,
     package: &str,
-) -> impl Iterator<Item = std::io::Result<()>> {
+) -> impl Iterator<Item = Result<(), Box<dyn Error>>> {
     let dist_info = virtpy_dirs.dist_info(package).unwrap();
 
     println!("searching executables");
@@ -1081,11 +1100,13 @@ fn delete_global_package_executables(
     executables
         .into_iter()
         .map(move |executable| exe_dir.join(executable))
-        .inspect(|exe| {
-            println!("{}", exe.display());
-            assert!(exe.is_file(), "exe is not a file: {}", exe.display());
+        .map(|path| {
+            // FIXME: The target may not exist, because we fail to install binaries
+            //        when some exist in the module.data directory and not in entry_points.txt.
+            std::fs::remove_file(&path)
+                .or_else(ignore_target_doesnt_exist)
+                .map_err(|err| format!("failed to remove {}: {}", path.display(), err).into())
         })
-        .map(std::fs::remove_file)
 }
 
 fn virtpy_add_dependencies(
@@ -1093,7 +1114,7 @@ fn virtpy_add_dependencies(
     virtpy_path: &Path,
     requirements: Vec<Requirement>,
     python_version: PythonVersion,
-    install_global_executable: bool,
+    install_global_executable: Option<&str>,
     options: Options,
     virtpy_checked_token: VirtpyChecked,
 ) -> Result<(), Box<dyn Error>> {
@@ -1381,7 +1402,7 @@ fn link_requirements_into_virtpy(
     python_version: PythonVersion,
     mut requirements: Vec<Requirement>,
     options: Options,
-    install_global_executable: bool,
+    install_global_executable: Option<&str>,
     _virtpy_checked_token: VirtpyChecked,
 ) -> Result<(), Box<dyn Error>> {
     // FIXME: when new top-level directories are created in the central venv,
@@ -1521,7 +1542,7 @@ fn link_requirements_into_virtpy(
             let python_path = executables_path.join("python");
             entrypoint.generate_executable(&executables_path, &python_path);
 
-            if install_global_executable {
+            if install_global_executable == Some(&distribution.name[..]) {
                 entrypoint.generate_executable(&proj_dirs.executables(), &python_path);
             }
         }
@@ -1551,13 +1572,13 @@ fn remove_leading_parent_dirs(mut path: &Path) -> Result<&Path, &Path> {
     }
 }
 
-// fn ignore_target_doesnt_exist(err: std::io::Error) -> std::io::Result<()> {
-//     if is_not_found(&err) {
-//         Ok(())
-//     } else {
-//         Err(err)
-//     }
-// }
+fn ignore_target_doesnt_exist(err: std::io::Error) -> std::io::Result<()> {
+    if is_not_found(&err) {
+        Ok(())
+    } else {
+        Err(err)
+    }
+}
 
 fn ignore_target_exists(err: std::io::Error) -> std::io::Result<()> {
     if err.kind() == std::io::ErrorKind::AlreadyExists {
@@ -1635,6 +1656,46 @@ fn newly_installed_distributions(pip_log: &str) -> Vec<Distribution> {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    fn test_proj_dirs() -> ProjectDirs {
+        let target = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let test_proj_dir = target.join("test_cache");
+        let proj_dirs = ProjectDirs::from_path(test_proj_dir);
+        proj_dirs.create_dirs().unwrap();
+        proj_dirs
+    }
+
+    #[test]
+    fn test_install_uninstall() -> Result<(), Box<dyn Error>> {
+        let proj_dirs = test_proj_dirs();
+
+        let options = Options { verbose: 3 };
+        let force = true;
+        let python = "python3";
+
+        let packages = [
+            ("tuna", false),
+            ("black", true),
+            ("pylint", false),
+            ("mypy", false),
+            ("youtube-dl", false),
+            ("vulture", false),
+        ];
+
+        for &(package, allow_prereleases) in &packages {
+            install_executable_package(
+                &proj_dirs,
+                options,
+                package,
+                force,
+                allow_prereleases,
+                python,
+            )?;
+            delete_executable_virtpy(&proj_dirs, &package)?;
+            assert_eq!(proj_dirs.executables().read_dir().unwrap().count(), 0);
+        }
+        Ok(())
+    }
 
     #[test]
     fn test_pip_log_parsing() {

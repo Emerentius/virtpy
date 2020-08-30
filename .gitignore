@@ -1,6 +1,7 @@
 /target
 .virtpy/
 .vscode
+test_cache/
 
 # for the time being
 Cargo.lock
