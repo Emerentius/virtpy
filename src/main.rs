@@ -770,6 +770,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     println!("found {} modules without users.", unused_dists.len());
 
                     if remove {
+                        let mut stored_distribs = StoredDistributions::load(&proj_dirs)?;
+
                         let dist_info_dir = proj_dirs.dist_infos();
                         for dist in unused_dists {
                             let path = dist.path(&proj_dirs);
@@ -777,7 +779,20 @@ fn main() -> Result<(), Box<dyn Error>> {
 
                             println!("Removing {} {} ({})", dist.name, dist.version, dist.sha);
 
-                            std::fs::remove_dir_all(path).unwrap();
+                            let res = std::fs::remove_dir_all(path);
+
+                            // Remove distribution from list of installed distributions, for all
+                            // python versions.
+                            // Save after each attempted removal in case a bug causes the removal to fail prematurely
+                            let hash = DependencyHash(dist.sha);
+                            for python_specific_stored_distribs in stored_distribs.0.values_mut() {
+                                python_specific_stored_distribs.remove(&hash);
+                            }
+                            stored_distribs.save(&proj_dirs).map_err(|err| {
+                                format!("failed to save stored distributions: {}", err)
+                            })?;
+
+                            res.unwrap();
                         }
                     }
                 }
@@ -1596,7 +1611,7 @@ fn ignore_target_exists(err: std::io::Error) -> std::io::Result<()> {
 struct Distribution {
     name: String,
     version: String,
-    sha: String,
+    sha: String, // TODO: make this into a DependencyHash
 }
 
 impl Distribution {
