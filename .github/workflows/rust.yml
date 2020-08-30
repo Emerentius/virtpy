@@ -20,6 +20,13 @@ jobs:
       uses: dschep/install-poetry-action@v1.3
       with:
         version: "1.0.10"
+    # fix poetry to use python3
+    # poetry's python detection has been broken by design for years.
+    # It's unlikely that this will be fixed anytime soon.
+    # see https://github.com/python-poetry/poetry/issues/721
+    # and related issues.
+    - name: fix poetry
+      run: sed --in-place 's;^#!/usr/bin/env python$;#!/usr/bin/env python3;' $(which poetry)
     - name: check pip version
       run: python3 -m pip --version
     - name: update pip version
