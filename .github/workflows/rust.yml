@@ -31,6 +31,8 @@ jobs:
       run: python3 -m pip --version
     - name: update pip version
       run: python3 -m pip install -v -U pip
+    - name: install setuptools
+      run: sudo apt install python3-setuptools
     - name: Build
       run: cargo build --verbose
     - name: Run tests
