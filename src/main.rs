@@ -1107,17 +1107,19 @@ fn delete_global_package_executables(
 
     println!("searching executables");
 
-    let executables = records(&dist_info.join("RECORD"))
-        .unwrap()
-        .map(Result::unwrap)
-        .flat_map(|record| {
-            remove_leading_parent_dirs(&record.path)
-                .ok()
-                .map(ToOwned::to_owned)
-        })
-        .filter(|path| is_path_of_executable(path))
-        .map(|path| path.file_name().unwrap().to_owned())
-        .collect::<Vec<_>>();
+    // FIXME: Install all executables from a package and then also delete them all.
+    let executables = entrypoints(&dist_info).into_iter().map(|ep| ep.name);
+    // let executables = records(&dist_info.join("RECORD"))
+    //     .unwrap()
+    //     .map(Result::unwrap)
+    //     .flat_map(|record| {
+    //         remove_leading_parent_dirs(&record.path)
+    //             .ok()
+    //             .map(ToOwned::to_owned)
+    //     })
+    //     .filter(|path| is_path_of_executable(path))
+    //     .map(|path| path.file_name().unwrap().to_owned())
+    //     .collect::<Vec<_>>();
 
     println!("executables found");
 
@@ -1126,10 +1128,10 @@ fn delete_global_package_executables(
         .into_iter()
         .map(move |executable| exe_dir.join(executable))
         .map(|path| {
-            // FIXME: The target may not exist, because we fail to install binaries
-            //        when some exist in the module.data directory and not in entry_points.txt.
             std::fs::remove_file(&path)
-                .or_else(ignore_target_doesnt_exist)
+                // Necessary when deleting from RECORD and when we're not installing all scripts
+                // as pip does (e.g. because we're leaving out package.data scripts)
+                // .or_else(ignore_target_doesnt_exist)
                 .map_err(|err| format!("failed to remove {}: {}", path.display(), err).into())
         })
 }
