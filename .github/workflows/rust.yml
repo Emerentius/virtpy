@@ -37,3 +37,6 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+    - name: Print pip log
+      run: cat $(cargo run path bin)/../pip.log
+      if: failure()
