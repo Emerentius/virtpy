@@ -610,6 +610,19 @@ impl ProjectDirs {
     }
 }
 
+lazy_static::lazy_static! {
+    static ref DIST_INFO_PATTERN: regex::Regex = {
+        regex::Regex::new(r"([a-zA-Z_][a-zA-Z0-9_-]*)-(\d*!.*|\d*\..*)\.dist-info").unwrap()
+    };
+}
+
+fn package_info_from_dist_info_dirname(dirname: &str) -> (&str, &str) {
+    let captures = DIST_INFO_PATTERN.captures(dirname).unwrap();
+    let distrib_name = captures.get(1).unwrap();
+    let version = captures.get(2).unwrap();
+    (distrib_name.as_str(), version.as_str())
+}
+
 // TODO: use for all virtpy paths
 struct VirtpyDirs {
     location: PathBuf,
@@ -627,7 +640,8 @@ impl VirtpyDirs {
     fn dist_info(&self, package: &str) -> Option<PathBuf> {
         self.dist_infos().find(|path| {
             let entry_name = path.file_name().unwrap().to_str().unwrap();
-            entry_name.starts_with(package) && entry_name.ends_with(".dist-info")
+            let (distrib_name, _version) = package_info_from_dist_info_dirname(entry_name);
+            distrib_name == package
         })
     }
 
