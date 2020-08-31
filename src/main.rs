@@ -269,23 +269,25 @@ if __name__ == '__main__':
     }
 }
 
-fn entrypoints(dist_info: &Path) -> Vec<EntryPoint> {
+fn entrypoints(dist_info: &Path) -> Option<Vec<EntryPoint>> {
     let ini = dist_info.join("entry_points.txt");
     let ini = ini::Ini::load_from_file(ini);
 
     match ini {
-        Err(ini::ini::Error::Io(err)) if is_not_found(&err) => return vec![],
+        Err(ini::ini::Error::Io(err)) if is_not_found(&err) => return None,
         _ => (),
     };
     let ini = ini.unwrap();
 
-    ini.section(Some("console_scripts"))
+    let entrypoints = ini
+        .section(Some("console_scripts"))
         .map_or(vec![], |console_scripts| {
             console_scripts
                 .iter()
                 .map(|(key, val)| EntryPoint::new(key, val))
                 .collect()
-        })
+        });
+    Some(entrypoints)
 }
 
 fn dist_info_dirname(name: &str, version: &str, hash: &str) -> String {
@@ -1109,6 +1111,7 @@ fn delete_global_package_executables(
 
     // FIXME: Install all executables from a package and then also delete them all.
     let executables = entrypoints(&dist_info)
+        .expect("couldn't find entry_points.txt")
         .into_iter()
         .map(|ep| ep.name)
         .collect::<Vec<_>>();
@@ -1563,7 +1566,16 @@ fn link_requirements_into_virtpy(
             };
         }
 
-        for entrypoint in entrypoints(&dist_info_path) {
+        let install_global_executable = install_global_executable == Some(&distribution.name[..]);
+        let entrypoints = match (entrypoints(&dist_info_path), install_global_executable) {
+            (Some(ep), _) => ep,
+            (None, true) => {
+                return Err(format!("{} contains no executables", distribution.name).into())
+            }
+            (None, false) => vec![],
+        };
+
+        for entrypoint in entrypoints {
             let executables_path = virtpy_dir.join(match cfg!(target_os = "windows") {
                 true => "Scripts",
                 false => "bin",
@@ -1571,7 +1583,7 @@ fn link_requirements_into_virtpy(
             let python_path = executables_path.join("python");
             entrypoint.generate_executable(&executables_path, &python_path);
 
-            if install_global_executable == Some(&distribution.name[..]) {
+            if install_global_executable {
                 entrypoint.generate_executable(&proj_dirs.executables(), &python_path);
             }
         }
@@ -1601,13 +1613,13 @@ fn remove_leading_parent_dirs(mut path: &Path) -> Result<&Path, &Path> {
     }
 }
 
-fn ignore_target_doesnt_exist(err: std::io::Error) -> std::io::Result<()> {
-    if is_not_found(&err) {
-        Ok(())
-    } else {
-        Err(err)
-    }
-}
+// fn ignore_target_doesnt_exist(err: std::io::Error) -> std::io::Result<()> {
+//     if is_not_found(&err) {
+//         Ok(())
+//     } else {
+//         Err(err)
+//     }
+// }
 
 fn ignore_target_exists(err: std::io::Error) -> std::io::Result<()> {
     if err.kind() == std::io::ErrorKind::AlreadyExists {
@@ -1816,7 +1828,7 @@ mod test {
 
     #[test]
     fn read_entrypoints() {
-        let entrypoints = entrypoints("test_files/entrypoints.dist-info".as_ref());
+        let entrypoints = entrypoints("test_files/entrypoints.dist-info".as_ref()).unwrap();
         assert_eq!(
             entrypoints,
             &[
