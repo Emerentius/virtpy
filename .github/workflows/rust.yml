@@ -30,8 +30,8 @@ jobs:
       run: sed --in-place 's;^#!/usr/bin/env python$;#!/usr/bin/env python3;' $(which poetry)
     - name: check pip version
       run: python3 -m pip --version
-    - name: update pip version
-      run: python3 -m pip install -v -U pip
+    - name: ensure up-to-date packaging tools
+      run: python3 -m pip install -v -U pip wheel
     - name: install setuptools
       run: sudo apt install python3-setuptools
     - name: Build
