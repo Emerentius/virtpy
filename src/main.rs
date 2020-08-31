@@ -1108,7 +1108,10 @@ fn delete_global_package_executables(
     println!("searching executables");
 
     // FIXME: Install all executables from a package and then also delete them all.
-    let executables = entrypoints(&dist_info).into_iter().map(|ep| ep.name);
+    let executables = entrypoints(&dist_info)
+        .into_iter()
+        .map(|ep| ep.name)
+        .collect::<Vec<_>>();
     // let executables = records(&dist_info.join("RECORD"))
     //     .unwrap()
     //     .map(Result::unwrap)
@@ -1121,7 +1124,7 @@ fn delete_global_package_executables(
     //     .map(|path| path.file_name().unwrap().to_owned())
     //     .collect::<Vec<_>>();
 
-    println!("executables found");
+    println!("{} executables found", executables.len());
 
     let exe_dir = proj_dirs.executables();
     executables
