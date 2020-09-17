@@ -699,27 +699,38 @@ fn main() -> eyre::Result<()> {
     };
     match opt.cmd {
         Command::Add { requirements } => {
-            let virtpy_path = DEFAULT_VIRTPY_PATH.as_ref();
-            let token = check_virtpy_link(virtpy_path)?;
-            let python_version = python_version(&python_path(virtpy_path))?;
-            let requirements = fs_err::read_to_string(requirements)?;
-            let requirements = python_requirements::read_requirements_txt(&requirements);
+            fn add_requirements(
+                proj_dirs: &ProjectDirs,
+                options: Options,
+                requirements: PathBuf,
+            ) -> eyre::Result<()> {
+                let virtpy_path = DEFAULT_VIRTPY_PATH.as_ref();
+                let token = check_virtpy_link(virtpy_path)?;
+                let python_version = python_version(&python_path(virtpy_path))?;
+                let requirements = fs_err::read_to_string(requirements)?;
+                let requirements = python_requirements::read_requirements_txt(&requirements);
 
-            virtpy_add_dependencies(
-                &proj_dirs,
-                virtpy_path,
-                requirements,
-                python_version,
-                None,
-                options,
-                token,
-            )?;
+                virtpy_add_dependencies(
+                    &proj_dirs,
+                    virtpy_path,
+                    requirements,
+                    python_version,
+                    None,
+                    options,
+                    token,
+                )?;
+                Ok(())
+            }
+
+            add_requirements(&proj_dirs, options, requirements)
+                .wrap_err("failed to add requirements")?;
         }
         Command::New { python } => {
             let path = PathBuf::from(DEFAULT_VIRTPY_PATH);
-            let python_path = python_detection::detect(&python)
-                .ok_or(eyre::eyre!("Couldn't find python executable '{}'", python))?;
-            create_virtpy(&proj_dirs, &python_path, &path)?;
+            python_detection::detect(&python)
+                .ok_or(eyre::eyre!("Couldn't find python executable '{}'", python))
+                .and_then(|python_path| create_virtpy(&proj_dirs, &python_path, &path))
+                .wrap_err("failed to create virtpy")?;
         }
         Command::Install {
             package,
@@ -727,6 +738,8 @@ fn main() -> eyre::Result<()> {
             allow_prereleases,
             python,
         } => {
+            // TODO: try to install the rest on error.
+            //       find a good way to still report the error à la eyre
             for package in package {
                 install_executable_package(
                     &proj_dirs,
@@ -735,39 +748,49 @@ fn main() -> eyre::Result<()> {
                     force,
                     allow_prereleases,
                     &python,
-                )?;
+                )
+                .wrap_err(eyre::eyre!("failed to install {}", package))?;
             }
         }
         Command::Uninstall { package } => {
+            // TODO: try to uninstall the rest on error
             for package in package {
-                delete_executable_virtpy(&proj_dirs, &package)?;
+                delete_executable_virtpy(&proj_dirs, &package)
+                    .wrap_err(eyre::eyre!("failed to uninstall {}", package))?;
             }
         }
         Command::PoetryInstall {} => {
-            let virtpy_path: &Path = DEFAULT_VIRTPY_PATH.as_ref();
-            let (python_path, token) = match virtpy_path.exists() {
-                true => (
-                    python_path(virtpy_path).to_owned(),
-                    check_virtpy_link(virtpy_path)?,
-                ),
-                false => {
-                    let python_path = python_detection::detect("3").unwrap();
-                    let token = create_virtpy(&proj_dirs, &python_path, &virtpy_path)?;
-                    (python_path, token)
-                }
-            };
-            let python_version = python_version(&python_path)?;
+            fn poetry_install(proj_dirs: &ProjectDirs, options: Options) -> eyre::Result<()> {
+                let virtpy_path: &Path = DEFAULT_VIRTPY_PATH.as_ref();
+                let (python_path, token) = match virtpy_path.exists() {
+                    true => (
+                        python_path(virtpy_path).to_owned(),
+                        check_virtpy_link(virtpy_path)?,
+                    ),
+                    false => {
+                        let python_path = python_detection::detect("3").unwrap();
+                        let token = create_virtpy(&proj_dirs, &python_path, &virtpy_path)?;
+                        (python_path, token)
+                    }
+                };
+                let python_version = python_version(&python_path)?;
 
-            let requirements = python_requirements::poetry_get_requirements(Path::new("."), true)?;
-            virtpy_add_dependencies(
-                &proj_dirs,
-                virtpy_path,
-                requirements,
-                python_version,
-                None,
-                options,
-                token,
-            )?;
+                let requirements =
+                    python_requirements::poetry_get_requirements(Path::new("."), true)?;
+                virtpy_add_dependencies(
+                    &proj_dirs,
+                    virtpy_path,
+                    requirements,
+                    python_version,
+                    None,
+                    options,
+                    token,
+                )?;
+                Ok(())
+            }
+
+            poetry_install(&proj_dirs, options)
+                .wrap_err("failed to install dependencies from poetry project")?;
         }
         Command::Gc { remove } => {
             let mut danglers = vec![];
