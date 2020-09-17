@@ -175,7 +175,7 @@ pub fn get_requirements(package: &str, allow_prereleases: bool) -> Vec<Requireme
     .unwrap();
 
     let toml_path = tmp_dir.as_ref().join("pyproject.toml");
-    let mut doc = std::fs::read_to_string(&toml_path)
+    let mut doc = fs_err::read_to_string(&toml_path)
         .unwrap()
         .parse::<toml_edit::Document>()
         .unwrap();
@@ -186,7 +186,7 @@ pub fn get_requirements(package: &str, allow_prereleases: bool) -> Vec<Requireme
         dep_table["allow-prereleases"] = toml_edit::value(true);
     }
     doc["tool"]["poetry"]["dependencies"][package] = toml_edit::Item::Table(dep_table);
-    std::fs::write(&toml_path, doc.to_string()).expect("failed to write pyproject.toml");
+    fs_err::write(&toml_path, doc.to_string()).expect("failed to write pyproject.toml");
 
     poetry_get_requirements(tmp_dir.as_ref(), false)
 }
@@ -234,7 +234,7 @@ fn poetry_deactivate_venv_creation(poetry_proj: &Path) {
     // but that's much slower, because poetry is a typical python project
     // that imports EVERYTHING at startup.
     let toml_path = poetry_proj.join("poetry.toml");
-    let mut doc = match std::fs::read_to_string(&toml_path) {
+    let mut doc = match fs_err::read_to_string(&toml_path) {
         Ok(string) => string,
         Err(err) if crate::is_not_found(&err) => "[virtualenvs]".to_owned(),
         Err(err) => panic!("failed to read poetry.toml: {}", err),
@@ -243,7 +243,7 @@ fn poetry_deactivate_venv_creation(poetry_proj: &Path) {
     .unwrap();
 
     doc["virtualenvs"]["create"] = toml_edit::value(false);
-    std::fs::write(&toml_path, doc.to_string()).expect("failed to write poetry.toml");
+    fs_err::write(&toml_path, doc.to_string()).expect("failed to write poetry.toml");
 }
 
 #[cfg(test)]

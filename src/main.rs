@@ -1,4 +1,5 @@
 use eyre::WrapErr;
+use fs_err::File;
 use python_requirements::Requirement;
 use rand::Rng;
 use regex::Regex;
@@ -6,7 +7,6 @@ use sha2::{Digest, Sha256};
 use std::fmt::Write;
 use std::{
     collections::HashMap,
-    fs::File,
     io::BufReader,
     path::{Path, PathBuf},
 };
@@ -195,9 +195,9 @@ fn copy_directory(from: &Path, to: &Path) {
         let subpath = path.strip_prefix(from).unwrap();
         let target_path = to.join(&subpath);
         if dir_entry.file_type().is_dir() {
-            std::fs::create_dir(target_path).unwrap();
+            fs_err::create_dir(target_path).unwrap();
         } else {
-            std::fs::copy(path, target_path).unwrap();
+            fs_err::copy(path, target_path).unwrap();
         }
     }
 }
@@ -263,7 +263,7 @@ if __name__ == '__main__':
             false => dest.to_owned(),
         };
 
-        let mut f = opts.open(dest).unwrap();
+        let mut f = File::from_options(dest, &opts).unwrap();
         use std::io::Write;
         f.write_all(content.as_bytes()).unwrap();
     }
@@ -345,7 +345,7 @@ fn register_distribution_files(
         }
 
         // TODO: use rename, if on same filesystem
-        let res = std::fs::copy(src, dest);
+        let res = fs_err::copy(src, dest);
         match &res {
             Err(err) if is_not_found(err) => {
                 print_error_missing_file_in_record(&dist_info_foldername, &file.path)
@@ -421,7 +421,7 @@ fn install_and_register_distributions(
     let tmp_dir = tempdir::TempDir::new("virtpy")?;
     let tmp_requirements = tmp_dir.as_ref().join("__tmp_requirements.txt");
     let reqs = serialize_requirements_txt(distribs);
-    std::fs::write(&tmp_requirements, reqs)?;
+    fs_err::write(&tmp_requirements, reqs)?;
     let output = std::process::Command::new(python_path)
         .args(&["-m", "pip", "install", "--no-deps", "--no-compile", "-r"])
         .arg(&tmp_requirements)
@@ -450,7 +450,7 @@ fn install_and_register_distributions(
                 distribs.len()
             );
 
-            let _ = std::fs::write(proj_dirs.data().join("pip.log"), pip_log);
+            let _ = fs_err::write(proj_dirs.data().join("pip.log"), pip_log);
         }
     }
     if options.verbose >= 2 {
@@ -687,7 +687,7 @@ fn main() -> eyre::Result<()> {
             let virtpy_path = DEFAULT_VIRTPY_PATH.as_ref();
             let token = check_virtpy_link(virtpy_path)?;
             let python_version = python_version(&python_path(virtpy_path))?;
-            let requirements = std::fs::read_to_string(requirements)?;
+            let requirements = fs_err::read_to_string(requirements)?;
             let requirements = python_requirements::read_requirements_txt(&requirements);
 
             virtpy_add_dependencies(
@@ -801,7 +801,7 @@ fn main() -> eyre::Result<()> {
 
                             println!("Removing {} {} ({})", dist.name, dist.version, dist.sha);
 
-                            let res = std::fs::remove_dir_all(path);
+                            let res = fs_err::remove_dir_all(path);
 
                             // Remove distribution from list of installed distributions, for all
                             // python versions.
@@ -835,7 +835,7 @@ fn main() -> eyre::Result<()> {
                             if options.verbose >= 1 {
                                 println!("Removing {}", file.display());
                             }
-                            std::fs::remove_file(file).unwrap();
+                            fs_err::remove_file(file).unwrap();
                         }
                     }
                 }
@@ -916,7 +916,7 @@ fn print_verify_store(proj_dirs: &ProjectDirs) {
     {
         // the path is also the hash
         let path = file.path();
-        let mut file = std::fs::File::open(&path).unwrap();
+        let mut file = fs_err::File::open(&path).unwrap();
         let mut hasher = Sha256::new();
         std::io::copy(&mut file, &mut hasher).unwrap();
         let hash = hasher.finalize();
@@ -1149,7 +1149,7 @@ fn delete_global_package_executables(
         .into_iter()
         .map(move |executable| exe_dir.join(executable))
         .map(|path| {
-            std::fs::remove_file(&path)
+            fs_err::remove_file(&path)
                 // Necessary when deleting from RECORD and when we're not installing all scripts
                 // as pip does (e.g. because we're leaving out package.data scripts)
                 // .or_else(ignore_target_doesnt_exist)
@@ -1220,14 +1220,14 @@ fn delete_virtpy_link(package_folder: &Path) -> eyre::Result<()> {
         }
         Err(err) => return Err(err.into()),
     };
-    std::fs::remove_dir_all(package_folder)?;
+    fs_err::remove_dir_all(package_folder)?;
     delete_virtpy_backing(&backing)?;
     Ok(())
 }
 
 fn delete_virtpy_backing(backing_folder: &Path) -> std::io::Result<()> {
     assert!(backing_folder.join(CENTRAL_METADATA).exists());
-    std::fs::remove_dir_all(backing_folder)
+    fs_err::remove_dir_all(backing_folder)
 }
 
 fn create_virtpy(
@@ -1248,7 +1248,7 @@ fn create_virtpy(
 
     _create_bare_venv(python_path, &central_path)?;
 
-    std::fs::create_dir(path)?;
+    fs_err::create_dir(path)?;
     for entry in central_path.read_dir()? {
         let entry = entry?;
         let target = path.join(entry.file_name());
@@ -1272,17 +1272,17 @@ fn create_virtpy(
         .unwrap();
     {
         let metadata_dir = central_path.join(CENTRAL_METADATA);
-        std::fs::create_dir(&metadata_dir)?;
-        std::fs::write(metadata_dir.join("link_location"), &abs_path)?;
+        fs_err::create_dir(&metadata_dir)?;
+        fs_err::write(metadata_dir.join("link_location"), &abs_path)?;
     }
 
     {
         let link_metadata_dir = path.join(LINK_METADATA);
-        std::fs::create_dir(&link_metadata_dir)?;
-        std::fs::write(link_metadata_dir.join("link_location"), &abs_path)?;
+        fs_err::create_dir(&link_metadata_dir)?;
+        fs_err::write(link_metadata_dir.join("link_location"), &abs_path)?;
 
         debug_assert!(central_path.is_absolute());
-        std::fs::write(
+        fs_err::write(
             link_metadata_dir.join("central_location"),
             central_path.as_os_str().to_str().unwrap(),
         )?;
@@ -1345,17 +1345,17 @@ fn paths_match(virtpy: &Path, link_target: &Path) -> std::io::Result<bool> {
 
 fn virtpy_link_location(virtpy: &Path) -> std::io::Result<PathBuf> {
     let backlink = virtpy.join(CENTRAL_METADATA).join("link_location");
-    std::fs::read_to_string(backlink).map(PathBuf::from)
+    fs_err::read_to_string(backlink).map(PathBuf::from)
 }
 
 fn virtpy_link_target(virtpy_link: &Path) -> std::io::Result<PathBuf> {
     let link = virtpy_link.join(LINK_METADATA).join("central_location");
-    std::fs::read_to_string(link).map(PathBuf::from)
+    fs_err::read_to_string(link).map(PathBuf::from)
 }
 
 fn virtpy_link_supposed_location(virtpy_link: &Path) -> std::io::Result<PathBuf> {
     let link = virtpy_link.join(LINK_METADATA).join("link_location");
-    std::fs::read_to_string(link).map(PathBuf::from)
+    fs_err::read_to_string(link).map(PathBuf::from)
 }
 
 #[derive(Debug)]
@@ -1458,7 +1458,7 @@ fn link_requirements_into_virtpy(
     // FIXME: when new top-level directories are created in the central venv,
     //        they should also be symlinked in the virtpy
     let central_location =
-        std::fs::read_to_string(&virtpy_dir.join(LINK_METADATA).join("central_location")).unwrap();
+        fs_err::read_to_string(&virtpy_dir.join(LINK_METADATA).join("central_location")).unwrap();
     let central_location = Path::new(&central_location);
 
     assert!(central_location.exists());
@@ -1554,19 +1554,20 @@ fn link_requirements_into_virtpy(
 
                     let dest = virtpy_dir.join(path);
                     if path.starts_with("include") || path.starts_with("share") {
-                        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+                        fs_err::create_dir_all(dest.parent().unwrap()).unwrap();
                     }
                     dest
                 }
                 Err(path) => {
                     let dest = site_packages.join(path);
                     let dir = dest.parent().unwrap();
-                    std::fs::create_dir_all(&dir).unwrap();
+                    fs_err::create_dir_all(&dir).unwrap();
                     dest
                 }
             };
 
             let src = proj_dirs.package_files().join(record.hash);
+            // TODO: add hard_link to fs_err and replace this call
             match std::fs::hard_link(&src, &dest) {
                 Ok(_) => (),
                 // TODO: can this error exist? Docs don't say anything about this being a failure
