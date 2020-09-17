@@ -85,13 +85,14 @@ const LINK_METADATA: &str = "virtpy_link_metadata";
 
 fn check_output(cmd: &mut std::process::Command) -> eyre::Result<String> {
     let output = cmd.output()?;
-    if !output.status.success() {
+    eyre::ensure!(output.status.success(), {
         let error = String::from_utf8_lossy(&output.stderr);
-        return Err(eyre::eyre!("command failed\n    {:?}:\n{}", cmd, error));
-    }
+        eyre::eyre!("command failed\n    {:?}:\n{}", cmd, error)
+    });
     // TODO: check out what kind error message FromUtf8Error converts into
     //       and whether it's sufficient
-    Ok(String::from_utf8(output.stdout)?)
+    String::from_utf8(output.stdout)
+        .wrap_err_with(|| eyre::eyre!("output isn't valid utf8 for {:?}", cmd))
 }
 
 // probably missing prereleases and such
@@ -111,14 +112,19 @@ impl PythonVersion {
 }
 
 fn python_version(python_path: &Path) -> eyre::Result<PythonVersion> {
-    let output = check_output(std::process::Command::new(python_path).arg("--version"))?;
+    let output = check_output(std::process::Command::new(python_path).arg("--version"))
+        .wrap_err("couldn't get python version")?;
     let version = output.trim().to_owned();
     let captures = regex::Regex::new(r"Python (\d+)\.(\d+)\.(\d+)")
-        .unwrap()
+        .expect("invalid regex")
         .captures(&version)
-        .unwrap();
+        .ok_or_else(|| eyre::eyre!("failed to read python version from {:?}", version))?;
 
-    let get_num = |idx: usize| captures[idx].parse::<i32>().unwrap();
+    let get_num = |idx: usize| {
+        captures[idx]
+            .parse::<i32>()
+            .expect("failed to get capture group")
+    };
     Ok(PythonVersion {
         major: get_num(1),
         minor: get_num(2),
@@ -743,7 +749,7 @@ fn main() -> eyre::Result<()> {
             };
             let python_version = python_version(&python_path)?;
 
-            let requirements = python_requirements::poetry_get_requirements(Path::new("."), true);
+            let requirements = python_requirements::poetry_get_requirements(Path::new("."), true)?;
             virtpy_add_dependencies(
                 &proj_dirs,
                 virtpy_path,
@@ -879,7 +885,7 @@ fn install_executable_package(
 
     check_poetry_available()?;
 
-    let requirements = python_requirements::get_requirements(&package, allow_prereleases);
+    let requirements = python_requirements::get_requirements(&package, allow_prereleases)?;
 
     let token = create_virtpy(&proj_dirs, &python_path, &package_folder)?;
 
@@ -1397,8 +1403,8 @@ fn _create_bare_venv(python_path: &Path, path: &Path) -> eyre::Result<()> {
             .arg(&path)
             .stdout(std::process::Stdio::null()),
     )
-    .wrap_err_with(|| eyre::eyre!("failed to create virtpy {}", path.display()))?;
-    Ok(())
+    .map(drop)
+    .wrap_err_with(|| eyre::eyre!("failed to create virtpy {}", path.display()))
 }
 
 fn check_poetry_available() -> eyre::Result<()> {

@@ -1,3 +1,4 @@
+use eyre::WrapErr;
 use pest::Parser;
 use std::{path::Path, process::Command};
 
@@ -163,38 +164,53 @@ pub fn read_requirements_txt(data: &str) -> Vec<Requirement> {
 
 // Meant for installation of single packages with executables
 // into a self-contained venv, like pipx does.
-pub fn get_requirements(package: &str, allow_prereleases: bool) -> Vec<Requirement> {
-    let tmp_dir = tempdir::TempDir::new("virtpy").unwrap();
+pub fn get_requirements(package: &str, allow_prereleases: bool) -> eyre::Result<Vec<Requirement>> {
+    fn init_temporary_poetry_project(
+        package: &str,
+        allow_prereleases: bool,
+    ) -> eyre::Result<tempdir::TempDir> {
+        let tmp_dir = tempdir::TempDir::new("virtpy").unwrap();
 
-    crate::check_output(
-        Command::new("poetry")
-            .current_dir(&tmp_dir)
-            .args(&["init", "-n"])
-            .stdout(std::process::Stdio::null()),
-    )
-    .unwrap();
+        crate::check_output(
+            Command::new("poetry")
+                .current_dir(&tmp_dir)
+                .args(&["init", "-n"])
+                .stdout(std::process::Stdio::null()),
+        )
+        .wrap_err("failed to init poetry project")?;
 
-    let toml_path = tmp_dir.as_ref().join("pyproject.toml");
-    let mut doc = fs_err::read_to_string(&toml_path)
-        .unwrap()
-        .parse::<toml_edit::Document>()
-        .unwrap();
+        let toml_path = tmp_dir.as_ref().join("pyproject.toml");
+        let mut doc = fs_err::read_to_string(&toml_path)?
+            .parse::<toml_edit::Document>()
+            .wrap_err("failed to parse pyproject.toml")?;
 
-    let mut dep_table = toml_edit::Table::new();
-    dep_table["version"] = toml_edit::value("*");
-    if allow_prereleases {
-        dep_table["allow-prereleases"] = toml_edit::value(true);
+        let mut dep_table = toml_edit::Table::new();
+        dep_table["version"] = toml_edit::value("*");
+        if allow_prereleases {
+            dep_table["allow-prereleases"] = toml_edit::value(true);
+        }
+        doc["tool"]["poetry"]["dependencies"][package] = toml_edit::Item::Table(dep_table);
+        fs_err::write(&toml_path, doc.to_string())
+            .wrap_err_with(|| eyre::eyre!("failed to add {} to pyproject.toml", package))?;
+        Ok(tmp_dir)
     }
-    doc["tool"]["poetry"]["dependencies"][package] = toml_edit::Item::Table(dep_table);
-    fs_err::write(&toml_path, doc.to_string()).expect("failed to write pyproject.toml");
 
-    poetry_get_requirements(tmp_dir.as_ref(), false)
+    let tmp_dir = init_temporary_poetry_project(package, allow_prereleases)
+        .wrap_err("failed to create temporary poetry project")?;
+
+    poetry_get_requirements(tmp_dir.as_ref(), false).wrap_err_with(|| {
+        eyre::eyre!(
+            "failed to get requirements for {} from poetry (allow_prereleases = {})",
+            package,
+            allow_prereleases
+        )
+    })
 }
 
 pub fn poetry_get_requirements(
     poetry_proj: &Path,
     include_dev_dependencies: bool,
-) -> Vec<Requirement> {
+) -> eyre::Result<Vec<Requirement>> {
     poetry_deactivate_venv_creation(poetry_proj);
 
     // Generating the poetry.lock file without actually installing anything.
@@ -207,8 +223,7 @@ pub fn poetry_get_requirements(
             .current_dir(poetry_proj)
             .args(&["update", "--lock"])
             .stdout(std::process::Stdio::null()),
-    )
-    .unwrap();
+    )?;
 
     debug_assert!(poetry_proj.join("poetry.lock").exists());
 
@@ -221,9 +236,9 @@ pub fn poetry_get_requirements(
         command.arg("--dev");
     }
 
-    let output = crate::check_output(&mut command).expect("failed to run poetry export");
+    let output = crate::check_output(&mut command).wrap_err("failed to get requirements.txt")?;
 
-    read_requirements_txt(&output)
+    Ok(read_requirements_txt(&output))
 }
 
 /// Poetry creates venvs automatically which not only takes a lot of time, it may
