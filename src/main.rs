@@ -1,3 +1,4 @@
+use eyre::WrapErr;
 use python_requirements::Requirement;
 use rand::Rng;
 use regex::Regex;
@@ -5,7 +6,6 @@ use sha2::{Digest, Sha256};
 use std::fmt::Write;
 use std::{
     collections::HashMap,
-    error::Error,
     fs::File,
     io::BufReader,
     path::{Path, PathBuf},
@@ -83,11 +83,11 @@ const INSTALLED_DISTRIBUTIONS: &str = "installed_distributions.json";
 const CENTRAL_METADATA: &str = "virtpy_central_metadata";
 const LINK_METADATA: &str = "virtpy_link_metadata";
 
-fn check_output(cmd: &mut std::process::Command) -> Result<String, Box<dyn std::error::Error>> {
+fn check_output(cmd: &mut std::process::Command) -> eyre::Result<String> {
     let output = cmd.output()?;
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("command failed\n    {:?}:\n{}", cmd, error).into());
+        return Err(eyre::eyre!("command failed\n    {:?}:\n{}", cmd, error));
     }
     // TODO: check out what kind error message FromUtf8Error converts into
     //       and whether it's sufficient
@@ -110,7 +110,7 @@ impl PythonVersion {
     }
 }
 
-fn python_version(python_path: &Path) -> Result<PythonVersion, Box<dyn Error>> {
+fn python_version(python_path: &Path) -> eyre::Result<PythonVersion> {
     let output = check_output(std::process::Command::new(python_path).arg("--version"))?;
     let version = output.trim().to_owned();
     let captures = regex::Regex::new(r"Python (\d+)\.(\d+)\.(\d+)")
@@ -150,7 +150,7 @@ type PackageFileHash = String;
 struct StoredDistributions(HashMap<String, HashMap<DependencyHash, PathBuf>>);
 
 impl StoredDistributions {
-    fn load(proj_dirs: &ProjectDirs) -> Result<Self, Box<dyn Error>> {
+    fn load(proj_dirs: &ProjectDirs) -> eyre::Result<Self> {
         let file = match File::open(proj_dirs.installed_distributions()) {
             Ok(f) => f,
             Err(err) if is_not_found(&err) => {
@@ -162,7 +162,7 @@ impl StoredDistributions {
         Ok(serde_json::from_reader(reader)?)
     }
 
-    fn save(&self, proj_dirs: &ProjectDirs) -> Result<(), Box<dyn Error>> {
+    fn save(&self, proj_dirs: &ProjectDirs) -> eyre::Result<()> {
         let file = File::create(proj_dirs.installed_distributions())?;
         // NOTE: does this need a BufWriter?
         serde_json::to_writer_pretty(file, self)?;
@@ -410,7 +410,7 @@ fn install_and_register_distributions(
     distribs: &[Requirement],
     python_version: PythonVersion,
     options: Options,
-) -> Result<(), Box<dyn Error>> {
+) -> eyre::Result<()> {
     if options.verbose >= 1 {
         println!("Adding {} new distributions", distribs.len());
     }
@@ -488,7 +488,7 @@ fn new_dependencies(
     requirements: &[Requirement],
     proj_dirs: &ProjectDirs,
     python_version: PythonVersion,
-) -> Result<Vec<Requirement>, Box<dyn Error>> {
+) -> eyre::Result<Vec<Requirement>> {
     let stored_distributions = StoredDistributions::load(proj_dirs)?;
     let existing_deps = match stored_distributions
         .0
@@ -672,7 +672,8 @@ impl VirtpyDirs {
     }
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> eyre::Result<()> {
+    color_eyre::install()?;
     let proj_dirs = ProjectDirs::new().unwrap();
     // TODO: create on demand
     proj_dirs.create_dirs()?;
@@ -702,7 +703,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Command::New { python } => {
             let path = PathBuf::from(DEFAULT_VIRTPY_PATH);
             let python_path = python_detection::detect(&python)
-                .ok_or(format!("Couldn't find python executable '{}'", python))?;
+                .ok_or(eyre::eyre!("Couldn't find python executable '{}'", python))?;
             create_virtpy(&proj_dirs, &python_path, &path)?;
         }
         Command::Install {
@@ -809,9 +810,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                             for python_specific_stored_distribs in stored_distribs.0.values_mut() {
                                 python_specific_stored_distribs.remove(&hash);
                             }
-                            stored_distribs.save(&proj_dirs).map_err(|err| {
-                                format!("failed to save stored distributions: {}", err)
-                            })?;
+                            stored_distribs
+                                .save(&proj_dirs)
+                                .wrap_err("failed to save stored distributions")?;
 
                             res.unwrap();
                         }
@@ -861,11 +862,11 @@ fn install_executable_package(
     force: bool,
     allow_prereleases: bool,
     python: &str,
-) -> Result<(), Box<dyn Error>> {
+) -> eyre::Result<()> {
     let package_folder = proj_dirs.package_folder(&package);
 
     let python_path = python_detection::detect(&python)
-        .ok_or(format!("Couldn't find python executable '{}'", python))?;
+        .ok_or_else(|| eyre::eyre!("Couldn't find python executable '{}'", python))?;
 
     if package_folder.exists() {
         if force {
@@ -1118,7 +1119,7 @@ fn delete_global_package_executables(
     proj_dirs: &ProjectDirs,
     virtpy_dirs: &VirtpyDirs,
     package: &str,
-) -> impl Iterator<Item = Result<(), Box<dyn Error>>> {
+) -> impl Iterator<Item = eyre::Result<()>> {
     let dist_info = virtpy_dirs.dist_info(package).unwrap();
 
     println!("searching executables");
@@ -1152,7 +1153,7 @@ fn delete_global_package_executables(
                 // Necessary when deleting from RECORD and when we're not installing all scripts
                 // as pip does (e.g. because we're leaving out package.data scripts)
                 // .or_else(ignore_target_doesnt_exist)
-                .map_err(|err| format!("failed to remove {}: {}", path.display(), err).into())
+                .wrap_err_with(|| eyre::eyre!("failed to remove {}", path.display()))
         })
 }
 
@@ -1164,7 +1165,7 @@ fn virtpy_add_dependencies(
     install_global_executable: Option<&str>,
     options: Options,
     virtpy_checked_token: VirtpyChecked,
-) -> Result<(), Box<dyn Error>> {
+) -> eyre::Result<()> {
     let new_deps = new_dependencies(&requirements, proj_dirs, python_version)?;
 
     // The virtpy doesn't contain pip so get the appropriate global python
@@ -1199,7 +1200,7 @@ fn is_not_found(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::NotFound
 }
 
-fn delete_executable_virtpy(proj_dirs: &ProjectDirs, package: &str) -> Result<(), Box<dyn Error>> {
+fn delete_executable_virtpy(proj_dirs: &ProjectDirs, package: &str) -> eyre::Result<()> {
     let virtpy_path = proj_dirs.package_folder(&package);
     let virtpy_dirs = VirtpyDirs::from_path(virtpy_path);
     delete_global_package_executables(&proj_dirs, &virtpy_dirs, &package).for_each(Result::unwrap);
@@ -1207,12 +1208,15 @@ fn delete_executable_virtpy(proj_dirs: &ProjectDirs, package: &str) -> Result<()
     delete_virtpy_link(&proj_dirs.package_folder(&package))
 }
 
-fn delete_virtpy_link(package_folder: &Path) -> Result<(), Box<dyn Error>> {
+fn delete_virtpy_link(package_folder: &Path) -> eyre::Result<()> {
     println!("removing {}", package_folder.display());
     let backing = match virtpy_link_target(&package_folder) {
         Ok(target) => target,
         Err(err) if is_not_found(&err) => {
-            return Err(format!("not a valid virtpy: {}", package_folder.display()).into())
+            return Err(eyre::eyre!(
+                "not a valid virtpy: {}",
+                package_folder.display()
+            ))
         }
         Err(err) => return Err(err.into()),
     };
@@ -1230,7 +1234,7 @@ fn create_virtpy(
     project_dirs: &ProjectDirs,
     python_path: &Path,
     path: &Path,
-) -> Result<VirtpyChecked, Box<dyn Error>> {
+) -> eyre::Result<VirtpyChecked> {
     let mut rng = rand::thread_rng();
     let id = std::iter::repeat_with(|| rng.sample(rand::distributions::Alphanumeric))
         .take(12)
@@ -1294,13 +1298,12 @@ enum VirtpyLinkStatus {
     Dangling { target: PathBuf },
 }
 
-fn check_virtpy_link(virtpy_link_path: &Path) -> Result<VirtpyChecked, Box<dyn Error>> {
+fn check_virtpy_link(virtpy_link_path: &Path) -> eyre::Result<VirtpyChecked> {
     let error_msg = |msg| {
-        format!(
+        eyre::eyre!(
             "this virtpy env is broken, please recreate it. Cause: {}",
             msg
         )
-        .into()
     };
     match virtpy_link_status(virtpy_link_path)? {
         VirtpyLinkStatus::WrongLocation { should, .. } => Err(error_msg(format!(
@@ -1387,18 +1390,18 @@ fn virtpy_status(virtpy_path: &Path) -> std::io::Result<VirtpyStatus> {
         matching_link: link_location,
     })
 }
-fn _create_bare_venv(python_path: &Path, path: &Path) -> Result<(), Box<dyn Error>> {
+fn _create_bare_venv(python_path: &Path, path: &Path) -> eyre::Result<()> {
     check_output(
         std::process::Command::new(python_path)
             .args(&["-m", "venv", "--without-pip"])
             .arg(&path)
             .stdout(std::process::Stdio::null()),
     )
-    .map_err(|err| format!("failed to create virtpy {}: {}", path.display(), err))?;
+    .wrap_err_with(|| eyre::eyre!("failed to create virtpy {}", path.display()))?;
     Ok(())
 }
 
-fn check_poetry_available() -> Result<(), Box<dyn Error>> {
+fn check_poetry_available() -> eyre::Result<()> {
     // TODO: maybe check error code as well and pass the stderr msg up
     std::process::Command::new("poetry")
         .arg("--help")
@@ -1406,11 +1409,12 @@ fn check_poetry_available() -> Result<(), Box<dyn Error>> {
         .stderr(std::process::Stdio::null())
         .status()
         //.output()
-        .map_err(|err| -> Box<dyn Error> {
+        .map_err(|err| {
             if is_not_found(&err) {
-                "this command requires poetry to be installed and on the PATH. (https://github.com/python-poetry/poetry)".into()
+                eyre::eyre!("this command requires poetry to be installed and on the PATH. (https://github.com/python-poetry/poetry)")
             } else {
-                Box::new(err).into()
+                eyre::eyre!(err)
+                //Box::new(err).into()
             }
         })
         .map(drop)
@@ -1450,7 +1454,7 @@ fn link_requirements_into_virtpy(
     options: Options,
     install_global_executable: Option<&str>,
     _virtpy_checked_token: VirtpyChecked,
-) -> Result<(), Box<dyn Error>> {
+) -> eyre::Result<()> {
     // FIXME: when new top-level directories are created in the central venv,
     //        they should also be symlinked in the virtpy
     let central_location =
@@ -1584,7 +1588,7 @@ fn link_requirements_into_virtpy(
         let entrypoints = match (entrypoints(&dist_info_path), install_global_executable) {
             (Some(ep), _) => ep,
             (None, true) => {
-                return Err(format!("{} contains no executables", distribution.name).into())
+                return Err(eyre::eyre!("{} contains no executables", distribution.name))
             }
             (None, false) => vec![],
         };
@@ -1721,7 +1725,7 @@ mod test {
     }
 
     #[test]
-    fn test_install_uninstall() -> Result<(), Box<dyn Error>> {
+    fn test_install_uninstall() -> eyre::Result<()> {
         let proj_dirs = test_proj_dirs();
 
         let options = Options { verbose: 3 };

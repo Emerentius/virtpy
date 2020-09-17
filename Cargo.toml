@@ -24,3 +24,8 @@ rand = "0.7.3"
 sha2 = "0.9.1"
 base64 = "0.12.3"
 lazy_static = "1.4.0"
+eyre = "0.6.0"
+color-eyre = "0.5.3"
+
+[profile.dev.package.backtrace]
+opt-level = 3
