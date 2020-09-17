@@ -162,17 +162,20 @@ impl StoredDistributions {
             Err(err) if is_not_found(&err) => {
                 return Ok(StoredDistributions(HashMap::new()));
             }
-            Err(err) => return Err(err.into()),
+            Err(err) => eyre::bail!(err),
         };
         let reader = BufReader::new(file);
-        Ok(serde_json::from_reader(reader)?)
+        serde_json::from_reader(reader).wrap_err("couldn't load stored distributions")
     }
 
     fn save(&self, proj_dirs: &ProjectDirs) -> eyre::Result<()> {
-        let file = File::create(proj_dirs.installed_distributions())?;
-        // NOTE: does this need a BufWriter?
-        serde_json::to_writer_pretty(file, self)?;
-        Ok(())
+        let path = proj_dirs.installed_distributions();
+        File::create(&path)
+            .map_err(eyre::Report::new)
+            .and_then(|file|
+                // NOTE: does this need a BufWriter?
+                serde_json::to_writer_pretty(file, self).wrap_err("failed to serialize stored distributions") )
+            .wrap_err("failed to save stored distributions")
     }
 }
 
