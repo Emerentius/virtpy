@@ -15,6 +15,12 @@ use structopt::StructOpt;
 mod python_detection;
 mod python_requirements;
 
+// Adapted from fs_err.
+// TODO: upstream
+pub(crate) mod my_fs_err;
+
+use my_fs_err::FsErrPathExt;
+
 #[derive(StructOpt)]
 struct Opt {
     #[structopt(subcommand)] // Note that we mark a field as a subcommand
@@ -1178,7 +1184,7 @@ fn virtpy_add_dependencies(
     let new_deps = new_dependencies(&requirements, proj_dirs, python_version)?;
 
     // The virtpy doesn't contain pip so get the appropriate global python
-    let python_path = global_python(virtpy_path);
+    let python_path = global_python(virtpy_path)?;
 
     install_and_register_distributions(
         &python_path,
@@ -1197,12 +1203,20 @@ fn virtpy_add_dependencies(
         install_global_executable,
         virtpy_checked_token,
     )
+    .wrap_err("failed to add packages to virtpy")
 }
 
-fn global_python(virtpy_path: &Path) -> PathBuf {
+fn global_python(virtpy_path: &Path) -> eyre::Result<PathBuf> {
     // FIXME: On windows, the virtpy python is a copy, so there's no symlink to resolve.
     //        We need to take the version and then do a search for the real python.
-    python_path(virtpy_path).canonicalize().unwrap()
+    python_path(virtpy_path)
+        .canonicalize_err()
+        .wrap_err_with(|| {
+            eyre::eyre!(
+                "failed to find path of the global python used by virtpy at {}",
+                virtpy_path.display()
+            )
+        })
 }
 
 fn is_not_found(error: &std::io::Error) -> bool {
@@ -1220,14 +1234,13 @@ fn delete_executable_virtpy(proj_dirs: &ProjectDirs, package: &str) -> eyre::Res
 fn delete_virtpy_link(package_folder: &Path) -> eyre::Result<()> {
     println!("removing {}", package_folder.display());
     let backing = match virtpy_link_target(&package_folder) {
-        Ok(target) => target,
         Err(err) if is_not_found(&err) => {
-            return Err(eyre::eyre!(
-                "not a valid virtpy: {}",
+            eyre::bail!(
+                "not a valid virtpy, missing link to backing store: {}",
                 package_folder.display()
-            ))
+            );
         }
-        Err(err) => return Err(err.into()),
+        x => x?,
     };
     fs_err::remove_dir_all(package_folder)?;
     delete_virtpy_backing(&backing)?;
@@ -1274,8 +1287,7 @@ fn create_virtpy(
     }
 
     let abs_path = path
-        .canonicalize()
-        .unwrap()
+        .canonicalize_err()?
         .into_os_string()
         .into_string()
         .unwrap();
@@ -1308,27 +1320,28 @@ enum VirtpyLinkStatus {
 }
 
 fn check_virtpy_link(virtpy_link_path: &Path) -> eyre::Result<VirtpyChecked> {
-    let error_msg = |msg| {
-        eyre::eyre!(
-            "this virtpy env is broken, please recreate it. Cause: {}",
-            msg
-        )
-    };
-    match virtpy_link_status(virtpy_link_path)? {
-        VirtpyLinkStatus::WrongLocation { should, .. } => Err(error_msg(format!(
+    match virtpy_link_status(virtpy_link_path).wrap_err("failed to verify virtpy")? {
+        VirtpyLinkStatus::WrongLocation { should, .. } => Err(eyre::eyre!(
             "virtpy copied or moved from {}",
             should.display()
-        ))),
-        VirtpyLinkStatus::Dangling { target } => Err(error_msg(format!(
+        )),
+        VirtpyLinkStatus::Dangling { target } => Err(eyre::eyre!(
             "backing storage for virtpy not found: {}",
             target.display()
-        ))),
+        )),
         VirtpyLinkStatus::Ok { .. } => Ok(VirtpyChecked),
     }
+    .wrap_err_with(|| {
+        eyre::eyre!(
+            "the virtpy `{}` is broken, please recreate it.",
+            virtpy_link_path.display(),
+        )
+    })
 }
 
-fn virtpy_link_status(virtpy_link_path: &Path) -> std::io::Result<VirtpyLinkStatus> {
-    let supposed_location = virtpy_link_supposed_location(virtpy_link_path).unwrap();
+fn virtpy_link_status(virtpy_link_path: &Path) -> eyre::Result<VirtpyLinkStatus> {
+    let supposed_location = virtpy_link_supposed_location(virtpy_link_path)
+        .wrap_err("failed to read original location of virtpy")?;
     if !paths_match(virtpy_link_path, &supposed_location).unwrap() {
         return Ok(VirtpyLinkStatus::WrongLocation {
             should: supposed_location,
@@ -1336,7 +1349,7 @@ fn virtpy_link_status(virtpy_link_path: &Path) -> std::io::Result<VirtpyLinkStat
         });
     }
 
-    let target = virtpy_link_target(virtpy_link_path).unwrap();
+    let target = virtpy_link_target(virtpy_link_path).wrap_err("failed to find virtpy backing")?;
     if !target.exists() {
         return Ok(VirtpyLinkStatus::Dangling {
             target: target.clone(),
@@ -1348,8 +1361,8 @@ fn virtpy_link_status(virtpy_link_path: &Path) -> std::io::Result<VirtpyLinkStat
     })
 }
 
-fn paths_match(virtpy: &Path, link_target: &Path) -> std::io::Result<bool> {
-    Ok(virtpy.canonicalize()? == link_target.canonicalize()?)
+fn paths_match(virtpy: &Path, link_target: &Path) -> eyre::Result<bool> {
+    Ok(virtpy.canonicalize_err()? == link_target.canonicalize_err()?)
 }
 
 fn virtpy_link_location(virtpy: &Path) -> std::io::Result<PathBuf> {
@@ -1373,21 +1386,23 @@ enum VirtpyStatus {
     Orphaned { link: PathBuf },
 }
 
-fn virtpy_status(virtpy_path: &Path) -> std::io::Result<VirtpyStatus> {
-    let link_location = virtpy_link_location(virtpy_path).unwrap();
+fn virtpy_status(virtpy_path: &Path) -> eyre::Result<VirtpyStatus> {
+    let link_location = virtpy_link_location(virtpy_path)
+        .wrap_err("failed to read location of corresponding virtpy")?;
 
-    let link_target = match virtpy_link_target(&link_location) {
-        Ok(target) => PathBuf::from(target),
-        Err(err) if is_not_found(&err) => {
+    let link_target = virtpy_link_target(&link_location);
+
+    if let Err(err) = &link_target {
+        if is_not_found(err) {
             return Ok(VirtpyStatus::Orphaned {
                 link: link_location,
-            })
+            });
         }
-        Err(err) => panic!(
-            "failed to read virtpy link target through backlink: {}",
-            err
-        ),
-    };
+    }
+
+    let link_target = link_target
+        .map(PathBuf::from)
+        .wrap_err("failed to read virtpy link target through backlink")?;
 
     if !paths_match(virtpy_path, &link_target).unwrap() {
         return Ok(VirtpyStatus::Orphaned {
