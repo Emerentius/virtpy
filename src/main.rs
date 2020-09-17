@@ -246,7 +246,7 @@ if __name__ == '__main__':
         )
     }
 
-    fn generate_executable(&self, dest: &Path, python_path: &Path) {
+    fn generate_executable(&self, dest: &Path, python_path: &Path) -> std::io::Result<()> {
         let content = self.executable_code(&python_path);
         let mut opts = std::fs::OpenOptions::new();
         // create_new causes failure if the target already exists
@@ -263,9 +263,9 @@ if __name__ == '__main__':
             false => dest.to_owned(),
         };
 
-        let mut f = File::from_options(dest, &opts).unwrap();
+        let mut f = File::from_options(dest, &opts)?;
         use std::io::Write;
-        f.write_all(content.as_bytes()).unwrap();
+        f.write_all(content.as_bytes())
     }
 }
 
@@ -1420,6 +1420,7 @@ fn check_poetry_available() -> eyre::Result<()> {
         .map(drop)
 }
 
+// TODO: add os specific apis to fs_err and replace calls
 fn symlink_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     #[cfg(target_os = "linux")]
     {
@@ -1432,6 +1433,7 @@ fn symlink_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     }
 }
 
+// TODO: add os specific apis to fs_err and replace calls
 fn symlink_file(from: &Path, to: &Path) -> std::io::Result<()> {
     #[cfg(target_os = "linux")]
     {
@@ -1458,10 +1460,15 @@ fn link_requirements_into_virtpy(
     // FIXME: when new top-level directories are created in the central venv,
     //        they should also be symlinked in the virtpy
     let central_location =
-        fs_err::read_to_string(&virtpy_dir.join(LINK_METADATA).join("central_location")).unwrap();
+        fs_err::read_to_string(&virtpy_dir.join(LINK_METADATA).join("central_location"))
+            .wrap_err("couldn't find virtpy backing")?;
     let central_location = Path::new(&central_location);
 
-    assert!(central_location.exists());
+    eyre::ensure!(
+        central_location.exists(),
+        "couldn't find virtpy backing: {}",
+        central_location.display()
+    );
     assert_eq!(central_location.parent().unwrap(), proj_dirs.virtpys());
 
     let virtpy_dir = central_location;
@@ -1588,9 +1595,7 @@ fn link_requirements_into_virtpy(
         let install_global_executable = install_global_executable == Some(&distribution.name[..]);
         let entrypoints = match (entrypoints(&dist_info_path), install_global_executable) {
             (Some(ep), _) => ep,
-            (None, true) => {
-                return Err(eyre::eyre!("{} contains no executables", distribution.name))
-            }
+            (None, true) => eyre::bail!("{} contains no executables", distribution.name),
             (None, false) => vec![],
         };
 
@@ -1599,11 +1604,16 @@ fn link_requirements_into_virtpy(
                 true => "Scripts",
                 false => "bin",
             });
+            let err = || eyre::eyre!("failed to install executable {}", entrypoint.name);
             let python_path = executables_path.join("python");
-            entrypoint.generate_executable(&executables_path, &python_path);
+            entrypoint
+                .generate_executable(&executables_path, &python_path)
+                .wrap_err_with(err)?;
 
             if install_global_executable {
-                entrypoint.generate_executable(&proj_dirs.executables(), &python_path);
+                entrypoint
+                    .generate_executable(&proj_dirs.executables(), &python_path)
+                    .wrap_err_with(err)?;
             }
         }
     }
