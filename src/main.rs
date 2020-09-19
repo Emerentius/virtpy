@@ -15,11 +15,7 @@ use structopt::StructOpt;
 mod python_detection;
 mod python_requirements;
 
-// Adapted from fs_err.
-// TODO: upstream
-pub(crate) mod my_fs_err;
-
-use my_fs_err::FsErrPathExt;
+use fs_err::PathExt;
 
 #[derive(StructOpt)]
 struct Opt {
@@ -1233,7 +1229,7 @@ fn global_python(virtpy_path: &Path) -> eyre::Result<PathBuf> {
     // FIXME: On windows, the virtpy python is a copy, so there's no symlink to resolve.
     //        We need to take the version and then do a search for the real python.
     python_path(virtpy_path)
-        .canonicalize_err()
+        .fs_err_canonicalize()
         .wrap_err_with(|| {
             eyre::eyre!(
                 "failed to find path of the global python used by virtpy at {}",
@@ -1310,7 +1306,7 @@ fn create_virtpy(
     }
 
     let abs_path = path
-        .canonicalize_err()?
+        .fs_err_canonicalize()?
         .into_os_string()
         .into_string()
         .unwrap();
@@ -1385,7 +1381,7 @@ fn virtpy_link_status(virtpy_link_path: &Path) -> eyre::Result<VirtpyLinkStatus>
 }
 
 fn paths_match(virtpy: &Path, link_target: &Path) -> eyre::Result<bool> {
-    Ok(virtpy.canonicalize_err()? == link_target.canonicalize_err()?)
+    Ok(virtpy.fs_err_canonicalize()? == link_target.fs_err_canonicalize()?)
 }
 
 fn virtpy_link_location(virtpy: &Path) -> std::io::Result<PathBuf> {

@@ -26,7 +26,7 @@ base64 = "0.12.3"
 lazy_static = "1.4.0"
 eyre = "0.6.0"
 color-eyre = "0.5.3"
-fs-err = "2.3.0"
+fs-err = "2.4.0"
 
 [profile.dev.package.backtrace]
 opt-level = 3
