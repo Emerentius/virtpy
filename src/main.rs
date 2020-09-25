@@ -259,22 +259,22 @@ if __name__ == '__main__':
 
     fn generate_executable(&self, dest: &Path, python_path: &Path) -> std::io::Result<()> {
         let content = self.executable_code(&python_path);
-        let mut opts = std::fs::OpenOptions::new();
-        // create_new causes failure if the target already exists
-        // TODO: handle error
-        opts.write(true).create_new(true).truncate(true);
-        #[cfg(target_family = "unix")]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o744);
-        }
 
         let dest = match dest.is_dir() {
             true => dest.join(&self.name),
             false => dest.to_owned(),
         };
+        let mut opts = std::fs::OpenOptions::new();
+        // create_new causes failure if the target already exists
+        // TODO: handle error
+        opts.write(true).create_new(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o744);
+        }
 
-        let mut f = File::from_options(dest, &opts)?;
+        let mut f = opts.open(dest)?;
         use std::io::Write;
         f.write_all(content.as_bytes())
     }
