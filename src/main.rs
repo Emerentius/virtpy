@@ -524,15 +524,6 @@ fn new_dependencies(
         .collect::<Vec<_>>())
 }
 
-fn python_path(virtpy: &Path) -> PathBuf {
-    let bin_dir = if cfg!(target_os = "windows") {
-        "Scripts"
-    } else {
-        "bin"
-    };
-    virtpy.join(bin_dir).join("python")
-}
-
 // toplevel options
 #[derive(Copy, Clone)]
 struct Options {
@@ -634,51 +625,26 @@ fn package_info_from_dist_info_dirname(dirname: &str) -> (&str, &str) {
     (distrib_name.as_str(), version.as_str())
 }
 
-// TODO: use for all virtpy paths
-struct VirtpyDirs {
+struct VirtpyBacking {
     location: PathBuf,
     python_version: PythonVersion,
 }
 
-impl VirtpyDirs {
+impl VirtpyPaths for VirtpyBacking {
+    fn location(&self) -> &Path {
+        &self.location
+    }
+
+    fn python_version(&self) -> PythonVersion {
+        self.python_version
+    }
+}
+
+impl VirtpyBacking {
     fn from_path(location: PathBuf) -> Self {
         Self {
             python_version: python_version(&python_path(&location)).unwrap(),
             location,
-        }
-    }
-
-    fn dist_info(&self, package: &str) -> Option<PathBuf> {
-        self.dist_infos().find(|path| {
-            let entry_name = path.file_name().unwrap().to_str().unwrap();
-            let (distrib_name, _version) = package_info_from_dist_info_dirname(entry_name);
-            distrib_name == package
-        })
-    }
-
-    fn dist_infos(&self) -> impl Iterator<Item = PathBuf> {
-        self.site_packages()
-            .read_dir()
-            .unwrap()
-            .map(Result::unwrap)
-            .map(|dir_entry| dir_entry.path())
-            .filter(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    .ends_with(".dist-info")
-            })
-    }
-
-    fn site_packages(&self) -> PathBuf {
-        if cfg!(target_family = "unix") {
-            self.location.join(format!(
-                "lib/python{}/site-packages",
-                self.python_version.as_string_without_patch()
-            ))
-        } else {
-            unimplemented!()
         }
     }
 }
@@ -701,19 +667,11 @@ fn main() -> eyre::Result<()> {
                 requirements: PathBuf,
             ) -> eyre::Result<()> {
                 let virtpy_path = DEFAULT_VIRTPY_PATH.as_ref();
-                let virtpy = check_virtpy_link(virtpy_path)?;
-                let python_version = python_version(&python_path(virtpy_path))?;
+                let virtpy = CheckedVirtpy::new(virtpy_path)?;
                 let requirements = fs_err::read_to_string(requirements)?;
                 let requirements = python_requirements::read_requirements_txt(&requirements);
 
-                virtpy_add_dependencies(
-                    &proj_dirs,
-                    &virtpy,
-                    requirements,
-                    python_version,
-                    None,
-                    options,
-                )?;
+                virtpy_add_dependencies(&proj_dirs, &virtpy, requirements, None, options)?;
                 Ok(())
             }
 
@@ -757,29 +715,16 @@ fn main() -> eyre::Result<()> {
         Command::PoetryInstall {} => {
             fn poetry_install(proj_dirs: &ProjectDirs, options: Options) -> eyre::Result<()> {
                 let virtpy_path: &Path = DEFAULT_VIRTPY_PATH.as_ref();
-                let (python_path, virtpy) = match virtpy_path.exists() {
-                    true => (
-                        python_path(virtpy_path).to_owned(),
-                        check_virtpy_link(virtpy_path)?,
-                    ),
+                let virtpy = match virtpy_path.exists() {
+                    true => CheckedVirtpy::new(virtpy_path)?,
                     false => {
                         let python_path = python_detection::detect("3").unwrap();
-                        let virtpy = create_virtpy(&proj_dirs, &python_path, &virtpy_path)?;
-                        (python_path, virtpy)
+                        create_virtpy(&proj_dirs, &python_path, &virtpy_path)?
                     }
                 };
-                let python_version = python_version(&python_path)?;
-
                 let requirements =
                     python_requirements::poetry_get_requirements(Path::new("."), true)?;
-                virtpy_add_dependencies(
-                    &proj_dirs,
-                    &virtpy,
-                    requirements,
-                    python_version,
-                    None,
-                    options,
-                )?;
+                virtpy_add_dependencies(&proj_dirs, &virtpy, requirements, None, options)?;
                 Ok(())
             }
 
@@ -920,16 +865,7 @@ fn install_executable_package(
         let _ = delete_virtpy_link(&package_folder);
     });
 
-    let python_version = python_version(&python_path)?;
-
-    virtpy_add_dependencies(
-        &proj_dirs,
-        &virtpy,
-        requirements,
-        python_version,
-        Some(package),
-        options,
-    )?;
+    virtpy_add_dependencies(&proj_dirs, &virtpy, requirements, Some(package), options)?;
 
     // if everything succeeds, keep the venv
     std::mem::forget(venv_deleter);
@@ -1079,7 +1015,7 @@ fn distributions_dependents(proj_dirs: &ProjectDirs) -> HashMap<Distribution, Ve
         .map(Result::unwrap)
         .map(|entry| entry.path())
     {
-        let virtpy_dirs = VirtpyDirs::from_path(virtpy_path.clone());
+        let virtpy_dirs = VirtpyBacking::from_path(virtpy_path.clone());
         for distr in distributions_used(virtpy_dirs) {
             // if the data directory is in a consistent state, the keys are guaranteed to exist already
             debug_assert!(distributions_dependents.contains_key(&distr));
@@ -1118,7 +1054,7 @@ fn files_of_distribution(
         .collect()
 }
 
-fn distributions_used(virtpy_dirs: VirtpyDirs) -> impl Iterator<Item = Distribution> {
+fn distributions_used(virtpy_dirs: VirtpyBacking) -> impl Iterator<Item = Distribution> {
     virtpy_dirs
         .dist_infos()
         .map(|dist_info_path| dist_info_path.read_link().unwrap())
@@ -1148,7 +1084,7 @@ fn unused_package_files(proj_dirs: &ProjectDirs) -> impl Iterator<Item = PathBuf
 #[must_use]
 fn delete_global_package_executables(
     proj_dirs: &ProjectDirs,
-    virtpy_dirs: &VirtpyDirs,
+    virtpy_dirs: &VirtpyBacking,
     package: &str,
 ) -> impl Iterator<Item = eyre::Result<()>> {
     let dist_info = virtpy_dirs.dist_info(package).unwrap();
@@ -1192,45 +1128,31 @@ fn virtpy_add_dependencies(
     proj_dirs: &ProjectDirs,
     virtpy: &CheckedVirtpy,
     requirements: Vec<Requirement>,
-    python_version: PythonVersion,
+    //python_version: PythonVersion,
     install_global_executable: Option<&str>,
     options: Options,
 ) -> eyre::Result<()> {
-    let new_deps = new_dependencies(&requirements, proj_dirs, python_version)?;
+    let new_deps = new_dependencies(&requirements, proj_dirs, virtpy.python_version)?;
 
     // The virtpy doesn't contain pip so get the appropriate global python
-    let python_path = global_python(&virtpy.link)?;
+    let python_path = virtpy.global_python()?;
 
     install_and_register_distributions(
         &python_path,
         proj_dirs,
         &new_deps,
-        python_version,
+        virtpy.python_version,
         options,
     )?;
 
     link_requirements_into_virtpy(
         proj_dirs,
         virtpy,
-        python_version,
         requirements,
         options,
         install_global_executable,
     )
     .wrap_err("failed to add packages to virtpy")
-}
-
-fn global_python(virtpy_path: &Path) -> eyre::Result<PathBuf> {
-    // FIXME: On windows, the virtpy python is a copy, so there's no symlink to resolve.
-    //        We need to take the version and then do a search for the real python.
-    python_path(virtpy_path)
-        .fs_err_canonicalize()
-        .wrap_err_with(|| {
-            eyre::eyre!(
-                "failed to find path of the global python used by virtpy at {}",
-                virtpy_path.display()
-            )
-        })
 }
 
 fn is_not_found(error: &std::io::Error) -> bool {
@@ -1239,7 +1161,7 @@ fn is_not_found(error: &std::io::Error) -> bool {
 
 fn delete_executable_virtpy(proj_dirs: &ProjectDirs, package: &str) -> eyre::Result<()> {
     let virtpy_path = proj_dirs.package_folder(&package);
-    let virtpy_dirs = VirtpyDirs::from_path(virtpy_path);
+    let virtpy_dirs = VirtpyBacking::from_path(virtpy_path);
     delete_global_package_executables(&proj_dirs, &virtpy_dirs, &package).for_each(Result::unwrap);
 
     delete_virtpy_link(&proj_dirs.package_folder(&package))
@@ -1326,6 +1248,11 @@ fn create_virtpy(
     Ok(CheckedVirtpy {
         link: path.to_owned(),
         backing: central_path,
+        // Not all users of this function may need the python version, but it's
+        // cheap to get and simpler to just always query.
+        // Could be easily replaced with a token-struct that could be converted
+        // to a full CheckedVirtpy on demand.
+        python_version: python_version(python_path)?,
     })
 }
 
@@ -1334,29 +1261,6 @@ enum VirtpyLinkStatus {
     Ok { matching_virtpy: PathBuf },
     WrongLocation { should: PathBuf, actual: PathBuf },
     Dangling { target: PathBuf },
-}
-
-fn check_virtpy_link(virtpy_link_path: &Path) -> eyre::Result<CheckedVirtpy> {
-    match virtpy_link_status(virtpy_link_path).wrap_err("failed to verify virtpy")? {
-        VirtpyLinkStatus::WrongLocation { should, .. } => Err(eyre::eyre!(
-            "virtpy copied or moved from {}",
-            should.display()
-        )),
-        VirtpyLinkStatus::Dangling { target } => Err(eyre::eyre!(
-            "backing storage for virtpy not found: {}",
-            target.display()
-        )),
-        VirtpyLinkStatus::Ok { matching_virtpy } => Ok(CheckedVirtpy {
-            link: virtpy_link_path.to_owned(),
-            backing: matching_virtpy,
-        }),
-    }
-    .wrap_err_with(|| {
-        eyre::eyre!(
-            "the virtpy `{}` is broken, please recreate it.",
-            virtpy_link_path.display(),
-        )
-    })
 }
 
 fn virtpy_link_status(virtpy_link_path: &Path) -> eyre::Result<VirtpyLinkStatus> {
@@ -1493,22 +1397,128 @@ fn symlink_file(from: &Path, to: &Path) -> std::io::Result<()> {
 struct CheckedVirtpy {
     link: PathBuf,
     backing: PathBuf,
+    python_version: PythonVersion,
+}
+
+fn executables_path(virtpy: &Path) -> PathBuf {
+    virtpy.join(match cfg!(target_os = "windows") {
+        true => "Scripts",
+        false => "bin",
+    })
+}
+
+fn python_path(virtpy: &Path) -> PathBuf {
+    executables_path(virtpy).join("python")
+}
+
+trait VirtpyPaths {
+    fn location(&self) -> &Path;
+    fn python_version(&self) -> PythonVersion;
+
+    fn executables(&self) -> PathBuf {
+        executables_path(self.location())
+    }
+
+    fn python(&self) -> PathBuf {
+        python_path(self.location())
+    }
+
+    fn dist_info(&self, package: &str) -> Option<PathBuf> {
+        self.dist_infos().find(|path| {
+            let entry_name = path.file_name().unwrap().to_str().unwrap();
+            let (distrib_name, _version) = package_info_from_dist_info_dirname(entry_name);
+            distrib_name == package
+        })
+    }
+
+    fn dist_infos(&self) -> Box<dyn Iterator<Item = PathBuf>> {
+        Box::new(
+            self.site_packages()
+                .read_dir()
+                .unwrap()
+                .map(Result::unwrap)
+                .map(|dir_entry| dir_entry.path())
+                .filter(|path| {
+                    path.file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .ends_with(".dist-info")
+                }),
+        )
+    }
+
+    fn site_packages(&self) -> PathBuf {
+        if cfg!(target_family = "unix") {
+            self.location().join(format!(
+                "lib/python{}/site-packages",
+                self.python_version().as_string_without_patch()
+            ))
+        } else {
+            unimplemented!()
+        }
+    }
+}
+
+impl VirtpyPaths for CheckedVirtpy {
+    fn location(&self) -> &Path {
+        &self.link
+    }
+
+    fn python_version(&self) -> PythonVersion {
+        self.python_version
+    }
+}
+
+impl CheckedVirtpy {
+    fn new(virtpy_link: &Path) -> eyre::Result<Self> {
+        match virtpy_link_status(virtpy_link).wrap_err("failed to verify virtpy")? {
+            VirtpyLinkStatus::WrongLocation { should, .. } => Err(eyre::eyre!(
+                "virtpy copied or moved from {}",
+                should.display()
+            )),
+            VirtpyLinkStatus::Dangling { target } => Err(eyre::eyre!(
+                "backing storage for virtpy not found: {}",
+                target.display()
+            )),
+            VirtpyLinkStatus::Ok { matching_virtpy } => Ok(CheckedVirtpy {
+                link: virtpy_link.to_owned(),
+                backing: matching_virtpy,
+                python_version: python_version(&python_path(virtpy_link))?,
+            }),
+        }
+        .wrap_err_with(|| {
+            eyre::eyre!(
+                "the virtpy `{}` is broken, please recreate it.",
+                virtpy_link.display(),
+            )
+        })
+    }
+
+    // Returns the path of the python installation on which this
+    // this virtpy builds
+    fn global_python(&self) -> eyre::Result<PathBuf> {
+        // FIXME: On windows, the virtpy python is a copy, so there's no symlink to resolve.
+        //        We need to take the version and then do a search for the real python.
+        self.python().fs_err_canonicalize().wrap_err_with(|| {
+            eyre::eyre!(
+                "failed to find path of the global python used by virtpy at {}",
+                self.link.display()
+            )
+        })
+    }
 }
 
 fn link_requirements_into_virtpy(
     proj_dirs: &ProjectDirs,
     virtpy: &CheckedVirtpy,
-    python_version: PythonVersion,
     mut requirements: Vec<Requirement>,
     options: Options,
     install_global_executable: Option<&str>,
 ) -> eyre::Result<()> {
     // FIXME: when new top-level directories are created in the central venv,
     //        they should also be symlinked in the virtpy
-    let site_packages = virtpy.backing.join(format!(
-        "lib/python{}/site-packages",
-        python_version.as_string_without_patch()
-    ));
+    let site_packages = virtpy.site_packages();
 
     requirements.retain(|req| {
         req.marker
@@ -1520,7 +1530,7 @@ fn link_requirements_into_virtpy(
     let stored_distributions = StoredDistributions::load(proj_dirs)?;
     let existing_deps = stored_distributions
         .0
-        .get(&python_version.as_string_without_patch())
+        .get(&virtpy.python_version.as_string_without_patch())
         .cloned()
         .unwrap_or_default();
     for distribution in requirements {
@@ -1632,10 +1642,7 @@ fn link_requirements_into_virtpy(
         };
 
         for entrypoint in entrypoints {
-            let executables_path = virtpy.backing.join(match cfg!(target_os = "windows") {
-                true => "Scripts",
-                false => "bin",
-            });
+            let executables_path = virtpy.executables();
             let err = || eyre::eyre!("failed to install executable {}", entrypoint.name);
             let python_path = executables_path.join("python");
             entrypoint
