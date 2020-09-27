@@ -115,7 +115,9 @@ impl PythonVersion {
 
 fn python_version(python_path: &Path) -> eyre::Result<PythonVersion> {
     let output = check_output(std::process::Command::new(python_path).arg("--version"))
-        .wrap_err("couldn't get python version")?;
+        .wrap_err_with(|| {
+            eyre::eyre!("couldn't get python version of `{}`", python_path.display())
+        })?;
     let version = output.trim().to_owned();
     let captures = regex::Regex::new(r"Python (\d+)\.(\d+)\.(\d+)")
         .expect("invalid regex")
