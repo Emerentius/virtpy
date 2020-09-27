@@ -718,10 +718,27 @@ fn main() -> eyre::Result<()> {
             fn poetry_install(proj_dirs: &ProjectDirs, options: Options) -> eyre::Result<()> {
                 let virtpy_path: &Path = DEFAULT_VIRTPY_PATH.as_ref();
                 let virtpy = match virtpy_path.exists() {
-                    true => CheckedVirtpy::new(virtpy_path)?,
+                    true => {
+                        let virtpy = CheckedVirtpy::new(virtpy_path)
+                            .wrap_err("found an existing virtpy but couldn't verify it")?;
+
+                        // Reset virtpy by deleting it.
+                        // Symlinking in packages again that were already installed is fast.
+                        // keep the id the same so currently activated environments stay valid.
+                        let id = virtpy.id().to_owned();
+                        let python_path = virtpy.global_python()?;
+                        // TODO: on failure, the old state should be kept
+                        // delete the old virtpy so the id is freed.
+                        virtpy
+                            .delete()
+                            .wrap_err("found an existing virtpy but failed when resetting it")?;
+                        create_virtpy_with_id(&proj_dirs, &python_path, &virtpy_path, &id)?
+                    }
                     false => {
+                        // TODO: Respect python version setting in pyproject.toml
                         let python_path = python_detection::detect("3").unwrap();
-                        create_virtpy(&proj_dirs, &python_path, &virtpy_path)?
+                        create_virtpy(&proj_dirs, &python_path, &virtpy_path)
+                            .wrap_err("no virtpy exists and failed to create one")?
                     }
                 };
                 let requirements =
@@ -863,14 +880,14 @@ fn install_executable_package(
     let virtpy = create_virtpy(&proj_dirs, &python_path, &package_folder)?;
 
     // if anything goes wrong, try to delete the incomplete installation
-    let venv_deleter = scopeguard::guard((), |_| {
-        let _ = delete_virtpy_link(&package_folder);
+    let virtpy = scopeguard::guard(virtpy, |virtpy| {
+        let _ = virtpy.delete();
     });
 
     virtpy_add_dependencies(&proj_dirs, &virtpy, requirements, Some(package), options)?;
 
     // if everything succeeds, keep the venv
-    std::mem::forget(venv_deleter);
+    std::mem::forget(virtpy);
     Ok(())
 }
 
@@ -1163,26 +1180,13 @@ fn is_not_found(error: &std::io::Error) -> bool {
 
 fn delete_executable_virtpy(proj_dirs: &ProjectDirs, package: &str) -> eyre::Result<()> {
     let virtpy_path = proj_dirs.package_folder(&package);
-    let virtpy_dirs = VirtpyBacking::from_path(virtpy_path);
-    delete_global_package_executables(&proj_dirs, &virtpy_dirs, &package).for_each(Result::unwrap);
+    let virtpy = CheckedVirtpy::new(&virtpy_path)?;
+    //let virtpy_dirs = VirtpyBacking::from_path(virtpy_path);
+    delete_global_package_executables(&proj_dirs, &virtpy.virtpy_backing(), &package)
+        .for_each(Result::unwrap);
 
-    delete_virtpy_link(&proj_dirs.package_folder(&package))
-}
-
-fn delete_virtpy_link(package_folder: &Path) -> eyre::Result<()> {
-    println!("removing {}", package_folder.display());
-    let backing = match virtpy_link_target(&package_folder) {
-        Err(err) if is_not_found(&err) => {
-            eyre::bail!(
-                "not a valid virtpy, missing link to backing store: {}",
-                package_folder.display()
-            );
-        }
-        x => x?,
-    };
-    fs_err::remove_dir_all(package_folder)?;
-    delete_virtpy_backing(&backing)?;
-    Ok(())
+    virtpy.delete()
+    //delete_virtpy_link(&proj_dirs.package_folder(&package))
 }
 
 fn delete_virtpy_backing(backing_folder: &Path) -> std::io::Result<()> {
@@ -1200,6 +1204,15 @@ fn create_virtpy(
         .take(12)
         .collect::<String>();
 
+    create_virtpy_with_id(project_dirs, python_path, path, &id)
+}
+
+fn create_virtpy_with_id(
+    project_dirs: &ProjectDirs,
+    python_path: &Path,
+    path: &Path,
+    id: &str,
+) -> eyre::Result<CheckedVirtpy> {
     let central_path = project_dirs.virtpys().join(id);
 
     // TODO: regenerate on collision.
@@ -1413,6 +1426,12 @@ fn python_path(virtpy: &Path) -> PathBuf {
     executables_path(virtpy).join("python")
 }
 
+fn dist_info_matches_package(dist_info: &Path, package: &str) -> bool {
+    let entry_name = dist_info.file_name().unwrap().to_str().unwrap();
+    let (distrib_name, _version) = package_info_from_dist_info_dirname(entry_name);
+    distrib_name == package
+}
+
 trait VirtpyPaths {
     fn location(&self) -> &Path;
     fn python_version(&self) -> PythonVersion;
@@ -1426,11 +1445,8 @@ trait VirtpyPaths {
     }
 
     fn dist_info(&self, package: &str) -> Option<PathBuf> {
-        self.dist_infos().find(|path| {
-            let entry_name = path.file_name().unwrap().to_str().unwrap();
-            let (distrib_name, _version) = package_info_from_dist_info_dirname(entry_name);
-            distrib_name == package
-        })
+        self.dist_infos()
+            .find(|path| dist_info_matches_package(path, package))
     }
 
     fn dist_infos(&self) -> Box<dyn Iterator<Item = PathBuf>> {
@@ -1508,6 +1524,24 @@ impl CheckedVirtpy {
                 self.link.display()
             )
         })
+    }
+
+    fn id(&self) -> &str {
+        self.backing.file_name().unwrap().to_str().unwrap()
+    }
+
+    fn delete(self) -> eyre::Result<()> {
+        println!("removing {}", self.location().display());
+        fs_err::remove_dir_all(self.location())?;
+        delete_virtpy_backing(&self.backing)?;
+        Ok(())
+    }
+
+    fn virtpy_backing(&self) -> VirtpyBacking {
+        VirtpyBacking {
+            location: self.backing.clone(),
+            python_version: self.python_version,
+        }
     }
 }
 
