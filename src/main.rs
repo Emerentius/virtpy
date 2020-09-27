@@ -722,17 +722,9 @@ fn main() -> eyre::Result<()> {
                         let virtpy = CheckedVirtpy::new(virtpy_path)
                             .wrap_err("found an existing virtpy but couldn't verify it")?;
 
-                        // Reset virtpy by deleting it.
-                        // Symlinking in packages again that were already installed is fast.
-                        // keep the id the same so currently activated environments stay valid.
-                        let id = virtpy.id().to_owned();
-                        let python_path = virtpy.global_python()?;
-                        // TODO: on failure, the old state should be kept
-                        // delete the old virtpy so the id is freed.
                         virtpy
-                            .delete()
-                            .wrap_err("found an existing virtpy but failed when resetting it")?;
-                        create_virtpy_with_id(&proj_dirs, &python_path, &virtpy_path, &id)?
+                            .reset(proj_dirs)
+                            .wrap_err("found an existing virtpy but failed when resetting it")?
                     }
                     false => {
                         // TODO: Respect python version setting in pyproject.toml
@@ -1181,12 +1173,10 @@ fn is_not_found(error: &std::io::Error) -> bool {
 fn delete_executable_virtpy(proj_dirs: &ProjectDirs, package: &str) -> eyre::Result<()> {
     let virtpy_path = proj_dirs.package_folder(&package);
     let virtpy = CheckedVirtpy::new(&virtpy_path)?;
-    //let virtpy_dirs = VirtpyBacking::from_path(virtpy_path);
     delete_global_package_executables(&proj_dirs, &virtpy.virtpy_backing(), &package)
         .for_each(Result::unwrap);
 
     virtpy.delete()
-    //delete_virtpy_link(&proj_dirs.package_folder(&package))
 }
 
 fn delete_virtpy_backing(backing_folder: &Path) -> std::io::Result<()> {
@@ -1535,6 +1525,18 @@ impl CheckedVirtpy {
         fs_err::remove_dir_all(self.location())?;
         delete_virtpy_backing(&self.backing)?;
         Ok(())
+    }
+
+    fn reset(self, proj_dirs: &ProjectDirs) -> eyre::Result<Self> {
+        // Reset virtpy by deleting it.
+        // keep the id the same so currently activated environments stay valid.
+        let id = self.id().to_owned();
+        let python_path = self.global_python()?;
+        let virtpy_path = self.location().to_owned();
+        // delete the old virtpy so the id is freed.
+        // TODO: on failure, the old state should be kept
+        self.delete()?;
+        create_virtpy_with_id(&proj_dirs, &python_path, &virtpy_path, &id)
     }
 
     fn virtpy_backing(&self) -> VirtpyBacking {
