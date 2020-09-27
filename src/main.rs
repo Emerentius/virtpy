@@ -684,7 +684,7 @@ fn main() -> eyre::Result<()> {
             let path = PathBuf::from(DEFAULT_VIRTPY_PATH);
             python_detection::detect(&python)
                 .ok_or(eyre::eyre!("Couldn't find python executable '{}'", python))
-                .and_then(|python_path| create_virtpy(&proj_dirs, &python_path, &path))
+                .and_then(|python_path| create_virtpy(&proj_dirs, &python_path, &path, None))
                 .wrap_err("failed to create virtpy")?;
         }
         Command::Install {
@@ -729,7 +729,8 @@ fn main() -> eyre::Result<()> {
                     false => {
                         // TODO: Respect python version setting in pyproject.toml
                         let python_path = python_detection::detect("3").unwrap();
-                        create_virtpy(&proj_dirs, &python_path, &virtpy_path)
+                        // TODO?: use poetry project name
+                        create_virtpy(&proj_dirs, &python_path, &virtpy_path, None)
                             .wrap_err("no virtpy exists and failed to create one")?
                     }
                 };
@@ -869,7 +870,7 @@ fn install_executable_package(
 
     let requirements = python_requirements::get_requirements(&package, allow_prereleases)?;
 
-    let virtpy = create_virtpy(&proj_dirs, &python_path, &package_folder)?;
+    let virtpy = create_virtpy(&proj_dirs, &python_path, &package_folder, None)?;
 
     // if anything goes wrong, try to delete the incomplete installation
     let virtpy = scopeguard::guard(virtpy, |virtpy| {
@@ -1188,19 +1189,22 @@ fn create_virtpy(
     project_dirs: &ProjectDirs,
     python_path: &Path,
     path: &Path,
+    prompt: Option<String>,
 ) -> eyre::Result<CheckedVirtpy> {
     let mut rng = rand::thread_rng();
     let id = std::iter::repeat_with(|| rng.sample(rand::distributions::Alphanumeric))
         .take(12)
         .collect::<String>();
 
-    create_virtpy_with_id(project_dirs, python_path, path, &id)
+    let prompt = prompt.as_deref().unwrap_or(DEFAULT_VIRTPY_PATH);
+    create_virtpy_with_id(project_dirs, python_path, path, prompt, &id)
 }
 
 fn create_virtpy_with_id(
     project_dirs: &ProjectDirs,
     python_path: &Path,
     path: &Path,
+    prompt: &str,
     id: &str,
 ) -> eyre::Result<CheckedVirtpy> {
     let central_path = project_dirs.virtpys().join(id);
@@ -1209,7 +1213,7 @@ fn create_virtpy_with_id(
     // Maybe use a UUID?
     assert!(!central_path.exists());
 
-    _create_bare_venv(python_path, &central_path)?;
+    _create_bare_venv(python_path, &central_path, prompt)?;
 
     fs_err::create_dir(path)?;
     for entry in central_path.read_dir()? {
@@ -1343,10 +1347,10 @@ fn virtpy_status(virtpy_path: &Path) -> eyre::Result<VirtpyStatus> {
         matching_link: link_location,
     })
 }
-fn _create_bare_venv(python_path: &Path, path: &Path) -> eyre::Result<()> {
+fn _create_bare_venv(python_path: &Path, path: &Path, prompt: &str) -> eyre::Result<()> {
     check_output(
         std::process::Command::new(python_path)
-            .args(&["-m", "venv", "--without-pip"])
+            .args(&["-m", "venv", "--without-pip", "--prompt", prompt])
             .arg(&path)
             .stdout(std::process::Stdio::null()),
     )
@@ -1520,6 +1524,23 @@ impl CheckedVirtpy {
         self.backing.file_name().unwrap().to_str().unwrap()
     }
 
+    // read prompt from pyenv.cfg, if it exists
+    // virtpys always have a custom prompt, but only python3.8+
+    // stores it in the pyvenv.cfg.
+    //
+    // could also do this at initialization and read the python version from there
+    // at the same time
+    fn prompt(&self) -> eyre::Result<String> {
+        let ini = self.location().join("pyvenv.cfg");
+        let ini = ini::Ini::load_from_file(ini)?;
+
+        Ok(ini
+            .general_section()
+            .get("prompt")
+            .unwrap_or(DEFAULT_VIRTPY_PATH)
+            .to_owned())
+    }
+
     fn delete(self) -> eyre::Result<()> {
         println!("removing {}", self.location().display());
         fs_err::remove_dir_all(self.location())?;
@@ -1533,10 +1554,11 @@ impl CheckedVirtpy {
         let id = self.id().to_owned();
         let python_path = self.global_python()?;
         let virtpy_path = self.location().to_owned();
+        let prompt = self.prompt()?;
         // delete the old virtpy so the id is freed.
         // TODO: on failure, the old state should be kept
         self.delete()?;
-        create_virtpy_with_id(&proj_dirs, &python_path, &virtpy_path, &id)
+        create_virtpy_with_id(&proj_dirs, &python_path, &virtpy_path, &prompt, &id)
     }
 
     fn virtpy_backing(&self) -> VirtpyBacking {
