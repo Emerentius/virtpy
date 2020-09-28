@@ -266,13 +266,13 @@ if __name__ == '__main__':
             true => dest.join(&self.name),
             false => dest.to_owned(),
         };
-        let mut opts = std::fs::OpenOptions::new();
+        let mut opts = fs_err::OpenOptions::new();
         // create_new causes failure if the target already exists
         // TODO: handle error
         opts.write(true).create_new(true).truncate(true);
         #[cfg(unix)]
         {
-            use std::os::unix::fs::OpenOptionsExt;
+            use fs_err::os::unix::fs::OpenOptionsExt;
             opts.mode(0o744);
         }
 
@@ -549,8 +549,7 @@ impl ProjectDirs {
     }
 
     fn create_dirs(&self) -> std::io::Result<()> {
-        use std::fs;
-        fs::create_dir_all(self.data())?;
+        fs_err::create_dir_all(self.data())?;
         for path in &[
             self.installations(),
             self.dist_infos(),
@@ -558,7 +557,7 @@ impl ProjectDirs {
             self.executables(),
             self.virtpys(),
         ] {
-            fs::create_dir(path).or_else(ignore_target_exists)?;
+            fs_err::create_dir(path).or_else(ignore_target_exists)?;
         }
         Ok(())
     }
@@ -1379,27 +1378,27 @@ fn check_poetry_available() -> eyre::Result<()> {
 
 // TODO: add os specific apis to fs_err and replace calls
 fn symlink_dir(from: &Path, to: &Path) -> std::io::Result<()> {
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(from, to)
+        fs_err::os::unix::fs::symlink(from, to)
     }
 
     #[cfg(target_os = "windows")]
     {
-        std::os::windows::fs::symlink_dir(from, to)
+        fs_err::os::windows::fs::symlink_dir(from, to)
     }
 }
 
 // TODO: add os specific apis to fs_err and replace calls
 fn symlink_file(from: &Path, to: &Path) -> std::io::Result<()> {
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(from, to)
+        fs_err::os::unix::fs::symlink(from, to)
     }
 
     #[cfg(target_os = "windows")]
     {
-        std::os::windows::fs::symlink_file(from, to)
+        fs_err::os::windows::fs::symlink_file(from, to)
     }
 }
 
@@ -1676,8 +1675,7 @@ fn link_requirements_into_virtpy(
             };
 
             let src = proj_dirs.package_files().join(record.hash);
-            // TODO: add hard_link to fs_err and replace this call
-            match std::fs::hard_link(&src, &dest) {
+            match fs_err::hard_link(&src, &dest) {
                 Ok(_) => (),
                 // TODO: can this error exist? Docs don't say anything about this being a failure
                 //       condition
