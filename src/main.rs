@@ -1121,8 +1121,6 @@ fn delete_global_package_executables(
 ) -> impl Iterator<Item = eyre::Result<()>> {
     let dist_info = virtpy_dirs.dist_info(package).unwrap();
 
-    println!("searching executables");
-
     // FIXME: Install all executables from a package and then also delete them all.
     let executables = entrypoints(&dist_info)
         .expect("couldn't find entry_points.txt")
@@ -1140,8 +1138,6 @@ fn delete_global_package_executables(
     //     .filter(|path| is_path_of_executable(path))
     //     .map(|path| path.file_name().unwrap().to_owned())
     //     .collect::<Vec<_>>();
-
-    println!("{} executables found", executables.len());
 
     let exe_dir = proj_dirs.executables();
     executables
@@ -1536,7 +1532,6 @@ impl CheckedVirtpy {
     }
 
     fn delete(self) -> eyre::Result<()> {
-        println!("removing {}", self.location().display());
         fs_err::remove_dir_all(self.location())?;
         delete_virtpy_backing(&self.backing)?;
         Ok(())
