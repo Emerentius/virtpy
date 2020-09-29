@@ -161,7 +161,7 @@ struct StoredDistributions(HashMap<String, HashMap<DependencyHash, PathBuf>>);
 
 impl StoredDistributions {
     fn load(proj_dirs: &ProjectDirs) -> eyre::Result<Self> {
-        let file = match File::open(proj_dirs.installed_distributions()) {
+        let file = match File::open(proj_dirs.installed_distributions_log()) {
             Ok(f) => f,
             Err(err) if is_not_found(&err) => {
                 return Ok(StoredDistributions(HashMap::new()));
@@ -173,7 +173,7 @@ impl StoredDistributions {
     }
 
     fn save(&self, proj_dirs: &ProjectDirs) -> eyre::Result<()> {
-        let path = proj_dirs.installed_distributions();
+        let path = proj_dirs.installed_distributions_log();
         File::create(&path)
             .map_err(eyre::Report::new)
             .and_then(|file|
@@ -586,7 +586,7 @@ impl ProjectDirs {
         self.data().join("bin")
     }
 
-    fn installed_distributions(&self) -> PathBuf {
+    fn installed_distributions_log(&self) -> PathBuf {
         self.data().join(INSTALLED_DISTRIBUTIONS)
     }
 
@@ -594,8 +594,7 @@ impl ProjectDirs {
         self.installations().join(&format!("{}.virtpy", package))
     }
 
-    // TODO: rename the old installed_distributions
-    fn installed_distributions_2(&self) -> impl Iterator<Item = Distribution> + '_ {
+    fn installed_distributions(&self) -> impl Iterator<Item = Distribution> + '_ {
         self.dist_infos()
             .read_dir()
             .unwrap()
@@ -1015,7 +1014,7 @@ fn distributions_dependents(proj_dirs: &ProjectDirs) -> HashMap<Distribution, Ve
 
     // Add all distributions to map without dependencies.
     // Orphaned distributions would otherwise be missed.
-    for distr in proj_dirs.installed_distributions_2() {
+    for distr in proj_dirs.installed_distributions() {
         distributions_dependents.entry(distr).or_default();
     }
 
@@ -1046,7 +1045,7 @@ fn files_of_distribution(
     proj_dirs: &ProjectDirs,
 ) -> HashMap<Distribution, (Vec<InstalledFile>, u64)> {
     proj_dirs
-        .installed_distributions_2()
+        .installed_distributions()
         .map(|distribution| {
             let records = distribution
                 .records(proj_dirs)
