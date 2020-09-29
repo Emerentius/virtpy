@@ -702,25 +702,32 @@ fn main() -> eyre::Result<()> {
             allow_prereleases,
             python,
         } => {
-            // TODO: try to install the rest on error.
-            //       find a good way to still report the error à la eyre
             for package in package {
-                install_executable_package(
+                println!("installing {}...", package);
+                match install_executable_package(
                     &proj_dirs,
                     options,
                     &package,
                     force,
                     allow_prereleases,
                     &python,
-                )
-                .wrap_err(eyre::eyre!("failed to install {}", package))?;
+                ) {
+                    Ok(InstalledStatus::NewlyInstalled) => println!("installed {}.", package),
+                    Ok(InstalledStatus::AlreadyInstalled) => {
+                        println!("package is already installed.")
+                    }
+                    Err(err) => eprintln!("{:?}", err),
+                }
             }
         }
         Command::Uninstall { package } => {
-            // TODO: try to uninstall the rest on error
             for package in package {
-                delete_executable_virtpy(&proj_dirs, &package)
-                    .wrap_err(eyre::eyre!("failed to uninstall {}", package))?;
+                match delete_executable_virtpy(&proj_dirs, &package)
+                    .wrap_err(eyre::eyre!("failed to uninstall {}", package))
+                {
+                    Ok(()) => println!("uninstalled {}.", package),
+                    Err(err) => eprintln!("{:?}", err),
+                }
             }
         }
         Command::PoetryInstall {} => {
@@ -853,6 +860,11 @@ fn main() -> eyre::Result<()> {
     Ok(())
 }
 
+enum InstalledStatus {
+    NewlyInstalled,
+    AlreadyInstalled,
+}
+
 fn install_executable_package(
     proj_dirs: &ProjectDirs,
     options: Options,
@@ -860,7 +872,7 @@ fn install_executable_package(
     force: bool,
     allow_prereleases: bool,
     python: &str,
-) -> eyre::Result<()> {
+) -> eyre::Result<InstalledStatus> {
     let package_folder = proj_dirs.package_folder(&package);
 
     let python_path = python_detection::detect(&python)
@@ -870,8 +882,7 @@ fn install_executable_package(
         if force {
             delete_executable_virtpy(&proj_dirs, &package)?;
         } else {
-            println!("package is already installed.");
-            return Ok(());
+            return Ok(InstalledStatus::AlreadyInstalled);
         }
     }
 
@@ -890,7 +901,7 @@ fn install_executable_package(
 
     // if everything succeeds, keep the venv
     std::mem::forget(virtpy);
-    Ok(())
+    Ok(InstalledStatus::NewlyInstalled)
 }
 
 fn print_verify_store(proj_dirs: &ProjectDirs) {
