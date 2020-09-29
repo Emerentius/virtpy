@@ -743,9 +743,9 @@ fn main() -> eyre::Result<()> {
                             .wrap_err("found an existing virtpy but failed when resetting it")?
                     }
                     false => {
-                        // TODO: Respect python version setting in pyproject.toml
+                        // It would be better to respect the python version setting in pyproject.toml
                         let python_path = python_detection::detect("3").unwrap();
-                        // TODO?: use poetry project name
+                        // If this were meant for production, it should use the poetry project name for the prompt
                         create_virtpy(&proj_dirs, &python_path, &virtpy_path, None)
                             .wrap_err("no virtpy exists and failed to create one")?
                     }
