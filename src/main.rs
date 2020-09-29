@@ -661,14 +661,15 @@ impl VirtpyBacking {
 
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
-    let proj_dirs = ProjectDirs::new().unwrap();
-    // TODO: create on demand
-    proj_dirs.create_dirs()?;
 
     let opt = Opt::from_args();
     let options = Options {
         verbose: opt.verbose,
     };
+
+    let proj_dirs = ProjectDirs::new().unwrap();
+    proj_dirs.create_dirs()?;
+
     match opt.cmd {
         Command::Add { requirements } => {
             fn add_requirements(
