@@ -17,6 +17,16 @@ mod python_requirements;
 
 use fs_err::PathExt;
 
+#[cfg(unix)]
+use fs_err::os::unix::fs::symlink as symlink_dir;
+#[cfg(windows)]
+use fs_err::os::windows::fs::symlink_dir;
+
+#[cfg(unix)]
+use fs_err::os::unix::fs::symlink as symlink_file;
+#[cfg(windows)]
+use fs_err::os::windows::fs::symlink_file;
+
 #[derive(StructOpt)]
 struct Opt {
     #[structopt(subcommand)] // Note that we mark a field as a subcommand
@@ -1373,32 +1383,6 @@ fn check_poetry_available() -> eyre::Result<()> {
             }
         })
         .map(drop)
-}
-
-// TODO: add os specific apis to fs_err and replace calls
-fn symlink_dir(from: &Path, to: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        fs_err::os::unix::fs::symlink(from, to)
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        fs_err::os::windows::fs::symlink_dir(from, to)
-    }
-}
-
-// TODO: add os specific apis to fs_err and replace calls
-fn symlink_file(from: &Path, to: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        fs_err::os::unix::fs::symlink(from, to)
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        fs_err::os::windows::fs::symlink_file(from, to)
-    }
 }
 
 struct CheckedVirtpy {
