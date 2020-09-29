@@ -1208,12 +1208,30 @@ fn create_virtpy(
     prompt: Option<String>,
 ) -> eyre::Result<CheckedVirtpy> {
     let mut rng = rand::thread_rng();
-    let id = std::iter::repeat_with(|| rng.sample(rand::distributions::Alphanumeric))
-        .take(12)
-        .collect::<String>();
+
+    // Generate a random id for the virtpy.
+    // This should only take 1 attempt, but it's theoretically possible
+    // for the id to collide with a previous one, so check and retry if that's the case, but not forever.
+    let n_max_attempts = 10;
+    let random_path_gen = std::iter::repeat_with(|| {
+        let id = std::iter::repeat_with(|| rng.sample(rand::distributions::Alphanumeric))
+            .take(12)
+            .collect::<String>();
+        project_dirs.virtpys().join(id)
+    });
+
+    let central_path = random_path_gen
+        .take(n_max_attempts)
+        .find(|path| !path.exists())
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "failed to generate an unused virtpy path in {} attempts",
+                n_max_attempts
+            )
+        })?;
 
     let prompt = prompt.as_deref().unwrap_or(DEFAULT_VIRTPY_PATH);
-    create_virtpy_with_id(project_dirs, python_path, path, prompt, &id)
+    _create_virtpy(central_path, python_path, path, prompt)
 }
 
 fn create_virtpy_with_id(
@@ -1224,11 +1242,16 @@ fn create_virtpy_with_id(
     id: &str,
 ) -> eyre::Result<CheckedVirtpy> {
     let central_path = project_dirs.virtpys().join(id);
-
-    // TODO: regenerate on collision.
-    // Maybe use a UUID?
     assert!(!central_path.exists());
+    _create_virtpy(central_path, python_path, path, prompt)
+}
 
+fn _create_virtpy(
+    central_path: PathBuf,
+    python_path: &Path,
+    path: &Path,
+    prompt: &str,
+) -> eyre::Result<CheckedVirtpy> {
     _create_bare_venv(python_path, &central_path, prompt)?;
 
     fs_err::create_dir(path)?;
