@@ -325,7 +325,7 @@ fn register_distribution_files(
     sha: String,
     stored_distributions: &mut HashMap<DependencyHash, PathBuf>,
     options: crate::Options,
-) {
+) -> eyre::Result<()> {
     let dist_info_foldername = format!("{}-{}.dist-info", distribution_name, version);
     let src_dist_info = install_folder.join(&dist_info_foldername);
 
@@ -337,14 +337,14 @@ fn register_distribution_files(
         // python version. In that case, the current python version's list
         // may be missing this distribution.
         stored_distributions.insert(DependencyHash(sha), PathBuf::from(dst_dist_info_dirname));
-        return;
+        return Ok(());
     }
     if options.verbose >= 1 {
         println!("Adding {} {} to central store.", distribution_name, version);
     }
 
     for file in records(&src_dist_info.join("RECORD"))
-        .unwrap()
+        .wrap_err("couldn't find dist-info/RECORD")?
         .map(Result::unwrap)
     {
         // Sanity check. We're not caching compiled code so pip is told not to compile python code.
@@ -382,6 +382,7 @@ fn register_distribution_files(
     // TODO: should try to move instead of copy, if possible
     copy_directory(&src_dist_info, &dst_dist_info);
     stored_distributions.insert(DependencyHash(sha), PathBuf::from(dst_dist_info_dirname));
+    Ok(())
 }
 
 #[derive(Debug, serde::Deserialize, PartialEq, Eq, Hash, Clone)]
@@ -496,10 +497,10 @@ fn install_and_register_distributions(
             tmp_dir.as_ref(),
             &distrib.name,
             &distrib.version,
-            distrib.sha,
+            distrib.sha.clone(),
             stored_distributions,
             options,
-        );
+        ).wrap_err_with(|| eyre::eyre!("failed to add distribution files for {} {}", distrib.name, distrib.version))?;
     }
 
     all_stored_distributions.save(proj_dirs)?;
