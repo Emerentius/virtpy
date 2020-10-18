@@ -164,15 +164,18 @@ pub fn read_requirements_txt(data: &str) -> Vec<Requirement> {
 
 // Meant for installation of single packages with executables
 // into a self-contained venv, like pipx does.
-pub fn get_requirements(package: &str, allow_prereleases: bool) -> eyre::Result<Vec<Requirement>> {
+pub fn get_requirements(python_path: &Path, poetry_path: &Path, package: &str, allow_prereleases: bool) -> eyre::Result<Vec<Requirement>> {
     fn init_temporary_poetry_project(
+        python_path: &Path,
+        poetry_path: &Path,
         package: &str,
         allow_prereleases: bool,
     ) -> eyre::Result<tempdir::TempDir> {
         let tmp_dir = tempdir::TempDir::new("virtpy").unwrap();
 
         crate::check_output(
-            Command::new("poetry")
+            Command::new(python_path)
+                 .arg(poetry_path)
                 .current_dir(&tmp_dir)
                 .args(&["init", "-n"])
                 .stdout(std::process::Stdio::null()),
@@ -195,10 +198,10 @@ pub fn get_requirements(package: &str, allow_prereleases: bool) -> eyre::Result<
         Ok(tmp_dir)
     }
 
-    let tmp_dir = init_temporary_poetry_project(package, allow_prereleases)
+    let tmp_dir = init_temporary_poetry_project(python_path, poetry_path, package, allow_prereleases)
         .wrap_err("failed to create temporary poetry project")?;
 
-    poetry_get_requirements(tmp_dir.as_ref(), false).wrap_err_with(|| {
+    poetry_get_requirements(python_path, poetry_path, tmp_dir.as_ref(), false).wrap_err_with(|| {
         eyre::eyre!(
             "failed to get requirements for {} from poetry (allow_prereleases = {})",
             package,
@@ -208,6 +211,8 @@ pub fn get_requirements(package: &str, allow_prereleases: bool) -> eyre::Result<
 }
 
 pub fn poetry_get_requirements(
+    python: &Path,
+    poetry_path: &Path,
     poetry_proj: &Path,
     include_dev_dependencies: bool,
 ) -> eyre::Result<Vec<Requirement>> {
@@ -219,7 +224,8 @@ pub fn poetry_get_requirements(
     // installing anything, but it also emits a message telling you so. That message
     // can not be silenced and would have to be separated from the actual output.
     crate::check_output(
-        Command::new("poetry")
+        Command::new(python)
+            .arg(poetry_path)
             .current_dir(poetry_proj)
             .args(&["update", "--lock"])
             .stdout(std::process::Stdio::null()),
@@ -227,8 +233,9 @@ pub fn poetry_get_requirements(
 
     debug_assert!(poetry_proj.join("poetry.lock").exists());
 
-    let mut command = Command::new("poetry");
+    let mut command = Command::new(python);
     command
+        .arg(poetry_path)
         .current_dir(poetry_proj)
         .args(&["export", "-f", "requirements.txt"]);
 
