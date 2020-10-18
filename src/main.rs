@@ -41,7 +41,7 @@ enum Command {
     New {
         // path: Option<PathBuf>,
         /// The python to use. Either a path or an indicator of the form `python3.7` or `3.7`
-        #[structopt(short, long, default_value = "python3")]
+        #[structopt(short, long, default_value = "3")]
         python: String,
     },
     /// Add dependency to virtpy
@@ -55,7 +55,7 @@ enum Command {
         #[structopt(long)]
         allow_prereleases: bool,
         /// The python to use. Either a path or an indicator of the form `python3.7` or `3.7`
-        #[structopt(short, long, default_value = "python3")]
+        #[structopt(short, long, default_value = "3")]
         python: String,
     },
     /// Delete the virtpy of a previously installed executable package
@@ -692,7 +692,6 @@ fn main() -> eyre::Result<()> {
         Command::New { python } => {
             let path = PathBuf::from(DEFAULT_VIRTPY_PATH);
             python_detection::detect(&python)
-                .ok_or(eyre::eyre!("Couldn't find python executable '{}'", python))
                 .and_then(|python_path| create_virtpy(&proj_dirs, &python_path, &path, None))
                 .wrap_err("failed to create virtpy")?;
         }
@@ -733,6 +732,7 @@ fn main() -> eyre::Result<()> {
         Command::PoetryInstall {} => {
             fn poetry_install(proj_dirs: &ProjectDirs, options: Options) -> eyre::Result<()> {
                 let virtpy_path: &Path = DEFAULT_VIRTPY_PATH.as_ref();
+                let python_path = python_detection::detect("3")?;
                 let virtpy = match virtpy_path.exists() {
                     true => {
                         let virtpy = CheckedVirtpy::new(virtpy_path)
@@ -744,14 +744,13 @@ fn main() -> eyre::Result<()> {
                     }
                     false => {
                         // It would be better to respect the python version setting in pyproject.toml
-                        let python_path = python_detection::detect("3").unwrap();
                         // If this were meant for production, it should use the poetry project name for the prompt
                         create_virtpy(&proj_dirs, &python_path, &virtpy_path, None)
                             .wrap_err("no virtpy exists and failed to create one")?
                     }
                 };
                 let requirements =
-                    python_requirements::poetry_get_requirements(Path::new("."), true)?;
+                    python_requirements::poetry_get_requirements(&python_path, &find_poetry()?, Path::new("."), true)?;
                 virtpy_add_dependencies(&proj_dirs, &virtpy, requirements, None, options)?;
                 Ok(())
             }
@@ -875,8 +874,7 @@ fn install_executable_package(
 ) -> eyre::Result<InstalledStatus> {
     let package_folder = proj_dirs.package_folder(&package);
 
-    let python_path = python_detection::detect(&python)
-        .ok_or_else(|| eyre::eyre!("Couldn't find python executable '{}'", python))?;
+    let python_path = python_detection::detect(&python)?;
 
     if package_folder.exists() {
         if force {
@@ -886,9 +884,9 @@ fn install_executable_package(
         }
     }
 
-    check_poetry_available()?;
+    let poetry_path = find_poetry()?;
 
-    let requirements = python_requirements::get_requirements(&package, allow_prereleases)?;
+    let requirements = python_requirements::get_requirements(&python_path, &poetry_path, &package, allow_prereleases)?;
 
     let virtpy = create_virtpy(&proj_dirs, &python_path, &package_folder, None)?;
 
@@ -1397,23 +1395,14 @@ fn _create_bare_venv(python_path: &Path, path: &Path, prompt: &str) -> eyre::Res
     .wrap_err_with(|| eyre::eyre!("failed to create virtpy {}", path.display()))
 }
 
-fn check_poetry_available() -> eyre::Result<()> {
-    // TODO: maybe check error code as well and pass the stderr msg up
-    std::process::Command::new("poetry")
-        .arg("--help")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        //.output()
-        .map_err(|err| {
-            if is_not_found(&err) {
-                eyre::eyre!("this command requires poetry to be installed and on the PATH. (https://github.com/python-poetry/poetry)")
-            } else {
-                eyre::eyre!(err)
-                //Box::new(err).into()
-            }
-        })
-        .map(drop)
+fn find_poetry() -> eyre::Result<PathBuf> {
+    // we cannot execute poetry directly, because it is only distributed as a python
+    // file and as a batch.
+    // `std::process::Command::new("poetry")` fails to find an executable.
+    // We can however find the python file and a python executable and then invoke python on
+    // poetry.
+    pathsearch::find_executable_in_path("poetry")
+        .ok_or_else(|| eyre::eyre!("this command requires poetry to be installed and on the PATH. (https://github.com/python-poetry/poetry)"))
 }
 
 struct CheckedVirtpy {
@@ -1474,13 +1463,13 @@ trait VirtpyPaths {
     }
 
     fn site_packages(&self) -> PathBuf {
-        if cfg!(target_family = "unix") {
+        if cfg!(unix) {
             self.location().join(format!(
                 "lib/python{}/site-packages",
                 self.python_version().as_string_without_patch()
             ))
         } else {
-            unimplemented!()
+            self.location().join("Lib/site-packages")
         }
     }
 }
@@ -1525,12 +1514,21 @@ impl CheckedVirtpy {
     fn global_python(&self) -> eyre::Result<PathBuf> {
         // FIXME: On windows, the virtpy python is a copy, so there's no symlink to resolve.
         //        We need to take the version and then do a search for the real python.
-        self.python().fs_err_canonicalize().wrap_err_with(|| {
-            eyre::eyre!(
-                "failed to find path of the global python used by virtpy at {}",
-                self.link.display()
-            )
-        })
+        #[cfg(unix)]
+        {
+            self.python().fs_err_canonicalize().wrap_err_with(|| {
+                eyre::eyre!(
+                    "failed to find path of the global python used by virtpy at {}",
+                    self.link.display()
+                )
+            })
+        }
+
+        #[cfg(windows)]
+        {
+            let version = python_version(&self.python())?;
+            python_detection::detect(&version.as_string_without_patch())
+        }
     }
 
     fn id(&self) -> &str {
@@ -1846,12 +1844,17 @@ mod test {
     }
 
     #[test]
+    fn test_find_poetry() -> eyre::Result<()> {
+        find_poetry().map(drop)
+    }
+
+    #[test]
     fn test_install_uninstall() -> eyre::Result<()> {
         let proj_dirs = test_proj_dirs();
 
         let options = Options { verbose: 3 };
         let force = true;
-        let python = "python3";
+        let python = "3";
 
         let packages = [
             ("tuna", false),
