@@ -252,10 +252,11 @@ impl EntryPoint {
         }
     }
 
-    fn executable_code(&self, python_path: &Path) -> String {
-        format!(
-            r"#!{}
-# -*- coding: utf-8 -*-
+    fn executable_code(&self, python_path: &Path) -> (String, String) {
+        (
+            format!(r"#!{}", python_path.display()),
+            format!(
+                r"# -*- coding: utf-8 -*-
 import re
 import sys
 from {} import {qualname}
@@ -263,23 +264,50 @@ if __name__ == '__main__':
     sys.argv[0] = re.sub(r'(-script\.pyw|\.exe)?$', '', sys.argv[0])
     sys.exit({qualname}())
 ",
-            python_path.display(),
-            self.module,
-            qualname = self.qualname.clone().unwrap()
+                self.module,
+                qualname = self.qualname.clone().unwrap()
+            ),
         )
     }
 
     fn generate_executable(&self, dest: &Path, python_path: &Path) -> std::io::Result<()> {
-        let content = self.executable_code(&python_path);
-
         let dest = match dest.is_dir() {
             true => dest.join(&self.name),
             false => dest.to_owned(),
         };
+
+        let (shebang, code) = self.executable_code(&python_path);
+        self._generate_executable(&dest, format!("{}\n{}", shebang, code).as_bytes())?;
+
+        #[cfg(windows)]
+        {
+            // Generate .exe wrappers for python scripts.
+            // This uses the same launcher as the python module "distlib", which is what pip uses
+            // to generate exe wrappers.
+            // The launcher needs to be concatenated with a shebang and a zip of the code to be executed.
+            // The launcher code is at https://bitbucket.org/vinay.sajip/simple_launcher/
+
+            // TODO: support 32 bit launchers and maybe GUI launchers
+            use std::io::Write;
+            static LAUNCHER_CODE: &[u8] = include_bytes!("../windows_exe_wrappers/t64.exe");
+            let mut zip_writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::<u8>::new()));
+            zip_writer.start_file("__main__.py", zip::write::FileOptions::default())?;
+            write!(&mut zip_writer, "{}", code).unwrap();
+            let mut wrapper = LAUNCHER_CODE.to_vec();
+            wrapper.extend(shebang.as_bytes());
+            wrapper.extend(b".exe");
+            wrapper.extend(b"\r\n");
+            wrapper.extend(zip_writer.finish()?.into_inner());
+            self._generate_executable(&dest.with_extension("exe"), &wrapper)?;
+        }
+        Ok(())
+    }
+
+    fn _generate_executable(&self, dest: &Path, bytes: &[u8]) -> std::io::Result<()> {
         let mut opts = fs_err::OpenOptions::new();
         // create_new causes failure if the target already exists
         // TODO: handle error
-        opts.write(true).create_new(true).truncate(true);
+        opts.write(true).create_new(true);
         #[cfg(unix)]
         {
             use fs_err::os::unix::fs::OpenOptionsExt;
@@ -288,7 +316,7 @@ if __name__ == '__main__':
 
         let mut f = opts.open(dest)?;
         use std::io::Write;
-        f.write_all(content.as_bytes())
+        f.write_all(bytes)
     }
 }
 
@@ -1139,16 +1167,30 @@ fn delete_global_package_executables(
     //     .collect::<Vec<_>>();
 
     let exe_dir = proj_dirs.executables();
-    executables
-        .into_iter()
-        .map(move |executable| exe_dir.join(executable))
-        .map(|path| {
-            fs_err::remove_file(&path)
-                // Necessary when deleting from RECORD and when we're not installing all scripts
-                // as pip does (e.g. because we're leaving out package.data scripts)
-                // .or_else(ignore_target_doesnt_exist)
-                .wrap_err_with(|| eyre::eyre!("failed to remove {}", path.display()))
-        })
+    let executables = executables.into_iter();
+
+    let executables = {
+        #[cfg(unix)]
+        {
+            executables.map(move |executable| exe_dir.join(executable))
+        }
+
+        #[cfg(windows)]
+        {
+            executables.flat_map(move |executable| {
+                let path = exe_dir.join(executable);
+                vec![path.with_extension("exe"), path]
+            })
+        }
+    };
+
+    executables.map(|path| {
+        fs_err::remove_file(&path)
+            // Necessary when deleting from RECORD and when we're not installing all scripts
+            // as pip does (e.g. because we're leaving out package.data scripts)
+            .or_else(ignore_target_doesnt_exist)
+            .wrap_err_with(|| eyre::eyre!("failed to remove {}", path.display()))
+    })
 }
 
 fn virtpy_add_dependencies(
@@ -1751,13 +1793,13 @@ fn remove_leading_parent_dirs(mut path: &Path) -> Result<&Path, &Path> {
     }
 }
 
-// fn ignore_target_doesnt_exist(err: std::io::Error) -> std::io::Result<()> {
-//     if is_not_found(&err) {
-//         Ok(())
-//     } else {
-//         Err(err)
-//     }
-// }
+fn ignore_target_doesnt_exist(err: std::io::Error) -> std::io::Result<()> {
+    if is_not_found(&err) {
+        Ok(())
+    } else {
+        Err(err)
+    }
+}
 
 fn ignore_target_exists(err: std::io::Error) -> std::io::Result<()> {
     if err.kind() == std::io::ErrorKind::AlreadyExists {

@@ -1,0 +1,10 @@
+The files in this folder are the same that pip uses to create exe wrappers for python
+scripts.
+They were taken from pip's vendored copy of the distlib module in pip's git repo
+(commit hash f81cfff06120a0c63945d36ad75229f137b3a245)
+which is somewhere around version 20.2.4.
+
+The launcher code is available at https://bitbucket.org/vinay.sajip/simple_launcher/.
+
+To create a wrapper, you only need to concatenate one of these launchers with a shebang
+and a zip of the code to be executed. 
