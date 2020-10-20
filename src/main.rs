@@ -277,7 +277,11 @@ if __name__ == '__main__':
         };
 
         let (shebang, code) = self.executable_code(&python_path);
-        self._generate_executable(&dest, format!("{}\n{}", shebang, code).as_bytes())?;
+
+        #[cfg(unix)]
+        {
+            self._generate_executable(&dest, format!("{}\n{}", shebang, code).as_bytes())
+        }
 
         #[cfg(windows)]
         {
@@ -298,9 +302,8 @@ if __name__ == '__main__':
             wrapper.extend(b".exe");
             wrapper.extend(b"\r\n");
             wrapper.extend(zip_writer.finish()?.into_inner());
-            self._generate_executable(&dest.with_extension("exe"), &wrapper)?;
+            self._generate_executable(&dest.with_extension("exe"), &wrapper)
         }
-        Ok(())
     }
 
     fn _generate_executable(&self, dest: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -1167,30 +1170,23 @@ fn delete_global_package_executables(
     //     .collect::<Vec<_>>();
 
     let exe_dir = proj_dirs.executables();
-    let executables = executables.into_iter();
-
-    let executables = {
-        #[cfg(unix)]
-        {
-            executables.map(move |executable| exe_dir.join(executable))
-        }
-
-        #[cfg(windows)]
-        {
-            executables.flat_map(move |executable| {
-                let path = exe_dir.join(executable);
-                vec![path.with_extension("exe"), path]
-            })
-        }
-    };
-
-    executables.map(|path| {
-        fs_err::remove_file(&path)
-            // Necessary when deleting from RECORD and when we're not installing all scripts
-            // as pip does (e.g. because we're leaving out package.data scripts)
-            .or_else(ignore_target_doesnt_exist)
-            .wrap_err_with(|| eyre::eyre!("failed to remove {}", path.display()))
-    })
+    executables
+        .into_iter()
+        .map(move |executable| {
+            let path = exe_dir.join(executable);
+            if cfg!(windows) {
+                path.with_extension("exe")
+            } else {
+                path
+            }
+        })
+        .map(|path| {
+            fs_err::remove_file(&path)
+                // Necessary when deleting from RECORD and when we're not installing all scripts
+                // as pip does (e.g. because we're leaving out package.data scripts)
+                .or_else(ignore_target_doesnt_exist)
+                .wrap_err_with(|| eyre::eyre!("failed to remove {}", path.display()))
+        })
 }
 
 fn virtpy_add_dependencies(
