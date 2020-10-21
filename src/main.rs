@@ -531,7 +531,14 @@ fn install_and_register_distributions(
             distrib.sha.clone(),
             stored_distributions,
             options,
-        ).wrap_err_with(|| eyre::eyre!("failed to add distribution files for {} {}", distrib.name, distrib.version))?;
+        )
+        .wrap_err_with(|| {
+            eyre::eyre!(
+                "failed to add distribution files for {} {}",
+                distrib.name,
+                distrib.version
+            )
+        })?;
     }
 
     all_stored_distributions.save(proj_dirs)?;
@@ -781,8 +788,12 @@ fn main() -> eyre::Result<()> {
                             .wrap_err("no virtpy exists and failed to create one")?
                     }
                 };
-                let requirements =
-                    python_requirements::poetry_get_requirements(&python_path, &find_poetry()?, Path::new("."), true)?;
+                let requirements = python_requirements::poetry_get_requirements(
+                    &python_path,
+                    &find_poetry()?,
+                    Path::new("."),
+                    true,
+                )?;
                 virtpy_add_dependencies(&proj_dirs, &virtpy, requirements, None, options)?;
                 Ok(())
             }
@@ -918,7 +929,12 @@ fn install_executable_package(
 
     let poetry_path = find_poetry()?;
 
-    let requirements = python_requirements::get_requirements(&python_path, &poetry_path, &package, allow_prereleases)?;
+    let requirements = python_requirements::get_requirements(
+        &python_path,
+        &poetry_path,
+        &package,
+        allow_prereleases,
+    )?;
 
     let virtpy = create_virtpy(&proj_dirs, &python_path, &package_folder, None)?;
 
