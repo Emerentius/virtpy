@@ -39,7 +39,7 @@ struct Opt {
 enum Command {
     /// Create a new virtpy environment
     New {
-        // path: Option<PathBuf>,
+        path: Option<PathBuf>,
         /// The python to use. Either a path or an indicator of the form `python3.7` or `3.7`
         #[structopt(short, long, default_value = "3")]
         python: String,
@@ -733,8 +733,11 @@ fn main() -> eyre::Result<()> {
             add_requirements(&proj_dirs, options, requirements)
                 .wrap_err("failed to add requirements")?;
         }
-        Command::New { python } => {
-            let path = PathBuf::from(DEFAULT_VIRTPY_PATH);
+        Command::New {
+            path,
+            python,
+        } => {
+            let path = path.unwrap_or_else(|| PathBuf::from(DEFAULT_VIRTPY_PATH));
             python_detection::detect(&python)
                 .and_then(|python_path| create_virtpy(&proj_dirs, &python_path, &path, None))
                 .wrap_err("failed to create virtpy")?;
