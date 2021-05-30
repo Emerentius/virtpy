@@ -2,6 +2,7 @@
 .virtpy/
 .vscode
 test_cache/
+pip_shim/pip_shim.zip
 
 # for the time being
 Cargo.lock

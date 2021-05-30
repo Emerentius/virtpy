@@ -29,7 +29,7 @@ lazy_static = "1.4.0"
 eyre = "0.6.0"
 color-eyre = "0.5.3"
 fs-err = "2.5.0"
-zip = "0.5.8"
+zip = "0.5.12"
 
 [profile.dev.package.backtrace]
 opt-level = 3

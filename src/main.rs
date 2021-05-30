@@ -43,9 +43,13 @@ enum Command {
         /// The python to use. Either a path or an indicator of the form `python3.7` or `3.7`
         #[structopt(short, long, default_value = "3")]
         python: String,
+        #[structopt(long)]
+        with_pip_shim: bool,
     },
     /// Add dependency to virtpy
-    Add { requirements: PathBuf },
+    Add {
+        requirements: PathBuf,
+    },
     /// Install executable package into an isolated virtpy
     Install {
         package: Vec<String>,
@@ -59,7 +63,9 @@ enum Command {
         python: String,
     },
     /// Delete the virtpy of a previously installed executable package
-    Uninstall { package: Vec<String> },
+    Uninstall {
+        package: Vec<String>,
+    },
     /// Install the dependencies in the local .virtpy according to the poetry config
     PoetryInstall {},
     /// Print paths where various files are stored
@@ -736,10 +742,13 @@ fn main() -> eyre::Result<()> {
         Command::New {
             path,
             python,
+            with_pip_shim,
         } => {
             let path = path.unwrap_or_else(|| PathBuf::from(DEFAULT_VIRTPY_PATH));
             python_detection::detect(&python)
-                .and_then(|python_path| create_virtpy(&proj_dirs, &python_path, &path, None))
+                .and_then(|python_path| {
+                    create_virtpy(&proj_dirs, &python_path, &path, None, with_pip_shim)
+                })
                 .wrap_err("failed to create virtpy")?;
         }
         Command::Install {
@@ -792,7 +801,7 @@ fn main() -> eyre::Result<()> {
                     false => {
                         // It would be better to respect the python version setting in pyproject.toml
                         // If this were meant for production, it should use the poetry project name for the prompt
-                        create_virtpy(&proj_dirs, &python_path, &virtpy_path, None)
+                        create_virtpy(&proj_dirs, &python_path, &virtpy_path, None, false)
                             .wrap_err("no virtpy exists and failed to create one")?
                     }
                 };
@@ -944,7 +953,7 @@ fn install_executable_package(
         allow_prereleases,
     )?;
 
-    let virtpy = create_virtpy(&proj_dirs, &python_path, &package_folder, None)?;
+    let virtpy = create_virtpy(&proj_dirs, &python_path, &package_folder, None, false)?;
 
     // if anything goes wrong, try to delete the incomplete installation
     let virtpy = scopeguard::guard(virtpy, |virtpy| {
@@ -1267,6 +1276,7 @@ fn create_virtpy(
     python_path: &Path,
     path: &Path,
     prompt: Option<String>,
+    with_pip_shim: bool,
 ) -> eyre::Result<CheckedVirtpy> {
     let mut rng = rand::thread_rng();
 
@@ -1292,7 +1302,7 @@ fn create_virtpy(
         })?;
 
     let prompt = prompt.as_deref().unwrap_or(DEFAULT_VIRTPY_PATH);
-    _create_virtpy(central_path, python_path, path, prompt)
+    _create_virtpy(central_path, python_path, path, prompt, with_pip_shim)
 }
 
 fn create_virtpy_with_id(
@@ -1301,10 +1311,11 @@ fn create_virtpy_with_id(
     path: &Path,
     prompt: &str,
     id: &str,
+    with_pip_shim: bool,
 ) -> eyre::Result<CheckedVirtpy> {
     let central_path = project_dirs.virtpys().join(id);
     assert!(!central_path.exists());
-    _create_virtpy(central_path, python_path, path, prompt)
+    _create_virtpy(central_path, python_path, path, prompt, with_pip_shim)
 }
 
 fn _create_virtpy(
@@ -1312,6 +1323,7 @@ fn _create_virtpy(
     python_path: &Path,
     path: &Path,
     prompt: &str,
+    with_pip_shim: bool,
 ) -> eyre::Result<CheckedVirtpy> {
     _create_bare_venv(python_path, &central_path, prompt)?;
 
@@ -1354,7 +1366,7 @@ fn _create_virtpy(
         )?;
     }
 
-    Ok(CheckedVirtpy {
+    let checked_virtpy = CheckedVirtpy {
         link: path.to_owned(),
         backing: central_path,
         // Not all users of this function may need the python version, but it's
@@ -1362,7 +1374,31 @@ fn _create_virtpy(
         // Could be easily replaced with a token-struct that could be converted
         // to a full CheckedVirtpy on demand.
         python_version: python_version(python_path)?,
-    })
+    };
+    if with_pip_shim {
+        add_pip_shim(&checked_virtpy).wrap_err("failed to add pip shim")?;
+    }
+
+    Ok(checked_virtpy)
+}
+
+fn add_pip_shim(virtpy: &CheckedVirtpy) -> eyre::Result<()> {
+    // TODO: make the pip shim into a wheel and install it the regular way
+    let target_path = virtpy.site_packages().join("pip");
+    let shim_zip = include_bytes!("../pip_shim/pip_shim.zip");
+    let mut archive = zip::read::ZipArchive::new(std::io::Cursor::new(shim_zip))
+        .expect("internal error: invalid archive for pip shim");
+    archive.extract(&target_path)?;
+
+    let entry_point = EntryPoint {
+        name: "pip".to_owned(),
+        module: "pip".to_owned(),
+        qualname: Some("main".to_owned()),
+    };
+    entry_point.generate_executable(&virtpy.executables(), &virtpy.python())?;
+    virtpy.set_has_pip_shim();
+
+    Ok(())
 }
 
 #[allow(unused)]
@@ -1628,10 +1664,18 @@ impl CheckedVirtpy {
         let python_path = self.global_python()?;
         let virtpy_path = self.location().to_owned();
         let prompt = self.prompt()?;
+        let has_pip_shim = self.has_pip_shim();
         // delete the old virtpy so the id is freed.
         // TODO: on failure, the old state should be kept
         self.delete()?;
-        create_virtpy_with_id(&proj_dirs, &python_path, &virtpy_path, &prompt, &id)
+        create_virtpy_with_id(
+            &proj_dirs,
+            &python_path,
+            &virtpy_path,
+            &prompt,
+            &id,
+            has_pip_shim,
+        )
     }
 
     fn virtpy_backing(&self) -> VirtpyBacking {
@@ -1639,6 +1683,23 @@ impl CheckedVirtpy {
             location: self.backing.clone(),
             python_version: self.python_version,
         }
+    }
+
+    fn metadata_dir(&self) -> PathBuf {
+        self.location().join(LINK_METADATA)
+    }
+
+    fn _pip_shim_flag_file(&self) -> PathBuf {
+        self.metadata_dir().join("has_pip_shim")
+    }
+
+    fn has_pip_shim(&self) -> bool {
+        self._pip_shim_flag_file().exists()
+    }
+
+    fn set_has_pip_shim(&self) {
+        // TODO: bubble error up
+        let _ = std::fs::write(self._pip_shim_flag_file(), "");
     }
 }
 
