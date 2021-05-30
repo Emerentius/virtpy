@@ -62,14 +62,19 @@ enum Command {
     Uninstall { package: Vec<String> },
     /// Install the dependencies in the local .virtpy according to the poetry config
     PoetryInstall {},
+    /// Print paths where various files are stored
+    Path(PathCmd),
+    InternalStore(InternalStoreCmd),
+}
+
+#[derive(StructOpt)]
+enum InternalStoreCmd {
     /// Find virtpys that have been moved or deleted and unneeded files in the central store.
     Gc {
         /// Delete unnecessary files
         #[structopt(long)]
         remove: bool,
     },
-    /// Print paths where various files are stored
-    Path(PathCmd),
     /// Show how much storage is used
     Stats,
     /// Check integrity of the files of all python modules in the internal store.
@@ -79,7 +84,7 @@ enum Command {
     /// in the internal store.
     // FIXME: Currently, we're not verifying the file hashes on installation, so
     // if a module's RECORD is faulty, those files will also appear here
-    VerifyStore,
+    Verify,
 }
 
 #[derive(StructOpt)]
@@ -801,7 +806,7 @@ fn main() -> eyre::Result<()> {
             poetry_install(&proj_dirs, options)
                 .wrap_err("failed to install dependencies from poetry project")?;
         }
-        Command::Gc { remove } => {
+        Command::InternalStore(InternalStoreCmd::Gc { remove }) => {
             let mut danglers = vec![];
             for virtpy in proj_dirs.virtpys().read_dir().unwrap() {
                 let virtpy = virtpy.unwrap();
@@ -891,10 +896,10 @@ fn main() -> eyre::Result<()> {
         Command::Path(PathCmd::Bin) | Command::Path(PathCmd::Executables) => {
             println!("{}", proj_dirs.executables().display());
         }
-        Command::Stats => {
+        Command::InternalStore(InternalStoreCmd::Stats) => {
             print_stats(&proj_dirs, options);
         }
-        Command::VerifyStore => {
+        Command::InternalStore(InternalStoreCmd::Verify) => {
             print_verify_store(&proj_dirs);
         }
     }
