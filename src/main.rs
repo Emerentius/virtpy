@@ -805,16 +805,13 @@ fn main() -> eyre::Result<()> {
                             .wrap_err("no virtpy exists and failed to create one")?
                     }
                 };
-                let requirements = python_requirements::poetry_get_requirements(
-                    &python_path,
-                    &find_poetry()?,
-                    Path::new("."),
-                    true,
-                )?;
+                let requirements =
+                    python_requirements::poetry_get_requirements(Path::new("."), true)?;
                 virtpy_add_dependencies(&proj_dirs, &virtpy, requirements, None, options)?;
                 Ok(())
             }
 
+            check_poetry_available()?;
             poetry_install(&proj_dirs, options)
                 .wrap_err("failed to install dependencies from poetry project")?;
         }
@@ -944,14 +941,9 @@ fn install_executable_package(
         }
     }
 
-    let poetry_path = find_poetry()?;
+    check_poetry_available()?;
 
-    let requirements = python_requirements::get_requirements(
-        &python_path,
-        &poetry_path,
-        &package,
-        allow_prereleases,
-    )?;
+    let requirements = python_requirements::get_requirements(&package, allow_prereleases)?;
 
     let virtpy = create_virtpy(&proj_dirs, &python_path, &package_folder, None, false)?;
 
@@ -1494,13 +1486,9 @@ fn _create_bare_venv(python_path: &Path, path: &Path, prompt: &str) -> eyre::Res
     .wrap_err_with(|| eyre::eyre!("failed to create virtpy {}", path.display()))
 }
 
-fn find_poetry() -> eyre::Result<PathBuf> {
-    // we cannot execute poetry directly, because it is only distributed as a python
-    // file and as a batch.
-    // `std::process::Command::new("poetry")` fails to find an executable.
-    // We can however find the python file and a python executable and then invoke python on
-    // poetry.
+fn check_poetry_available() -> eyre::Result<()> {
     pathsearch::find_executable_in_path("poetry")
+        .map(drop)
         .ok_or_else(|| eyre::eyre!("this command requires poetry to be installed and on the PATH. (https://github.com/python-poetry/poetry)"))
 }
 
@@ -1968,8 +1956,8 @@ mod test {
     }
 
     #[test]
-    fn test_find_poetry() -> eyre::Result<()> {
-        find_poetry().map(drop)
+    fn test_check_poetry_available() -> eyre::Result<()> {
+        check_poetry_available()
     }
 
     #[test]

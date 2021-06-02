@@ -21,7 +21,6 @@ pub fn detect(python: &str) -> eyre::Result<PathBuf> {
         return find_python_by_version(major, minor);
     }
 
-    // FIXME: deal with that `py -<version>` situation on windows
     find_executable_in_path(python)
 }
 
