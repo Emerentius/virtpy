@@ -28,6 +28,8 @@ jobs:
     # and related issues.
     - name: fix poetry
       run: sed --in-place 's;^#!/usr/bin/env python$;#!/usr/bin/env python3;' $(which poetry)
+    - name: try poetry
+      run: poetry --version
     - name: check pip version
       run: python3 -m pip --version
     - name: ensure up-to-date packaging tools
