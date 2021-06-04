@@ -30,6 +30,7 @@ eyre = "0.6.0"
 color-eyre = "0.5.3"
 fs-err = "2.5.0"
 zip = "0.5.12"
+fs2 = "0.4.3"
 
 [profile.dev.package.backtrace]
 opt-level = 3

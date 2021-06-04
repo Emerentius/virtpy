@@ -180,26 +180,43 @@ type PackageFileHash = String;
 #[derive(serde::Serialize, serde::Deserialize)]
 struct StoredDistributions(HashMap<String, HashMap<DependencyHash, PathBuf>>);
 
+// TODO: use lockguards instead of the primitives exposed by fs2.
+//       Also find a good crate that offers locking with timeouts and
+//       a lock that contains the pid of the process holding it, so it can be
+//       detected if the locking process is dead.
 impl StoredDistributions {
     fn load(proj_dirs: &ProjectDirs) -> eyre::Result<Self> {
-        let file = match File::open(proj_dirs.installed_distributions_log()) {
-            Ok(f) => f,
-            Err(err) if is_not_found(&err) => {
-                return Ok(StoredDistributions(HashMap::new()));
-            }
-            Err(err) => eyre::bail!(err),
-        };
+        use fs2::FileExt;
+        let file = fs_err::OpenOptions::new()
+            .create(true)
+            .read(true)
+            // we're actually only reading, but when create(true) is used,
+            // the file must be set to write or append
+            .write(true)
+            .open(proj_dirs.installed_distributions_log())
+            .wrap_err("failed to open stored distributions log")?;
+        // FIXME: use RAII guard.
+        file.file().lock_exclusive()?;
+        if file.metadata().unwrap().len() == 0 {
+            // if it's empty, then deserializing it doesn't work
+            return Ok(StoredDistributions(HashMap::new()));
+        }
         let reader = BufReader::new(file);
         serde_json::from_reader(reader).wrap_err("couldn't load stored distributions")
     }
 
     fn save(&self, proj_dirs: &ProjectDirs) -> eyre::Result<()> {
+        use fs2::FileExt;
         let path = proj_dirs.installed_distributions_log();
         File::create(&path)
             .map_err(eyre::Report::new)
-            .and_then(|file|
+            .and_then(|file| {
                 // NOTE: does this need a BufWriter?
-                serde_json::to_writer_pretty(file, self).wrap_err("failed to serialize stored distributions") )
+                let result = serde_json::to_writer_pretty(&file, self)
+                    .wrap_err("failed to serialize stored distributions");
+                file.file().unlock().unwrap();
+                result
+            })
             .wrap_err("failed to save stored distributions")
     }
 }
