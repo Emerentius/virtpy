@@ -71,6 +71,7 @@ enum Command {
     /// Print paths where various files are stored
     Path(PathCmd),
     InternalStore(InternalStoreCmd),
+    InternalUseOnly(InternalUseOnly),
 }
 
 #[derive(StructOpt)]
@@ -91,6 +92,11 @@ enum InternalStoreCmd {
     // FIXME: Currently, we're not verifying the file hashes on installation, so
     // if a module's RECORD is faulty, those files will also appear here
     Verify,
+}
+
+#[derive(StructOpt)]
+enum InternalUseOnly {
+    AddFromFile { virtpy: PathBuf, file: PathBuf },
 }
 
 #[derive(StructOpt)]
@@ -160,6 +166,8 @@ fn python_version(python_path: &Path) -> eyre::Result<PythonVersion> {
 #[derive(
     Clone, Hash, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
+
+// has the form "sha256=[0-9a-fA-F]{64}"
 pub struct DependencyHash(String);
 
 // TODO: make into newtype
@@ -487,6 +495,52 @@ fn records(record: &Path) -> csv::Result<impl Iterator<Item = csv::Result<Instal
         }))
 }
 
+fn install_and_register_distribution_from_file(
+    python_path: &Path,
+    proj_dirs: &ProjectDirs,
+    distrib_path: &Path,
+    requirement: Requirement,
+    python_version: PythonVersion,
+    options: Options,
+) -> eyre::Result<()> {
+    let tmp_dir = tempdir::TempDir::new("virtpy")?;
+    let output = std::process::Command::new(python_path)
+        .args(&["-m", "pip", "install", "--no-deps", "--no-compile"])
+        .arg(distrib_path)
+        .arg("-t")
+        .arg(tmp_dir.as_ref())
+        .arg("-v")
+        .output()?;
+    if !output.status.success() {
+        panic!(
+            "pip error:\n{}",
+            std::str::from_utf8(&output.stderr).unwrap()
+        );
+    }
+
+    let pip_log = String::from_utf8(output.stdout)?;
+
+    //let new_distribs = newly_installed_distributions(&pip_log);
+
+    let distrib = Distribution {
+        name: requirement.name,
+        version: requirement.version,
+        sha: requirement.available_hashes.into_iter().next().unwrap().0,
+    };
+
+    register_new_distributions(
+        options,
+        vec![distrib],
+        1,
+        proj_dirs,
+        pip_log,
+        python_version,
+        tmp_dir,
+    )?;
+
+    Ok(())
+}
+
 fn install_and_register_distributions(
     python_path: &Path,
     proj_dirs: &ProjectDirs,
@@ -510,7 +564,7 @@ fn install_and_register_distributions(
         .arg(&tmp_requirements)
         .arg("-t")
         .arg(tmp_dir.as_ref())
-        .args(&["-v"])
+        .arg("-v")
         .output()?;
     if !output.status.success() {
         panic!(
@@ -522,15 +576,36 @@ fn install_and_register_distributions(
     let pip_log = String::from_utf8(output.stdout)?;
 
     let new_distribs = newly_installed_distributions(&pip_log);
+    register_new_distributions(
+        options,
+        new_distribs,
+        distribs.len(),
+        proj_dirs,
+        pip_log,
+        python_version,
+        tmp_dir,
+    )?;
 
+    Ok(())
+}
+
+fn register_new_distributions(
+    options: Options,
+    new_distribs: Vec<Distribution>,
+    n_distribs_requested: usize,
+    proj_dirs: &ProjectDirs,
+    pip_log: String,
+    python_version: PythonVersion,
+    tmp_dir: tempdir::TempDir,
+) -> eyre::Result<()> {
     if options.verbose >= 1 {
-        if new_distribs.len() != distribs.len() {
+        if new_distribs.len() != n_distribs_requested {
             // either an error or a sign that the filters in new_dependencies()
             // need to be improved
             println!(
                 "Only found {} of {} distributions",
                 new_distribs.len(),
-                distribs.len()
+                n_distribs_requested
             );
 
             let _ = fs_err::write(proj_dirs.data().join("pip.log"), pip_log);
@@ -544,7 +619,6 @@ fn install_and_register_distributions(
             );
         }
     }
-
     let mut all_stored_distributions = StoredDistributions::load(proj_dirs)?;
     let stored_distributions = all_stored_distributions
         .0
@@ -568,9 +642,7 @@ fn install_and_register_distributions(
             )
         })?;
     }
-
     all_stored_distributions.save(proj_dirs)?;
-
     Ok(())
 }
 
@@ -601,6 +673,18 @@ fn new_dependencies(
         })
         .cloned()
         .collect::<Vec<_>>())
+}
+
+fn wheel_is_already_registered(
+    wheel_hash: DependencyHash,
+    proj_dirs: &ProjectDirs,
+    python_version: PythonVersion,
+) -> eyre::Result<bool> {
+    let stored_distributions = StoredDistributions::load(proj_dirs)?;
+    Ok(stored_distributions
+        .0
+        .get(&python_version.as_string_without_patch())
+        .map_or(false, |deps| deps.contains_key(&wheel_hash)))
 }
 
 // toplevel options
@@ -928,6 +1012,10 @@ fn main() -> eyre::Result<()> {
         Command::InternalStore(InternalStoreCmd::Verify) => {
             print_verify_store(&proj_dirs);
         }
+        Command::InternalUseOnly(InternalUseOnly::AddFromFile { virtpy, file }) => {
+            let virtpy = CheckedVirtpy::new(&virtpy)?;
+            virtpy_add_dependency_from_file(&proj_dirs, &virtpy, &file, options)?;
+        }
     }
 
     Ok(())
@@ -987,12 +1075,7 @@ fn print_verify_store(proj_dirs: &ProjectDirs) {
     {
         // the path is also the hash
         let path = file.path();
-        let mut file = fs_err::File::open(&path).unwrap();
-        let mut hasher = Sha256::new();
-        std::io::copy(&mut file, &mut hasher).unwrap();
-        let hash = hasher.finalize();
-
-        let base64_hash = base64::encode_config(&hash, base64::URL_SAFE_NO_PAD);
+        let base64_hash = hash_of_file_sha256(&path);
         if base64_hash
             != path
                 .file_name()
@@ -1013,6 +1096,16 @@ fn print_verify_store(proj_dirs: &ProjectDirs) {
     if !any_error {
         println!("everything valid");
     }
+}
+
+// base64 encoded
+fn hash_of_file_sha256(path: &Path) -> String {
+    let mut file = fs_err::File::open(path).unwrap();
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher).unwrap();
+    let hash = hasher.finalize();
+    let base64_hash = base64::encode_config(&hash, base64::URL_SAFE_NO_PAD);
+    base64_hash
 }
 
 fn print_stats(proj_dirs: &ProjectDirs, options: Options) {
@@ -1260,6 +1353,37 @@ fn virtpy_add_dependencies(
         install_global_executable,
     )
     .wrap_err("failed to add packages to virtpy")
+}
+
+fn virtpy_add_dependency_from_file(
+    proj_dirs: &ProjectDirs,
+    virtpy: &CheckedVirtpy,
+    file: &Path,
+    //install_global_executable: Option<&str>,
+    options: Options,
+) -> eyre::Result<()> {
+    let file_hash = DependencyHash(format!("sha256={}", hash_of_file_sha256(file)));
+    let requirement = Requirement::from_filename(
+        file.file_name().unwrap().to_str().unwrap(),
+        file_hash.clone(),
+    )
+    .unwrap();
+
+    if !wheel_is_already_registered(file_hash.clone(), proj_dirs, virtpy.python_version)? {
+        // The virtpy doesn't contain pip so get the appropriate global python
+        let python_path = virtpy.global_python()?;
+        install_and_register_distribution_from_file(
+            &python_path,
+            proj_dirs,
+            file,
+            requirement.clone(),
+            virtpy.python_version,
+            options,
+        )?;
+    }
+
+    link_requirements_into_virtpy(proj_dirs, virtpy, vec![requirement], options, None)
+        .wrap_err("failed to add packages to virtpy")
 }
 
 fn is_not_found(error: &std::io::Error) -> bool {
@@ -1953,6 +2077,7 @@ fn newly_installed_distributions(pip_log: &str) -> Vec<Distribution> {
             //installed_distribs.push((url, distribution, version));
             installed_distribs.push(Distribution { version, sha, name })
         } else if line.contains("Added ") {
+            // The regex should have matched.
             panic!("2: {}", line);
         }
     }

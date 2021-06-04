@@ -2,6 +2,8 @@ use eyre::WrapErr;
 use pest::Parser;
 use std::{path::Path, process::Command};
 
+use crate::DependencyHash;
+
 #[derive(pest_derive::Parser)]
 #[grammar = "requirements_txt.pest"] // relative to src
 struct RequirementsTxtParser;
@@ -148,6 +150,20 @@ impl Requirement {
             available_hashes,
             marker,
         }
+    }
+
+    pub fn from_filename(filename: &str, hash: DependencyHash) -> eyre::Result<Self> {
+        // TODO: use a better parser
+        let pattern = regex::Regex::new(r"^([\w\d]+)-(\d+(\.\d+)*)(\.tar\.gz|.*\.whl)").unwrap();
+        let m = pattern.captures(filename).unwrap();
+
+        Ok(Requirement {
+            name: m[1].to_owned(),
+            version: m[2].to_owned(),
+            marker: None,
+            available_hashes: vec![hash],
+        })
+        //RequirementsTxtParser::parse(Rule::wheel_name, wheel_name).unwrap();
     }
 }
 
@@ -332,5 +348,45 @@ mod test {
                 }
             ]
         );
+    }
+
+    #[test]
+    fn test_parse_wheel_name_into_requirement() {
+        #[rustfmt::skip]
+        let filenames_and_output = [
+            ("astroid-2.4.2-py3-none-any.whl", ("astroid", "2.4.2")),
+            ("async_generator-1.10-py3-none-any.whl", ("async_generator", "1.10")),
+            ("attrs-19.3.0-py2.py3-none-any.whl", ("attrs", "19.3.0")),
+            ("click-7.1.2-py2.py3-none-any.whl", ("click", "7.1.2")),
+            ("idna-3.1-py3-none-any.whl", ("idna", "3.1")),
+            ("isort-4.3.21-py2.py3-none-any.whl", ("isort", "4.3.21")),
+            ("lazy_object_proxy-1.4.3-cp38-cp38-manylinux1_x86_64.whl", ("lazy_object_proxy", "1.4.3")),
+            ("mccabe-0.6.1-py2.py3-none-any.whl", ("mccabe", "0.6.1")),
+            ("more_itertools-8.4.0-py3-none-any.whl", ("more_itertools", "8.4.0")),
+            ("mypy-0.782-cp38-cp38-manylinux1_x86_64.whl", ("mypy", "0.782")),
+            ("mypy_extensions-0.4.3-py2.py3-none-any.whl", ("mypy_extensions", "0.4.3")),
+            ("outcome-1.1.0-py2.py3-none-any.whl", ("outcome", "1.1.0")),
+            ("packaging-20.4-py2.py3-none-any.whl", ("packaging", "20.4")),
+            ("pluggy-0.13.1-py2.py3-none-any.whl", ("pluggy", "0.13.1")),
+            ("py-1.8.2-py2.py3-none-any.whl", ("py", "1.8.2")),
+            ("pylint-2.5.3-py3-none-any.whl", ("pylint", "2.5.3")),
+            ("pyparsing-2.4.7-py2.py3-none-any.whl", ("pyparsing", "2.4.7")),
+            ("pytest-5.4.3-py3-none-any.whl", ("pytest", "5.4.3")),
+            ("six-1.15.0-py2.py3-none-any.whl", ("six", "1.15.0")),
+            ("sniffio-1.2.0-py3-none-any.whl", ("sniffio", "1.2.0")),
+            ("sortedcontainers-2.4.0-py2.py3-none-any.whl", ("sortedcontainers", "2.4.0")),
+            ("toml-0.10.1-py2.py3-none-any.whl", ("toml", "0.10.1")),
+            ("trio-0.18.0-py3-none-any.whl", ("trio", "0.18.0")),
+            ("typed_ast-1.4.1-cp38-cp38-manylinux1_x86_64.whl", ("typed_ast", "1.4.1")),
+            ("typing_extensions-3.7.4.2-py3-none-any.whl", ("typing_extensions", "3.7.4.2")),
+            ("wcwidth-0.2.5-py2.py3-none-any.whl", ("wcwidth", "0.2.5")),
+            ("wrapt-1.12.1.tar.gz", ("wrapt", "1.12.1")),
+        ];
+
+        for &(filename, (distrib_name, version)) in filenames_and_output.iter() {
+            let req = Requirement::from_filename(filename, DependencyHash("".into())).unwrap();
+            assert_eq!(req.name, distrib_name);
+            assert_eq!(req.version, version);
+        }
     }
 }
