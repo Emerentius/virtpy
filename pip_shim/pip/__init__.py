@@ -37,6 +37,9 @@ def main() -> None:
     if sys.argv[1:3] == ["install", "--no-deps"] and len(sys.argv) == 4:
         install_package()
 
+    if sys.argv[1] == "uninstall" and sys.argv[3] == "-y" and len(sys.argv) == 4:
+        uninstall_package()
+
 
 def install_package():
     package_path = sys.argv[3]
@@ -53,4 +56,16 @@ def install_package():
     subprocess.run(
         ["virtpy", "internal-use-only", "add-from-file", virtpy, package_path],
         check=True,
+    )
+
+
+def uninstall_package():
+    package_name = sys.argv[2]
+    assert not package_name.startswith("-")
+
+    virtpy = virtpy_path()
+    assert virtpy is not None
+
+    subprocess.run(
+        ["virtpy", "remove", "--virtpy-path", virtpy, package_name], check=True
     )
