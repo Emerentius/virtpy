@@ -1,9 +1,11 @@
 use eyre::WrapErr;
 use fs_err::File;
+use itertools::Itertools;
 use python_requirements::Requirement;
 use rand::Rng;
 use regex::Regex;
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::fmt::Write;
 use std::{
     collections::HashMap,
@@ -49,6 +51,14 @@ enum Command {
     /// Add dependency to virtpy
     Add {
         requirements: PathBuf,
+        #[structopt(long)]
+        virtpy_path: Option<PathBuf>,
+    },
+    /// Remove dependency from virtpy
+    Remove {
+        distributions: Vec<String>,
+        #[structopt(long)]
+        virtpy_path: Option<PathBuf>,
     },
     /// Install executable package into an isolated virtpy
     Install {
@@ -810,6 +820,12 @@ impl VirtpyBacking {
     }
 }
 
+fn path_to_virtpy(path_override: &Option<PathBuf>) -> &Path {
+    path_override
+        .as_deref()
+        .unwrap_or_else(|| DEFAULT_VIRTPY_PATH.as_ref())
+}
+
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
 
@@ -822,14 +838,17 @@ fn main() -> eyre::Result<()> {
     proj_dirs.create_dirs()?;
 
     match opt.cmd {
-        Command::Add { requirements } => {
+        Command::Add {
+            requirements,
+            virtpy_path,
+        } => {
             fn add_requirements(
                 proj_dirs: &ProjectDirs,
+                virtpy_path: Option<PathBuf>,
                 options: Options,
                 requirements: PathBuf,
             ) -> eyre::Result<()> {
-                let virtpy_path = DEFAULT_VIRTPY_PATH.as_ref();
-                let virtpy = CheckedVirtpy::new(virtpy_path)?;
+                let virtpy = CheckedVirtpy::new(path_to_virtpy(&virtpy_path))?;
                 let requirements = fs_err::read_to_string(requirements)?;
                 let requirements = python_requirements::read_requirements_txt(&requirements);
 
@@ -837,8 +856,15 @@ fn main() -> eyre::Result<()> {
                 Ok(())
             }
 
-            add_requirements(&proj_dirs, options, requirements)
+            add_requirements(&proj_dirs, virtpy_path, options, requirements)
                 .wrap_err("failed to add requirements")?;
+        }
+        Command::Remove {
+            distributions,
+            virtpy_path,
+        } => {
+            let virtpy = CheckedVirtpy::new(path_to_virtpy(&virtpy_path))?;
+            virtpy_remove_dependencies(&virtpy, distributions.into_iter().collect())?;
         }
         Command::New {
             path,
@@ -1016,6 +1042,149 @@ fn main() -> eyre::Result<()> {
             let virtpy = CheckedVirtpy::new(&virtpy)?;
             virtpy_add_dependency_from_file(&proj_dirs, &virtpy, &file, options)?;
         }
+    }
+
+    Ok(())
+}
+
+// Related: https://www.python.org/dev/peps/pep-0625/  -- File name of a Source Distribution
+//          Contains a link to a few other PEPs.
+//          PEP 503 defines the concept of a normalized distribution name.
+//          https://www.python.org/dev/peps/pep-0503/#normalized-names
+fn normalized_distribution_name(name: &str) -> String {
+    // TODO: make a static out of this
+    let pattern = regex::Regex::new(r"[-_.]+").unwrap();
+    pattern.replace_all(&name, "-").to_lowercase()
+}
+
+// https://www.python.org/dev/peps/pep-0491/#escaping-and-unicode
+// This is important because the wheel name components may contain "-" characters,
+// but those are separators in a wheel name.
+fn wheel_name_escape(wheel_name_part: &str) -> String {
+    // TODO: make a static out of this
+    let pattern = regex::Regex::new(r"[^\w\d.]+").unwrap();
+    pattern.replace_all(wheel_name_part, "_").into_owned()
+}
+
+// TODO: refactor
+fn virtpy_remove_dependencies(
+    virtpy: &CheckedVirtpy,
+    dists_to_remove: HashSet<String>,
+) -> eyre::Result<()> {
+    let dists_to_remove = dists_to_remove
+        .into_iter()
+        .map(|name| wheel_name_escape(&normalized_distribution_name(&name)))
+        .collect::<HashSet<_>>();
+
+    let site_packages = virtpy.site_packages();
+
+    let mut dist_infos = vec![];
+
+    // TODO: detect distributions that aren't installed
+    for dir_entry in site_packages.fs_err_read_dir()? {
+        let dir_entry = dir_entry?;
+        // use fs_err::metadata instead of DirEntry::metadata so it traverses symlinks
+        // as dist-info dirs are currently symlinked in.
+        let filetype = fs_err::metadata(dir_entry.path())?.file_type();
+        if !filetype.is_dir() {
+            continue;
+        }
+        let dirname = match dir_entry.file_name().into_string() {
+            Ok(name) => name,
+            // Skip the directory and assume it's not for a distribution if not utf8.
+            // Per PEP 508, distribution names are limited to a specific form
+            // that is 100% ASCII, at least when they are used as dependencies.
+            // https://www.python.org/dev/peps/pep-0508/#names
+            Err(_) => continue,
+        };
+
+        if dirname.ends_with(".dist-info") {
+            dist_infos.push(dirname);
+        }
+    }
+
+    dist_infos.retain(|name| {
+        let dist = name.split("-").next().unwrap();
+        dists_to_remove.contains(dist)
+    });
+
+    let mut files_to_remove = vec![];
+    // TODO: remove executables (entrypoints)
+    for info in dist_infos {
+        let dist_infos = site_packages.join(&info);
+        let record_file = dist_infos.join("RECORD");
+        for file in records(&record_file)? {
+            let file = file?;
+
+            // NO ESCAPE
+            if file.path.is_absolute() || file.path.starts_with("..") {
+                continue;
+            }
+            let path = site_packages.join(file.path);
+
+            if path.extension() == Some("py".as_ref()) {
+                files_to_remove.push(path.with_extension("pyc"));
+            }
+            files_to_remove.push(path);
+        }
+
+        // NOTE: when dist-infos will not be symlinked in, this will cause an error
+        //       when file deletion is attempted.
+        files_to_remove.push(dist_infos);
+    }
+
+    // Collect the directories so they can be deleted, if empty.
+    // Sorted so the contained directories are deleted before the containing directories.
+    //
+    // NOTE: It seems this doesn't quite catch everything.
+    //       When deleting mypy for example, there may be some empty directories left
+    //       (output of `tree`):
+    //
+    //       .venv/lib/python3.8/site-packages/mypy
+    //       └── typeshed
+    //       ├── stdlib
+    //       └── third_party
+    //
+    //       3 directories, 0 files
+    //
+    //       maybe we need to take into account *.dist-info/top_level.txt for this.
+    let directories = files_to_remove
+        .iter()
+        // parent() should never return None,
+        // but it's gonna return an error anyway when deletion is attempted.
+        .filter_map(|path| path.parent())
+        .collect::<HashSet<_>>();
+    let directories = directories
+        .into_iter()
+        .sorted_by_key(|path| std::cmp::Reverse(path.iter().count()))
+        .collect::<Vec<_>>();
+
+    // TODO: if an error occured, don't delete the dist-info, especially not the RECORD
+    //       so deletion can retry.
+    for path in &files_to_remove {
+        assert!(path.starts_with(&site_packages));
+
+        if false {
+            if path.extension() != Some("pyc".as_ref()) {
+                println!("deleting {}", path.display());
+            }
+        } else {
+            // not using fs_err here, because we're not bubbling the error up
+            if let Err(e) = std::fs::remove_file(&path).or_else(ignore_target_doesnt_exist) {
+                eprintln!("failed to delete {}: {}", path.display(), e);
+            }
+        }
+    }
+
+    for dir in directories {
+        assert!(dir.starts_with(&site_packages));
+        if dir == site_packages {
+            continue;
+        }
+
+        // TODO: ignore errors for directory not existing and not being empty
+        //       but report the others.
+        let _ = fs_err::remove_dir(dir);
     }
 
     Ok(())
