@@ -1,3 +1,12 @@
+# Several tools expect that they can interact with a venv through pip.
+# This module can be installed into a virtpy via `virtpy new --with-pip-shim`
+# instead of pip and will translate and forward commands to virtpy.
+#
+# This allows transparent usage of virtpy by tools that are not aware of it
+# (which is just like every single one of them)
+#
+# EXTREMELY incomplete and brittle.
+
 import sys
 import pathlib
 import os.path
@@ -31,6 +40,11 @@ def record_args() -> None:
         print(" ".join(sys.argv[1:]), file=f)
 
 
+# TODO: add real argument parser.
+# TODO: make it work with `python3 -m pip`.
+#       Calling the shim like that changes the number of arguments in sys.argv and
+#       breaks the logic below.
+#       It can currently only be called via `pip $ARGS...`
 def main() -> None:
     record_args()
 
