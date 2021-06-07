@@ -46,7 +46,7 @@ enum Command {
         #[structopt(short, long, default_value = "3")]
         python: String,
         #[structopt(long)]
-        with_pip_shim: bool,
+        without_pip_shim: bool,
     },
     /// Add dependency to virtpy
     Add {
@@ -869,12 +869,13 @@ fn main() -> eyre::Result<()> {
         Command::New {
             path,
             python,
-            with_pip_shim,
+            without_pip_shim,
+            ..
         } => {
             let path = path.unwrap_or_else(|| PathBuf::from(DEFAULT_VIRTPY_PATH));
             python_detection::detect(&python)
                 .and_then(|python_path| {
-                    create_virtpy(&proj_dirs, &python_path, &path, None, with_pip_shim)
+                    create_virtpy(&proj_dirs, &python_path, &path, None, !without_pip_shim)
                 })
                 .wrap_err("failed to create virtpy")?;
         }
