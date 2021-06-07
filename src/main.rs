@@ -117,7 +117,7 @@ enum PathCmd {
     Executables,
 }
 
-const DEFAULT_VIRTPY_PATH: &str = ".virtpy";
+const DEFAULT_VIRTPY_PATH: &str = ".venv";
 const INSTALLED_DISTRIBUTIONS: &str = "installed_distributions.json";
 const CENTRAL_METADATA: &str = "virtpy_central_metadata";
 const LINK_METADATA: &str = "virtpy_link_metadata";
