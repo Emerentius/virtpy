@@ -154,7 +154,7 @@ impl Requirement {
 
     pub fn from_filename(filename: &str, hash: DependencyHash) -> eyre::Result<Self> {
         // TODO: use a better parser
-        let pattern = regex::Regex::new(r"^([\w\d]+)-(\d+(\.\d+)*)(\.tar\.gz|.*\.whl)").unwrap();
+        let pattern = lazy_regex::regex!(r"^([\w\d]+)-(\d+(\.\d+)*)(\.tar\.gz|.*\.whl)");
         let m = pattern.captures(filename).unwrap();
 
         Ok(Requirement {

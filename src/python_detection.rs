@@ -13,7 +13,7 @@ pub fn detect(python: &str) -> eyre::Result<PathBuf> {
         }
     }
 
-    let version_pattern = regex::Regex::new(r"^(\d)(\.(\d+))?$").unwrap();
+    let version_pattern = lazy_regex::regex!(r"^(\d)(\.(\d+))?$");
     if let Some(captures) = version_pattern.captures(&python) {
         let major = captures[1].parse().unwrap();
         let minor = captures.get(3).map(|n| n.as_str().parse().unwrap());

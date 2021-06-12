@@ -3,7 +3,6 @@ use fs_err::File;
 use itertools::Itertools;
 use python_requirements::Requirement;
 use rand::Rng;
-use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fmt::Write;
@@ -156,8 +155,7 @@ fn python_version(python_path: &Path) -> eyre::Result<PythonVersion> {
             eyre::eyre!("couldn't get python version of `{}`", python_path.display())
         })?;
     let version = output.trim().to_owned();
-    let captures = regex::Regex::new(r"Python (\d+)\.(\d+)\.(\d+)")
-        .expect("invalid regex")
+    let captures = lazy_regex::regex!(r"Python (\d+)\.(\d+)\.(\d+)")
         .captures(&version)
         .ok_or_else(|| eyre::eyre!("failed to read python version from {:?}", version))?;
 
@@ -783,14 +781,10 @@ impl ProjectDirs {
     }
 }
 
-lazy_static::lazy_static! {
-    static ref DIST_INFO_PATTERN: regex::Regex = {
-        regex::Regex::new(r"([a-zA-Z_][a-zA-Z0-9_-]*)-(\d*!.*|\d*\..*)\.dist-info").unwrap()
-    };
-}
-
 fn package_info_from_dist_info_dirname(dirname: &str) -> (&str, &str) {
-    let captures = DIST_INFO_PATTERN.captures(dirname).unwrap();
+    let captures = lazy_regex::regex!(r"([a-zA-Z_][a-zA-Z0-9_-]*)-(\d*!.*|\d*\..*)\.dist-info")
+        .captures(dirname)
+        .unwrap();
     let distrib_name = captures.get(1).unwrap();
     let version = captures.get(2).unwrap();
     (distrib_name.as_str(), version.as_str())
@@ -1053,8 +1047,7 @@ fn main() -> eyre::Result<()> {
 //          PEP 503 defines the concept of a normalized distribution name.
 //          https://www.python.org/dev/peps/pep-0503/#normalized-names
 fn normalized_distribution_name(name: &str) -> String {
-    // TODO: make a static out of this
-    let pattern = regex::Regex::new(r"[-_.]+").unwrap();
+    let pattern = lazy_regex::regex!(r"[-_.]+");
     pattern.replace_all(&name, "-").to_lowercase()
 }
 
@@ -1062,8 +1055,7 @@ fn normalized_distribution_name(name: &str) -> String {
 // This is important because the wheel name components may contain "-" characters,
 // but those are separators in a wheel name.
 fn wheel_name_escape(wheel_name_part: &str) -> String {
-    // TODO: make a static out of this
-    let pattern = regex::Regex::new(r"[^\w\d.]+").unwrap();
+    let pattern = lazy_regex::regex!(r"[^\w\d.]+");
     pattern.replace_all(wheel_name_part, "_").into_owned()
 }
 
@@ -2232,10 +2224,9 @@ impl Distribution {
 fn newly_installed_distributions(pip_log: &str) -> Vec<Distribution> {
     let mut installed_distribs = Vec::new();
 
-    let install_url_pattern = Regex::new(
-        r"Added ([\w_-]+)==(.*) from (https://[^\s]+)/([\w_]+)-[\w_\-\.]+#(sha256=[0-9a-fA-F]{64})",
-    )
-    .unwrap();
+    let install_url_pattern = lazy_regex::regex!(
+        r"Added ([\w_-]+)==(.*) from (https://[^\s]+)/([\w_]+)-[\w_\-\.]+#(sha256=[0-9a-fA-F]{64})"
+    );
 
     for line in pip_log.lines() {
         if let Some(install_captures) = install_url_pattern.captures(line) {
