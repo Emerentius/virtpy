@@ -1604,7 +1604,10 @@ fn create_virtpy(
             )
         })?;
 
-    let prompt = prompt.as_deref().unwrap_or(DEFAULT_VIRTPY_PATH);
+    let prompt = prompt
+        .as_deref()
+        .or_else(|| path.file_name()?.to_str())
+        .unwrap_or(DEFAULT_VIRTPY_PATH);
     _create_virtpy(central_path, python_path, path, prompt, with_pip_shim)
 }
 
