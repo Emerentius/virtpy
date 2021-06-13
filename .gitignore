@@ -1,5 +1,6 @@
 /target
 .virtpy/
+.venv
 .vscode
 test_cache/
 pip_shim/pip_shim.zip
