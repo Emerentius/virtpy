@@ -1175,8 +1175,11 @@ fn virtpy_remove_dependencies(
             continue;
         }
 
-        // TODO: ignore errors for directory not existing and not being empty
-        //       but report the others.
+        // It'd be nice if we could ignore errors for directory not existing and dir not being empty
+        // and report all others, but there is no ErrorKind for directory not existing, so it gets
+        // lumped in under `Other`.
+        // I don't know if the error message is consistent across OS's or is guaranteed not to change,
+        // so I can't distinguish between real errors or false positives.
         let _ = fs_err::remove_dir(dir);
     }
 
