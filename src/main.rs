@@ -261,7 +261,7 @@ fn serialize_requirements_txt(reqs: &[Requirement]) -> String {
     output
 }
 
-fn copy_directory(from: &Path, to: &Path) {
+fn copy_directory(from: &Path, to: &Path, use_move: bool) {
     for dir_entry in walkdir::WalkDir::new(from) {
         let dir_entry = dir_entry.unwrap();
         let path = dir_entry.path();
@@ -270,7 +270,7 @@ fn copy_directory(from: &Path, to: &Path) {
         if dir_entry.file_type().is_dir() {
             fs_err::create_dir(target_path).unwrap();
         } else {
-            fs_err::copy(path, target_path).unwrap();
+            move_file(path, &target_path, use_move).unwrap();
         }
     }
 }
@@ -398,6 +398,14 @@ fn dist_info_dirname(name: &str, version: &str, hash: &DependencyHash) -> String
     format!("{},{},{}", name, version, hash)
 }
 
+fn move_file(src: &Path, dst: &Path, use_move: bool) -> std::io::Result<()> {
+    if use_move {
+        fs_err::rename(src, dst)
+    } else {
+        fs_err::copy(src, dst).map(drop)
+    }
+}
+
 fn register_distribution_files(
     proj_dirs: &ProjectDirs,
     install_folder: &Path,
@@ -412,6 +420,8 @@ fn register_distribution_files(
 
     let dst_dist_info_dirname = dist_info_dirname(distribution_name, version, &sha);
     let dst_dist_info = proj_dirs.dist_infos().join(&dst_dist_info_dirname);
+
+    let use_move = can_move_files(&proj_dirs.package_files(), install_folder).unwrap_or(false);
 
     if dst_dist_info.exists() {
         // add it here, because it may have been installed by a different
@@ -448,8 +458,7 @@ fn register_distribution_files(
             println!("    copying {} to {}", src.display(), dest.display());
         }
 
-        // TODO: use rename, if on same filesystem
-        let res = fs_err::copy(src, dest);
+        let res = move_file(&src, &dest, use_move);
         match &res {
             Err(err) if is_not_found(err) => {
                 print_error_missing_file_in_record(&dist_info_foldername, &file.path)
@@ -460,10 +469,19 @@ fn register_distribution_files(
         };
     }
 
-    // TODO: should try to move instead of copy, if possible
-    copy_directory(&src_dist_info, &dst_dist_info);
+    copy_directory(&src_dist_info, &dst_dist_info, use_move);
     stored_distributions.insert(sha, PathBuf::from(dst_dist_info_dirname));
     Ok(())
+}
+
+fn can_move_files(src: &Path, dst: &Path) -> eyre::Result<bool> {
+    let filename = ".deleteme_rename_test";
+    let src = src.join(filename);
+    let dst = dst.join(filename);
+    fs_err::write(&src, "")?;
+    let can_move = fs_err::rename(src, &dst).is_ok();
+    let _ = fs_err::remove_file(dst);
+    Ok(can_move)
 }
 
 #[derive(Debug, serde::Deserialize, PartialEq, Eq, Hash, Clone)]
@@ -2275,6 +2293,7 @@ mod test {
         check_poetry_available()
     }
 
+    // TODO: add test on same mount point as tmp dir and on different one.
     #[test]
     fn test_install_uninstall() -> eyre::Result<()> {
         let proj_dirs = test_proj_dirs();
