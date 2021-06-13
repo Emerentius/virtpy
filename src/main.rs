@@ -178,6 +178,12 @@ fn python_version(python_path: &Path) -> eyre::Result<PythonVersion> {
 // has the form "sha256=[0-9a-fA-F]{64}"
 pub struct DependencyHash(String);
 
+impl std::fmt::Display for DependencyHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 // TODO: make into newtype
 type PackageFileHash = String;
 
@@ -388,7 +394,7 @@ fn entrypoints(dist_info: &Path) -> Option<Vec<EntryPoint>> {
     Some(entrypoints)
 }
 
-fn dist_info_dirname(name: &str, version: &str, hash: &str) -> String {
+fn dist_info_dirname(name: &str, version: &str, hash: &DependencyHash) -> String {
     format!("{},{},{}", name, version, hash)
 }
 
@@ -397,7 +403,7 @@ fn register_distribution_files(
     install_folder: &Path,
     distribution_name: &str,
     version: &str,
-    sha: String,
+    sha: DependencyHash,
     stored_distributions: &mut HashMap<DependencyHash, PathBuf>,
     options: crate::Options,
 ) -> eyre::Result<()> {
@@ -411,7 +417,7 @@ fn register_distribution_files(
         // add it here, because it may have been installed by a different
         // python version. In that case, the current python version's list
         // may be missing this distribution.
-        stored_distributions.insert(DependencyHash(sha), PathBuf::from(dst_dist_info_dirname));
+        stored_distributions.insert(sha, PathBuf::from(dst_dist_info_dirname));
         return Ok(());
     }
     if options.verbose >= 1 {
@@ -456,7 +462,7 @@ fn register_distribution_files(
 
     // TODO: should try to move instead of copy, if possible
     copy_directory(&src_dist_info, &dst_dist_info);
-    stored_distributions.insert(DependencyHash(sha), PathBuf::from(dst_dist_info_dirname));
+    stored_distributions.insert(sha, PathBuf::from(dst_dist_info_dirname));
     Ok(())
 }
 
@@ -533,7 +539,7 @@ fn install_and_register_distribution_from_file(
     let distrib = Distribution {
         name: requirement.name,
         version: requirement.version,
-        sha: requirement.available_hashes.into_iter().next().unwrap().0,
+        sha: requirement.available_hashes.into_iter().next().unwrap(),
     };
 
     register_new_distributions(
@@ -623,7 +629,7 @@ fn register_new_distributions(
         for distrib in new_distribs.iter() {
             println!(
                 "    New distribution: {}=={}, {}",
-                distrib.name, distrib.version, distrib.sha
+                distrib.name, distrib.version, distrib.sha.0
             );
         }
     }
@@ -989,7 +995,7 @@ fn main() -> eyre::Result<()> {
                             // Remove distribution from list of installed distributions, for all
                             // python versions.
                             // Save after each attempted removal in case a bug causes the removal to fail prematurely
-                            let hash = DependencyHash(dist.sha);
+                            let hash = dist.sha;
                             for python_specific_stored_distribs in stored_distribs.0.values_mut() {
                                 python_specific_stored_distribs.remove(&hash);
                             }
@@ -2191,7 +2197,7 @@ fn ignore_target_exists(err: std::io::Error) -> std::io::Result<()> {
 struct Distribution {
     name: String,
     version: String,
-    sha: String, // TODO: make this into a DependencyHash
+    sha: DependencyHash,
 }
 
 impl Distribution {
@@ -2200,7 +2206,7 @@ impl Distribution {
         let mut next = || it.next().unwrap().to_owned();
         let name = next();
         let version = next();
-        let sha = next();
+        let sha = DependencyHash(next());
         assert!(it.next().is_none());
 
         Self { name, version, sha }
@@ -2239,7 +2245,7 @@ fn newly_installed_distributions(pip_log: &str) -> Vec<Distribution> {
             let version = get(2);
             //let url = get(3);
             let name = get(4);
-            let sha = get(5);
+            let sha = DependencyHash(get(5));
 
             //installed_distribs.push((url, distribution, version));
             installed_distribs.push(Distribution { version, sha, name })
@@ -2311,50 +2317,66 @@ mod test {
                 Distribution {
                     name: "astroid".into(),
                     version: "2.4.2".into(),
-                    sha: "sha256=bc58d83eb610252fd8de6363e39d4f1d0619c894b0ed24603b881c02e64c7386"
-                        .into()
+                    sha: DependencyHash(
+                        "sha256=bc58d83eb610252fd8de6363e39d4f1d0619c894b0ed24603b881c02e64c7386"
+                            .into()
+                    )
                 },
                 Distribution {
                     name: "isort".into(),
                     version: "4.3.21".into(),
-                    sha: "sha256=6e811fcb295968434526407adb8796944f1988c5b65e8139058f2014cbe100fd"
-                        .into()
+                    sha: DependencyHash(
+                        "sha256=6e811fcb295968434526407adb8796944f1988c5b65e8139058f2014cbe100fd"
+                            .into()
+                    )
                 },
                 Distribution {
                     name: "lazy_object_proxy".into(),
                     version: "1.4.3".into(),
-                    sha: "sha256=a6ae12d08c0bf9909ce12385803a543bfe99b95fe01e752536a60af2b7797c62"
-                        .into()
+                    sha: DependencyHash(
+                        "sha256=a6ae12d08c0bf9909ce12385803a543bfe99b95fe01e752536a60af2b7797c62"
+                            .into()
+                    )
                 },
                 Distribution {
                     name: "mccabe".into(),
                     version: "0.6.1".into(),
-                    sha: "sha256=ab8a6258860da4b6677da4bd2fe5dc2c659cff31b3ee4f7f5d64e79735b80d42"
-                        .into()
+                    sha: DependencyHash(
+                        "sha256=ab8a6258860da4b6677da4bd2fe5dc2c659cff31b3ee4f7f5d64e79735b80d42"
+                            .into()
+                    )
                 },
                 Distribution {
                     name: "pylint".into(),
                     version: "2.5.3".into(),
-                    sha: "sha256=d0ece7d223fe422088b0e8f13fa0a1e8eb745ebffcb8ed53d3e95394b6101a1c"
-                        .into()
+                    sha: DependencyHash(
+                        "sha256=d0ece7d223fe422088b0e8f13fa0a1e8eb745ebffcb8ed53d3e95394b6101a1c"
+                            .into()
+                    )
                 },
                 Distribution {
                     name: "six".into(),
                     version: "1.15.0".into(),
-                    sha: "sha256=8b74bedcbbbaca38ff6d7491d76f2b06b3592611af620f8426e82dddb04a5ced"
-                        .into()
+                    sha: DependencyHash(
+                        "sha256=8b74bedcbbbaca38ff6d7491d76f2b06b3592611af620f8426e82dddb04a5ced"
+                            .into()
+                    )
                 },
                 Distribution {
                     name: "toml".into(),
                     version: "0.10.1".into(),
-                    sha: "sha256=bda89d5935c2eac546d648028b9901107a595863cb36bae0c73ac804a9b4ce88"
-                        .into()
+                    sha: DependencyHash(
+                        "sha256=bda89d5935c2eac546d648028b9901107a595863cb36bae0c73ac804a9b4ce88"
+                            .into()
+                    )
                 },
                 Distribution {
                     name: "wrapt".into(),
                     version: "1.12.1".into(),
-                    sha: "sha256=b62ffa81fb85f4332a4f609cab4ac40709470da05643a082ec1eb88e6d9b97d7"
-                        .into()
+                    sha: DependencyHash(
+                        "sha256=b62ffa81fb85f4332a4f609cab4ac40709470da05643a082ec1eb88e6d9b97d7"
+                            .into()
+                    )
                 }
             ]
         );
