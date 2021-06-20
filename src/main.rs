@@ -519,11 +519,7 @@ fn records(record: &Path) -> csv::Result<impl Iterator<Item = csv::Result<Instal
                 .unwrap()
                 .ends_with(".dist-info");
 
-            if is_dist_info {
-                return None;
-            }
-
-            Some(record.deserialize(None))
+            (!is_dist_info).then(|| record.deserialize(None))
         }))
 }
 
