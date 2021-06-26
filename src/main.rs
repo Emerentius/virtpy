@@ -421,7 +421,8 @@ fn register_distribution_files(
     let dst_dist_info_dirname = dist_info_dirname(distribution_name, version, &sha);
     let dst_dist_info = proj_dirs.dist_infos().join(&dst_dist_info_dirname);
 
-    let use_move = can_move_files(&proj_dirs.package_files(), install_folder).unwrap_or(false);
+    // let use_move = can_move_files(&proj_dirs.package_files(), install_folder).unwrap_or(false);
+    let use_move = true;
 
     if dst_dist_info.exists() {
         // add it here, because it may have been installed by a different
@@ -474,15 +475,15 @@ fn register_distribution_files(
     Ok(())
 }
 
-fn can_move_files(src: &Path, dst: &Path) -> eyre::Result<bool> {
-    let filename = ".deleteme_rename_test";
-    let src = src.join(filename);
-    let dst = dst.join(filename);
-    fs_err::write(&src, "")?;
-    let can_move = fs_err::rename(src, &dst).is_ok();
-    let _ = fs_err::remove_file(dst);
-    Ok(can_move)
-}
+// fn can_move_files(src: &Path, dst: &Path) -> eyre::Result<bool> {
+//     let filename = ".deleteme_rename_test";
+//     let src = src.join(filename);
+//     let dst = dst.join(filename);
+//     fs_err::write(&src, "")?;
+//     let can_move = fs_err::rename(src, &dst).is_ok();
+//     let _ = fs_err::remove_file(dst);
+//     Ok(can_move)
+// }
 
 #[derive(Debug, serde::Deserialize, PartialEq, Eq, Hash, Clone)]
 struct InstalledFile {
@@ -531,7 +532,7 @@ fn install_and_register_distribution_from_file(
     python_version: PythonVersion,
     options: Options,
 ) -> eyre::Result<()> {
-    let tmp_dir = tempdir::TempDir::new("virtpy")?;
+    let tmp_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), "virtpy")?;
     let output = std::process::Command::new(python_path)
         .args(&["-m", "pip", "install", "--no-deps", "--no-compile"])
         .arg(distrib_path)
@@ -583,7 +584,7 @@ fn install_and_register_distributions(
         return Ok(());
     }
 
-    let tmp_dir = tempdir::TempDir::new("virtpy")?;
+    let tmp_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), "virtpy")?;
     let tmp_requirements = tmp_dir.as_ref().join("__tmp_requirements.txt");
     let reqs = serialize_requirements_txt(distribs);
     fs_err::write(&tmp_requirements, reqs)?;
@@ -745,6 +746,7 @@ impl ProjectDirs {
             self.package_files(),
             self.executables(),
             self.virtpys(),
+            self.tmp(),
         ] {
             fs_err::create_dir(path).or_else(ignore_target_exists)?;
         }
@@ -798,6 +800,14 @@ impl ProjectDirs {
                         .unwrap(),
                 )
             })
+    }
+
+    // Using a directory in our data directory for temporary files ensures
+    // that we can always just move them into their final location.
+    // However, we'll need to manually clean up any old files.
+    // TODO: add cleanup of old files
+    fn tmp(&self) -> PathBuf {
+        self.data().join("tmp")
     }
 }
 
