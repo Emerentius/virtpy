@@ -1973,6 +1973,26 @@ trait VirtpyPaths {
             self.location().join("Lib/site-packages")
         }
     }
+
+    fn install_paths(&self) -> eyre::Result<InstallPaths> {
+        InstallPaths::detect(self.python())
+    }
+}
+
+// The result of sysconfig.get_paths().
+// This is a mapping like `{ "include": "some/path/to/place/headers", "purelib": "other/path" }`.
+// Necessary for finding the path where files from a wheel's .data directory should be placed.
+struct InstallPaths(HashMap<String, String>);
+
+impl InstallPaths {
+    fn detect(python_path: impl AsRef<Path>) -> eyre::Result<Self> {
+        let output = check_output(std::process::Command::new(python_path.as_ref()).args(&[
+            "-c",
+            "import sysconfig; import json; print(json.dumps(sysconfig.get_paths()))",
+        ]))?;
+
+        Ok(InstallPaths(serde_json::from_str(&output)?))
+    }
 }
 
 impl VirtpyPaths for CheckedVirtpy {
@@ -2430,6 +2450,8 @@ fn newly_installed_distributions(pip_log: &str) -> Vec<Distribution> {
 
 #[cfg(test)]
 mod test {
+    use crate::python_detection::detect;
+
     use super::*;
 
     fn test_proj_dirs() -> ProjectDirs {
@@ -2622,6 +2644,29 @@ mod test {
         let new_stored_distribs: StoredDistributions =
             serde_json::from_str(&new_file).wrap_err("failed to deserialize new file format")?;
         assert_eq!(old_stored_distribs, new_stored_distribs);
+        Ok(())
+    }
+
+    #[test]
+    fn get_install_paths() -> eyre::Result<()> {
+        let proj_dirs = test_proj_dirs();
+        let tmp_dir = tempdir::TempDir::new("virtpy_test")?;
+        let virtpy = create_virtpy(
+            &proj_dirs,
+            &detect("3")?,
+            &tmp_dir.path().join("install_paths_test"),
+            None,
+            true,
+        )?;
+        let install_paths = virtpy.install_paths()?;
+        let required_keys = ["purelib", "platlib", "include", "scripts", "data"]
+            .iter()
+            .map(<_>::to_string)
+            .collect::<HashSet<_>>();
+        let existent_keys = install_paths.0.keys().cloned().collect::<HashSet<_>>();
+
+        let missing = required_keys.difference(&existent_keys).collect::<Vec<_>>();
+        assert!(missing.is_empty(), "missing keys: {:?}", missing);
         Ok(())
     }
 }
