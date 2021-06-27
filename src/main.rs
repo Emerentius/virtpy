@@ -2157,106 +2157,168 @@ fn link_requirements_into_virtpy(
                 continue;
             }
         };
-        assert!(stored_distrib.installed_via == StoredDistributionType::FromPip);
-        let dist_info_path = proj_dirs
-            .dist_infos()
-            .join(stored_distrib.distribution.as_csv());
 
-        let dist_info_foldername =
-            format!("{}-{}.dist-info", distribution.name, distribution.version);
-        let target = site_packages.join(&dist_info_foldername);
-        if options.verbose >= 1 {
-            println!(
-                "symlinking dist info from {} to {}",
-                dist_info_path.display(),
-                target.display()
-            );
-        }
-
-        // TODO: create directory and hardlink contents
-        symlink_dir(&dist_info_path, &target)
-            .or_else(ignore_target_exists)
-            .unwrap();
-
-        for record in records(&dist_info_path.join("RECORD"))
-            .unwrap()
-            .map(Result::unwrap)
-        {
-            let dest = match remove_leading_parent_dirs(&record.path) {
-                Ok(path) => {
-                    let toplevel_dirs = ["bin", "Scripts", "include", "lib", "lib64", "share"];
-                    let starts_with_venv_dir =
-                        toplevel_dirs.iter().any(|dir| path.starts_with(dir));
-                    if !starts_with_venv_dir {
-                        println!(
-                            "{}: attempted file placement outside virtpy, ignoring: {}",
-                            distribution.name,
-                            record.path.display()
-                        );
-                        continue;
-                    }
-
-                    // executables need to be generated on demand
-                    if is_path_of_executable(path) {
-                        continue;
-                    }
-
-                    let dest = virtpy.backing.join(path);
-                    if path.starts_with("include") || path.starts_with("share") {
-                        fs_err::create_dir_all(dest.parent().unwrap()).unwrap();
-                    }
-                    dest
-                }
-                Err(path) => {
-                    let dest = site_packages.join(path);
-                    let dir = dest.parent().unwrap();
-                    fs_err::create_dir_all(&dir).unwrap();
-                    dest
-                }
-            };
-
-            let src = proj_dirs.package_files().join(record.hash);
-            match fs_err::hard_link(&src, &dest) {
-                Ok(_) => (),
-                // TODO: can this error exist? Docs don't say anything about this being a failure
-                //       condition
-                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => (),
-                Err(err) if is_not_found(&err) => {
-                    print_error_missing_file_in_record(&dist_info_foldername, &src)
-                }
-                Err(err) => panic!(
-                    "failed to hardlink file from {} to {}: {}",
-                    src.display(),
-                    dest.display(),
-                    err
-                ),
-            };
-        }
-
-        let install_global_executable = install_global_executable == Some(&distribution.name[..]);
-        let entrypoints = match (entrypoints(&dist_info_path), install_global_executable) {
-            (Some(ep), _) => ep,
-            (None, true) => eyre::bail!("{} contains no executables", distribution.name),
-            (None, false) => vec![],
-        };
-
-        for entrypoint in entrypoints {
-            let executables_path = virtpy.executables();
-            let err = || eyre::eyre!("failed to install executable {}", entrypoint.name);
-            let python_path = executables_path.join("python");
-            entrypoint
-                .generate_executable(&executables_path, &python_path)
-                .wrap_err_with(err)?;
-
-            if install_global_executable {
-                entrypoint
-                    .generate_executable(&proj_dirs.executables(), &python_path)
-                    .wrap_err_with(err)?;
-            }
-        }
+        link_single_requirement_into_virtpy(
+            proj_dirs,
+            virtpy,
+            &distribution,
+            options,
+            install_global_executable,
+            &stored_distrib,
+            &site_packages,
+        )?;
     }
 
     Ok(())
+}
+
+fn link_single_requirement_into_virtpy(
+    proj_dirs: &ProjectDirs,
+    virtpy: &CheckedVirtpy,
+    distribution: &Requirement,
+    options: Options,
+    install_global_executable: Option<&str>,
+    stored_distrib: &StoredDistribution,
+    site_packages: &Path,
+) -> eyre::Result<()> {
+    assert!(stored_distrib.installed_via == StoredDistributionType::FromPip);
+    let dist_info_path = proj_dirs
+        .dist_infos()
+        .join(stored_distrib.distribution.as_csv());
+
+    let dist_info_foldername = format!("{}-{}.dist-info", distribution.name, distribution.version);
+    let target = site_packages.join(&dist_info_foldername);
+    if options.verbose >= 1 {
+        println!(
+            "symlinking dist info from {} to {}",
+            dist_info_path.display(),
+            target.display()
+        );
+    }
+
+    // TODO: create directory and hardlink contents
+    symlink_dir(&dist_info_path, &target)
+        .or_else(ignore_target_exists)
+        .unwrap();
+
+    link_files_from_record_into_virtpy(
+        &dist_info_path,
+        virtpy,
+        &site_packages,
+        proj_dirs,
+        &distribution,
+        dist_info_foldername,
+    );
+
+    install_executables(
+        install_global_executable,
+        distribution,
+        dist_info_path,
+        virtpy,
+        proj_dirs,
+    )
+}
+
+fn link_files_from_record_into_virtpy(
+    dist_info_path: &PathBuf,
+    virtpy: &CheckedVirtpy,
+    site_packages: &Path,
+    proj_dirs: &ProjectDirs,
+    distribution: &Requirement,
+    dist_info_foldername: String,
+) {
+    for record in records(&dist_info_path.join("RECORD"))
+        .unwrap()
+        .map(Result::unwrap)
+    {
+        let dest = match remove_leading_parent_dirs(&record.path) {
+            Ok(path) => {
+                let toplevel_dirs = ["bin", "Scripts", "include", "lib", "lib64", "share"];
+                let starts_with_venv_dir = toplevel_dirs.iter().any(|dir| path.starts_with(dir));
+                if !starts_with_venv_dir {
+                    println!(
+                        "{}: attempted file placement outside virtpy, ignoring: {}",
+                        distribution.name,
+                        record.path.display()
+                    );
+                    continue;
+                }
+
+                // executables need to be generated on demand
+                if is_path_of_executable(path) {
+                    continue;
+                }
+
+                let dest = virtpy.backing.join(path);
+                if path.starts_with("include") || path.starts_with("share") {
+                    fs_err::create_dir_all(dest.parent().unwrap()).unwrap();
+                }
+                dest
+            }
+            Err(path) => {
+                let dest = site_packages.join(path);
+                let dir = dest.parent().unwrap();
+                fs_err::create_dir_all(&dir).unwrap();
+                dest
+            }
+        };
+        link_file_into_virtpy(proj_dirs, record, dest, &dist_info_foldername);
+    }
+}
+
+fn link_file_into_virtpy(
+    proj_dirs: &ProjectDirs,
+    record: InstalledFile,
+    dest: PathBuf,
+    dist_info_foldername: &str,
+) {
+    let src = proj_dirs.package_files().join(record.hash);
+    match fs_err::hard_link(&src, &dest) {
+        Ok(_) => (),
+        // TODO: can this error exist? Docs don't say anything about this being a failure
+        //       condition
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => (),
+        Err(err) if is_not_found(&err) => {
+            print_error_missing_file_in_record(&dist_info_foldername, &src)
+        }
+        Err(err) => panic!(
+            "failed to hardlink file from {} to {}: {}",
+            src.display(),
+            dest.display(),
+            err
+        ),
+    };
+}
+
+// Currently, this works only for pip installed packages
+// TODO: adapt to new method
+fn install_executables(
+    install_global_executable: Option<&str>,
+    distribution: &Requirement,
+    dist_info_path: PathBuf,
+    virtpy: &CheckedVirtpy,
+    proj_dirs: &ProjectDirs,
+) -> Result<(), color_eyre::Report> {
+    let install_global_executable = install_global_executable == Some(&distribution.name[..]);
+    let entrypoints = match (entrypoints(&dist_info_path), install_global_executable) {
+        (Some(ep), _) => ep,
+        (None, true) => eyre::bail!("{} contains no executables", distribution.name),
+        (None, false) => vec![],
+    };
+    Ok(for entrypoint in entrypoints {
+        let executables_path = virtpy.executables();
+        let err = || eyre::eyre!("failed to install executable {}", entrypoint.name);
+        let python_path = executables_path.join("python");
+        entrypoint
+            .generate_executable(&executables_path, &python_path)
+            .wrap_err_with(err)?;
+
+        if install_global_executable {
+            entrypoint
+                .generate_executable(&proj_dirs.executables(), &python_path)
+                .wrap_err_with(err)?;
+        }
+    })
 }
 
 fn print_error_missing_file_in_record(dist_info: &str, missing_file: &Path) {
