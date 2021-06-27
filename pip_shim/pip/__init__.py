@@ -3,7 +3,7 @@
 # instead of pip and will translate and forward commands to virtpy.
 #
 # This allows transparent usage of virtpy by tools that are not aware of it
-# (which is just like every single one of them)
+# (which is just, like, every single one of them)
 #
 # EXTREMELY incomplete and brittle.
 
