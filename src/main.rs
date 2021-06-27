@@ -16,6 +16,7 @@ use structopt::StructOpt;
 
 mod python_detection;
 mod python_requirements;
+mod python_wheel;
 
 use fs_err::PathExt;
 
