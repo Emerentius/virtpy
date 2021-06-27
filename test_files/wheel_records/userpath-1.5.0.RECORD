@@ -1,0 +1,17 @@
+../../bin/userpath,sha256=mVnFr1rXH7SvKffZshwLM6PKP2Kz8flxPQlfXH0lHQ8,221
+userpath-1.5.0.dist-info/INSTALLER,sha256=zuuue4knoyJ-UwPPXg8fezS7VCrXJQrAP7zeNuwvFQg,4
+userpath-1.5.0.dist-info/LICENSE-APACHE,sha256=zr-16rTv9Q34fDxefrEaY00Poyu0tjgIAPgvrmBlma4,9748
+userpath-1.5.0.dist-info/LICENSE-MIT,sha256=q3taPQzehTxWkjxAQpMqmAmfArC9XwvYD6psw8FSbdU,1065
+userpath-1.5.0.dist-info/METADATA,sha256=FvjzcP89YO-3H7Xpjzsct2ZoU3v2tNlUqWxcwUppQAA,7455
+userpath-1.5.0.dist-info/RECORD,,
+userpath-1.5.0.dist-info/REQUESTED,sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU,0
+userpath-1.5.0.dist-info/WHEEL,sha256=6T3TYZE4YFi2HTS1BeZHNXAi8N52OZT4O-dJ6-ome_4,116
+userpath-1.5.0.dist-info/entry_points.txt,sha256=pjWW1BhHiBmuejk4O-XjNoy0f0Z8z8BlEIukTNtDjt4,52
+userpath-1.5.0.dist-info/top_level.txt,sha256=qU4pb5APGg80x8Zmo0Yncq5OUFYX_M2-Aa9kFRbPAug,9
+userpath/__init__.py,sha256=b_Zw37amD8dEsoKBzVnGYkA7dGe-TQrJzooEvH6dhC4,129
+userpath/__main__.py,sha256=vTjEv55SZ9tSEGOPF21SrP0sAgn9oujbyqGe_Y-r0h4,58
+userpath/cli.py,sha256=-zPWFgK-a7jd8MxVy4S218v6W0IDweQUkpqe3osAuYw,6255
+userpath/core.py,sha256=07zBilxweoH3iKBdfBMwSKlvTdtgbdUhHHsEuPc6xA0,1029
+userpath/interface.py,sha256=F6kjY9S4my_FB9RhJIyt0R89ab7bjKqillnsGSYZexE,5340
+userpath/shells.py,sha256=e4XGXhGZQNuFZqdE9ji28fcW8sYK2ASkg5VnubQ9qHw,3700
+userpath/utils.py,sha256=Ak6fxujzFbpiTV16-PE3_v-da017RHiOEAjiWPfBAmE,1697

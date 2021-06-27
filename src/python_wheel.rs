@@ -381,7 +381,10 @@ mod test {
 
     #[test]
     fn read_record() -> eyre::Result<()> {
-        // TODO: add more RECORD files
+        for f in Path::new("test_files/wheel_records").read_dir()? {
+            let f = f?;
+            WheelRecord::from_file(f.path())?;
+        }
         WheelRecord::from_file("test_files/RECORD")?;
         Ok(())
     }
