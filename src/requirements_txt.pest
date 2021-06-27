@@ -4,7 +4,7 @@
 //
 // also PEP 508: https://www.python.org/dev/peps/pep-0508/
 //
-// in particulr the grammar section:
+// in particular the grammar section:
 // https://www.python.org/dev/peps/pep-0508/#grammar
 
 requirements = { (requirement ~ (NEWLINE ~ requirement)*)? ~ NEWLINE? ~ &EOI }
@@ -21,15 +21,30 @@ semicolon = _{ ";" }
 system_condition = !{ "sys_platform" ~ ("==" | "!=") ~ system }
 system = @{ "\"" ~ ASCII_ALPHANUMERIC+ ~ "\"" }
 
+wheel_name = ${ distribution ~ "-" ~ version ~ "-" ~ (build_tag ~ "-")? ~ python_tag ~ "-" ~ abi_tag ~ "-" ~ platform_tag ~ ".whl" }
+
+distribution = { ident }
+// python_tag, build_tag and platform_tag are left unspecified by PEP 440. PEP 425 looks like it defines them,
+// but the PEP page is broken for me at the moment.
+// https://www.python.org/dev/peps/pep-0425/
+// There are also multiple PEPs for variants of the manylinux platform tag alone.
+// PEP 600 seems to be the newest of them, but that page is also broken right now.
+// https://www.python.org/dev/peps/pep-0600/
+python_tag = { ident }
+build_tag = { ident }
+platform_tag = { ident }
+
 // https://www.python.org/dev/peps/pep-0440/#public-version-identifiers
+// The PEP is horribly underspecified and vague.
+// There is a normalized form and various alternatives. These alternative forms
+// are only added as needed to the grammar and when I'm sure they don't result in ambiguities.
 version = @{ epoch? ~ release ~ pre_release? ~ post_release? ~ dev_release?}
 epoch = { number ~ "!" }
 release = { number ~ dot_number* }
 pre_release = { ("a" | "b" | "rc" ) ~ number }
-post_release = { dot_number }
-dev_release = { dot_number }
+post_release = { ".post" ~ number }
+dev_release = { ".dev" ~ number }
 dot_number = { "." ~ number }
-//version = @{ number ~ "." ~ number ~ "." ~ number }
 
 number = { ASCII_DIGIT+ }
 
