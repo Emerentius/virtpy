@@ -262,6 +262,14 @@ impl StoredDistributions {
     }
 
     fn load(proj_dirs: &ProjectDirs) -> eyre::Result<Self> {
+        Self::load_from(proj_dirs.installed_distributions_log())
+    }
+
+    fn load_from(path: impl AsRef<Path>) -> eyre::Result<Self> {
+        Self::_load_from(path.as_ref())
+    }
+
+    fn _load_from(path: &Path) -> eyre::Result<Self> {
         use fs2::FileExt;
         let mut file = fs_err::OpenOptions::new()
             .create(true)
@@ -269,7 +277,7 @@ impl StoredDistributions {
             // we're actually only reading, but when create(true) is used,
             // the file must be set to write or append
             .write(true)
-            .open(proj_dirs.installed_distributions_log())
+            .open(path)
             .wrap_err("failed to open stored distributions log")?;
         // FIXME: use RAII guard.
         file.file().lock_exclusive()?;
@@ -2644,6 +2652,14 @@ mod test {
         let new_stored_distribs: StoredDistributions =
             serde_json::from_str(&new_file).wrap_err("failed to deserialize new file format")?;
         assert_eq!(old_stored_distribs, new_stored_distribs);
+        Ok(())
+    }
+
+    #[test]
+    fn loading_old_and_new_stored_distribs_identical() -> eyre::Result<()> {
+        let old = StoredDistributions::load_from("test_files/old_installed_distributions.json")?;
+        let new = StoredDistributions::load_from("test_files/new_installed_distributions.json")?;
+        assert_eq!(old, new);
         Ok(())
     }
 
