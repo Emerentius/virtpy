@@ -3,8 +3,10 @@ use std::{
     collections::HashMap,
     fmt::Display,
     io::{Read, Seek},
-    path::Path,
+    path::{Path, PathBuf},
 };
+
+use crate::DependencyHash;
 
 // This implements a wheel installer following the specification here:
 // https://packaging.python.org/specifications/binary-distribution-format/
@@ -197,6 +199,147 @@ impl WheelMetadata {
     }
 }
 
+#[derive(PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+pub struct WheelRecord {
+    // stored separately just so we can easily recreate the line for the RECORD itself
+    // without making paths and filesizes optional for all other files.
+    // If `None`, don't write a RECORD line.
+    // TODO: change to `own_path` and store the path to self.
+    pub wheel_name: Option<String>,
+    // All files in the record except for the record itself.
+    pub files: Vec<RecordEntry>,
+}
+
+#[derive(
+    Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Clone,
+)]
+pub struct RecordEntry {
+    pub path: PathBuf,
+    pub hash: DependencyHash,
+    pub filesize: u64,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash, Clone)]
+struct MaybeRecordEntry {
+    path: String,
+    hash: String,
+    filesize: Option<u64>,
+}
+
+impl WheelRecord {
+    fn from_str(record: &str) -> eyre::Result<Self> {
+        let reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_reader(record.as_bytes());
+
+        Self::_from_csv_reader(reader)
+    }
+
+    pub fn from_file(record: impl AsRef<Path>) -> eyre::Result<Self> {
+        let reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_path(record.as_ref())?;
+
+        Self::_from_csv_reader(reader)
+    }
+
+    // Create a record of all files in a directory.
+    // A wheel can contain a data directory of the form `<package>_<version>.data/<sysconfigpath>/whatever`.
+    // This directory is not recorded in the dist-info for whatever dumb reason.
+    // Consequently, one can't check integrity of the files there but we still need a record so we can add
+    // the files to the internal repository and to get them back out.
+    fn create_for_dir(dir: &Path) -> eyre::Result<Self> {
+        eyre::ensure!(dir.is_dir(), "target is not a directory: {}", dir.display());
+        let parent = dir
+            .parent()
+            .ok_or_else(|| eyre::eyre!("can't get parent of dir {:?}", dir))?;
+
+        let mut files = vec![];
+        for entry in walkdir::WalkDir::new(dir) {
+            let entry = entry?;
+            let metadata = entry.metadata()?;
+            let filetype = metadata.file_type();
+            if filetype.is_dir() {
+                continue;
+            }
+            eyre::ensure!(
+                !filetype.is_symlink(),
+                "can't create record for dir containing symlinks. symlink found at: {:?}",
+                entry.path()
+            );
+
+            files.push(RecordEntry {
+                path: entry.path().strip_prefix(parent)?.to_owned(), // strip_prefix shouldn't ever fail here
+                hash: DependencyHash(format!(
+                    "sha256={}",
+                    crate::hash_of_file_sha256(entry.path())
+                )),
+                filesize: metadata.len(),
+            })
+        }
+
+        Ok(Self {
+            wheel_name: None,
+            files,
+        })
+    }
+
+    fn save_to_file(&self, dest: &Path) -> eyre::Result<()> {
+        let mut writer = csv::WriterBuilder::new()
+            .has_headers(false)
+            .from_path(dest)?;
+
+        self._to_writer(&mut writer)
+    }
+
+    fn to_string(&self) -> String {
+        let mut writer = csv::WriterBuilder::new()
+            .has_headers(false)
+            .from_writer(vec![]);
+        self._to_writer(&mut writer).unwrap();
+
+        String::from_utf8(writer.into_inner().unwrap()).unwrap()
+    }
+
+    fn _from_csv_reader<R: std::io::Read>(reader: csv::Reader<R>) -> eyre::Result<Self> {
+        let files = reader
+            .into_records()
+            .map(|record| record.and_then(|rec| rec.deserialize(None)))
+            .collect::<Result<Vec<MaybeRecordEntry>, _>>()?;
+
+        // TODO: add verification
+        let wheel_name = files
+            .iter()
+            .find_map(|f| f.path.strip_suffix(".dist-info/RECORD"))
+            .map(<_>::to_owned);
+        let files = files
+            .into_iter()
+            .filter(|entry| entry.filesize.is_some())
+            .map(|entry| RecordEntry {
+                path: entry.path.into(),
+                hash: DependencyHash(entry.hash),
+                filesize: entry.filesize.unwrap(),
+            })
+            .collect::<Vec<_>>();
+
+        Ok(Self { files, wheel_name })
+    }
+
+    fn _to_writer<W: std::io::Write>(&self, writer: &mut csv::Writer<W>) -> eyre::Result<()> {
+        for entry in &self.files {
+            writer.serialize(entry)?;
+        }
+        if let Some(wheel_name) = &self.wheel_name {
+            writer.serialize(MaybeRecordEntry {
+                path: format!("{}.dist-info/RECORD", wheel_name),
+                hash: String::new(),
+                filesize: None,
+            })?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -233,6 +376,64 @@ mod test {
             WheelMetadata::from_str(&data)
                 .wrap_err_with(|| eyre::eyre!("failed to parse data for {:?}", f.path()))?;
         }
+        Ok(())
+    }
+
+    #[test]
+    fn read_record() -> eyre::Result<()> {
+        // TODO: add more RECORD files
+        WheelRecord::from_file("test_files/RECORD")?;
+        Ok(())
+    }
+
+    #[test]
+    fn create_record_for_data_dir() -> eyre::Result<()> {
+        let mut record = WheelRecord::create_for_dir("test_files/foo-1.0.data".as_ref())?;
+        record.files.sort();
+
+        assert_eq!(
+            record,
+            WheelRecord {
+                wheel_name: None,
+                files: vec![
+                    RecordEntry {
+                        path: "foo-1.0.data/data/some_data.json".into(),
+                        hash: DependencyHash(
+                            "sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU".to_owned()
+                        ),
+                        filesize: 0
+                    },
+                    RecordEntry {
+                        path: "foo-1.0.data/include/header.h".into(),
+                        hash: DependencyHash(
+                            "sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU".to_owned()
+                        ),
+                        filesize: 0
+                    },
+                    RecordEntry {
+                        path: "foo-1.0.data/platlib/conflicting".into(),
+                        hash: DependencyHash(
+                            "sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU".to_owned()
+                        ),
+                        filesize: 0
+                    },
+                    RecordEntry {
+                        path: "foo-1.0.data/purelib/conflicting".into(),
+                        hash: DependencyHash(
+                            "sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU".to_owned()
+                        ),
+                        filesize: 0
+                    },
+                    RecordEntry {
+                        path: "foo-1.0.data/scripts/rewrite_me.py".into(),
+                        hash: DependencyHash(
+                            "sha256=rkVeTeb1PZLAeS6yS3oqEEGwMnZrcz3ngLHWVw3aDVs".to_owned()
+                        ),
+                        filesize: 25
+                    }
+                ],
+            }
+        );
         Ok(())
     }
 }
