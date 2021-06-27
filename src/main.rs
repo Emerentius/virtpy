@@ -950,20 +950,27 @@ impl ProjectDirs {
         self.installations().join(&format!("{}.virtpy", package))
     }
 
-    fn installed_distributions(&self) -> impl Iterator<Item = Distribution> + '_ {
+    fn installed_distributions(&self) -> impl Iterator<Item = StoredDistribution> + '_ {
         self.dist_infos()
             .read_dir()
             .unwrap()
-            .map(Result::unwrap)
-            .map(|dist_info_entry| {
-                Distribution::from_store_name(
+            .map(|e| (e.unwrap(), StoredDistributionType::FromPip))
+            .chain(
+                self.records()
+                    .read_dir()
+                    .unwrap()
+                    .map(|e| (e.unwrap(), StoredDistributionType::FromWheel)),
+            )
+            .map(|(dist_info_entry, installed_via)| StoredDistribution {
+                installed_via,
+                distribution: Distribution::from_store_name(
                     dist_info_entry
                         .path()
                         .file_name()
                         .unwrap()
                         .to_str()
                         .unwrap(),
-                )
+                ),
             })
     }
 
