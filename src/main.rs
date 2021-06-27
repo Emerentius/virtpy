@@ -556,6 +556,69 @@ fn register_distribution_files(
     Ok(())
 }
 
+fn register_distribution_files_of_wheel(
+    proj_dirs: &ProjectDirs,
+    install_folder: &Path,
+    distribution: &Distribution,
+    stored_distributions: &mut HashMap<DependencyHash, StoredDistribution>,
+    options: crate::Options,
+) -> eyre::Result<()> {
+    let dist_info_foldername = format!("{}-{}.dist-info", distribution.name, distribution.version);
+    let src_dist_info = install_folder.join(&dist_info_foldername);
+
+    let stored_distrib = StoredDistribution {
+        distribution: distribution.clone(),
+        installed_via: StoredDistributionType::FromWheel,
+    };
+    let dst_record_dir = proj_dirs
+        .records()
+        .join(&stored_distrib.distribution.as_csv());
+
+    // let use_move = can_move_files(&proj_dirs.package_files(), install_folder).unwrap_or(false);
+    let use_move = true;
+
+    if dst_record_dir.exists() {
+        // add it here, because it may have been installed by a different
+        // python version. In that case, the current python version's list
+        // may be missing this distribution.
+        stored_distributions.insert(distribution.sha.clone(), stored_distrib);
+        return Ok(());
+    }
+    if options.verbose >= 1 {
+        println!(
+            "Adding {} {} to central store.",
+            distribution.name, distribution.version
+        );
+    }
+
+    let records = python_wheel::WheelRecord::from_file(&src_dist_info.join("RECORD"))
+        .wrap_err("couldn't get dist-info/RECORD")?;
+    for file in &records.files {
+        let src = install_folder.join(&file.path);
+        assert!(src.starts_with(&install_folder));
+        let dest = proj_dirs.package_files().join(&file.hash.0);
+        if options.verbose >= 2 {
+            println!("    moving {} to {}", src.display(), dest.display());
+        }
+
+        let res = move_file(&src, &dest, use_move);
+        match &res {
+            // TODO: Add check of RECORD during wheel installation before registration.
+            //       It must be complete and correct so we should never run into this.
+            Err(err) if is_not_found(err) => {
+                print_error_missing_file_in_record(&dist_info_foldername, &file.path)
+            }
+            _ => {
+                res.unwrap();
+            }
+        };
+    }
+
+    //copy_directory(&src_dist_info, &dst_dist_info, use_move);
+    stored_distributions.insert(distribution.sha.clone(), stored_distrib);
+    Ok(())
+}
+
 // fn can_move_files(src: &Path, dst: &Path) -> eyre::Result<bool> {
 //     let filename = ".deleteme_rename_test";
 //     let src = src.join(filename);
@@ -606,31 +669,16 @@ fn records(record: &Path) -> csv::Result<impl Iterator<Item = csv::Result<Instal
 }
 
 fn install_and_register_distribution_from_file(
-    python_path: &Path,
     proj_dirs: &ProjectDirs,
     distrib_path: &Path,
     requirement: Requirement,
     python_version: PythonVersion,
     options: Options,
 ) -> eyre::Result<()> {
-    let tmp_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), "virtpy")?;
-    let output = std::process::Command::new(python_path)
-        .args(&["-m", "pip", "install", "--no-deps", "--no-compile"])
-        .arg(distrib_path)
-        .arg("-t")
-        .arg(tmp_dir.as_ref())
-        .arg("-v")
-        .output()?;
-    if !output.status.success() {
-        panic!(
-            "pip error:\n{}",
-            std::str::from_utf8(&output.stderr).unwrap()
-        );
-    }
-
-    let pip_log = String::from_utf8(output.stdout)?;
-
-    //let new_distribs = newly_installed_distributions(&pip_log);
+    let tmp_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), "virtpy_wheel")?;
+    // TODO: add conversion to wheel from other file types
+    assert!(distrib_path.extension().unwrap().to_str().unwrap() == "whl");
+    python_wheel::unpack_wheel(distrib_path, tmp_dir.path())?;
 
     let distrib = Distribution {
         name: requirement.name,
@@ -638,15 +686,7 @@ fn install_and_register_distribution_from_file(
         sha: requirement.available_hashes.into_iter().next().unwrap(),
     };
 
-    register_new_distributions(
-        options,
-        vec![distrib],
-        1,
-        proj_dirs,
-        pip_log,
-        python_version,
-        tmp_dir,
-    )?;
+    register_new_distribution(options, distrib, proj_dirs, python_version, tmp_dir)?;
 
     Ok(())
 }
@@ -756,6 +796,43 @@ fn register_new_distributions(
     Ok(())
 }
 
+// Usable only for our own installation from wheel files
+fn register_new_distribution(
+    options: Options,
+    distrib: Distribution,
+    proj_dirs: &ProjectDirs,
+    python_version: PythonVersion,
+    tmp_dir: tempdir::TempDir,
+) -> eyre::Result<()> {
+    if options.verbose >= 2 {
+        println!(
+            "    New distribution: {}=={}, {}",
+            distrib.name, distrib.version, distrib.sha
+        );
+    }
+    let mut all_stored_distributions = StoredDistributions::load(proj_dirs)?;
+    let stored_distributions = all_stored_distributions
+        .0
+        .entry(python_version.as_string_without_patch())
+        .or_default();
+    register_distribution_files_of_wheel(
+        proj_dirs,
+        tmp_dir.as_ref(),
+        &distrib,
+        stored_distributions,
+        options,
+    )
+    .wrap_err_with(|| {
+        eyre::eyre!(
+            "failed to add distribution files for {} {}",
+            distrib.name,
+            distrib.version
+        )
+    })?;
+    all_stored_distributions.save(proj_dirs)?;
+    Ok(())
+}
+
 fn new_dependencies(
     requirements: &[Requirement],
     proj_dirs: &ProjectDirs,
@@ -848,6 +925,13 @@ impl ProjectDirs {
 
     fn dist_infos(&self) -> PathBuf {
         self.data().join("dist-infos")
+    }
+
+    // This is set to replace dist_infos().
+    // Only the RECORD file from the wheel and the RECORD file we generated
+    // for the wheel's data directory should be contained.
+    fn records(&self) -> PathBuf {
+        self.data().join("distribution_records")
     }
 
     fn package_files(&self) -> PathBuf {
@@ -1648,10 +1732,7 @@ fn virtpy_add_dependency_from_file(
     .unwrap();
 
     if !wheel_is_already_registered(file_hash.clone(), proj_dirs, virtpy.python_version)? {
-        // The virtpy doesn't contain pip so get the appropriate global python
-        let python_path = virtpy.global_python()?;
         install_and_register_distribution_from_file(
-            &python_path,
             proj_dirs,
             file,
             requirement.clone(),
