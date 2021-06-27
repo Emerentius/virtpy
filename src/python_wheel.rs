@@ -272,7 +272,7 @@ impl WheelRecord {
                 path: entry.path().strip_prefix(parent)?.to_owned(), // strip_prefix shouldn't ever fail here
                 hash: DependencyHash(format!(
                     "sha256={}",
-                    crate::hash_of_file_sha256(entry.path())
+                    crate::hash_of_file_sha256_base64(entry.path())
                 )),
                 filesize: metadata.len(),
             })

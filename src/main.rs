@@ -180,6 +180,12 @@ fn python_version(python_path: &Path) -> eyre::Result<PythonVersion> {
 // has the form "sha256=[0-9a-fA-F]{64}"
 pub struct DependencyHash(String);
 
+impl DependencyHash {
+    fn from_file(path: &Path) -> Self {
+        Self(format!("sha256={}", hash_of_file_sha256_base16(path)))
+    }
+}
+
 impl std::fmt::Display for DependencyHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
@@ -1444,7 +1450,7 @@ fn print_verify_store(proj_dirs: &ProjectDirs) {
     {
         // the path is also the hash
         let path = file.path();
-        let base64_hash = hash_of_file_sha256(&path);
+        let base64_hash = hash_of_file_sha256_base64(&path);
         if base64_hash
             != path
                 .file_name()
@@ -1467,14 +1473,21 @@ fn print_verify_store(proj_dirs: &ProjectDirs) {
     }
 }
 
-// base64 encoded
-fn hash_of_file_sha256(path: &Path) -> String {
+fn hash_of_file_sha256_base64(path: &Path) -> String {
+    let hash = _hash_of_file_sha256(path);
+    base64::encode_config(hash.as_ref(), base64::URL_SAFE_NO_PAD)
+}
+
+fn hash_of_file_sha256_base16(path: &Path) -> String {
+    let hash = _hash_of_file_sha256(path);
+    base16::encode_lower(hash.as_ref())
+}
+
+fn _hash_of_file_sha256(path: &Path) -> impl AsRef<[u8]> {
     let mut file = fs_err::File::open(path).unwrap();
     let mut hasher = Sha256::new();
     std::io::copy(&mut file, &mut hasher).unwrap();
-    let hash = hasher.finalize();
-    let base64_hash = base64::encode_config(&hash, base64::URL_SAFE_NO_PAD);
-    base64_hash
+    hasher.finalize()
 }
 
 // fn print_stats(proj_dirs: &ProjectDirs, options: Options) {
@@ -1731,7 +1744,7 @@ fn virtpy_add_dependency_from_file(
     //install_global_executable: Option<&str>,
     options: Options,
 ) -> eyre::Result<()> {
-    let file_hash = DependencyHash(format!("sha256={}", hash_of_file_sha256(file)));
+    let file_hash = DependencyHash::from_file(file);
     let requirement = Requirement::from_filename(
         file.file_name().unwrap().to_str().unwrap(),
         file_hash.clone(),
