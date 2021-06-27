@@ -217,7 +217,7 @@ enum StoredDistributionType {
 // might result in incompatible files.
 // We currently assume they don't.
 // key = python version "major.minor"
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq, Debug)]
 struct StoredDistributions(HashMap<String, HashMap<DependencyHash, StoredDistribution>>);
 
 // TODO: use lockguards instead of the primitives exposed by fs2.
@@ -2548,5 +2548,18 @@ mod test {
                 },
             ]
         )
+    }
+
+    #[test]
+    fn can_load_old_stored_distribs() -> eyre::Result<()> {
+        let old_file = fs_err::File::open("test_files/old_installed_distributions.json")?;
+        let old_stored_distribs = StoredDistributions::try_load_old(BufReader::new(old_file))
+            .ok_or_else(|| eyre::eyre!("failed to load old stored dstributions"))?;
+
+        let new_file = fs_err::read_to_string("test_files/new_installed_distributions.json")?;
+        let new_stored_distribs: StoredDistributions =
+            serde_json::from_str(&new_file).wrap_err("failed to deserialize new file format")?;
+        assert_eq!(old_stored_distribs, new_stored_distribs);
+        Ok(())
     }
 }
