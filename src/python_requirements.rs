@@ -2,7 +2,7 @@ use eyre::WrapErr;
 use pest::Parser;
 use std::{path::Path, process::Command};
 
-use crate::DependencyHash;
+use crate::DistributionHash;
 
 #[derive(pest_derive::Parser)]
 #[grammar = "requirements_txt.pest"] // relative to src
@@ -13,7 +13,7 @@ pub struct Requirement {
     pub name: String,
     pub version: String,
     pub marker: Option<Marker>,
-    pub available_hashes: Vec<crate::DependencyHash>,
+    pub available_hashes: Vec<crate::DistributionHash>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -140,7 +140,7 @@ impl Requirement {
                 debug_assert_eq!(hash_token.as_rule(), Rule::hash);
 
                 // TODO: split hash type and hash into separate values
-                crate::DependencyHash(hash_token.into_inner().as_str().replace(":", "="))
+                crate::DistributionHash(hash_token.into_inner().as_str().replace(":", "="))
             })
             .collect();
 
@@ -152,7 +152,7 @@ impl Requirement {
         }
     }
 
-    pub fn from_filename(filename: &str, hash: DependencyHash) -> eyre::Result<Self> {
+    pub fn from_filename(filename: &str, hash: DistributionHash) -> eyre::Result<Self> {
         // TODO: use a better parser
         let pattern = lazy_regex::regex!(r"^([\w\d]+)-(\d+(\.\d+)*)(\.tar\.gz|.*\.whl)");
         let m = pattern.captures(filename).unwrap();
@@ -320,11 +320,11 @@ mod test {
                         system_name: "darwin".into()
                     })),
                     available_hashes: vec![
-                    crate::DependencyHash(
+                    crate::DistributionHash(
                         "sha256=5b26757dc6f79a3b7dc9fab95359328d5747fcb2409d331ea66d0272b90ab2a0"
                             .into()
                     ),
-                    crate::DependencyHash(
+                    crate::DistributionHash(
                         "sha256=8b995ffe925347a2138d7ac0fe77155e4311a0ea6d6da4f5128fe4b3cbe5ed71"
                             .into()
                     )
@@ -335,11 +335,11 @@ mod test {
                     name: "backcall".into(),
                     marker: None,
                     available_hashes: vec![
-                    crate::DependencyHash(
+                    crate::DistributionHash(
                         "sha256=fbbce6a29f263178a1f7915c1940bde0ec2b2a967566fe1c65c1dfb7422bd255"
                             .into()
                     ),
-                    crate::DependencyHash(
+                    crate::DistributionHash(
                         "sha256=5cbdbf27be5e7cfadb448baf0aa95508f91f2bbc6c6437cd9cd06e2a4c215e1e"
                             .into()
                     )
@@ -384,7 +384,7 @@ mod test {
         ];
 
         for &(filename, (distrib_name, version)) in filenames_and_output.iter() {
-            let req = Requirement::from_filename(filename, DependencyHash("".into())).unwrap();
+            let req = Requirement::from_filename(filename, DistributionHash("".into())).unwrap();
             assert_eq!(req.name, distrib_name);
             assert_eq!(req.version, version);
         }

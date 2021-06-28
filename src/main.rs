@@ -173,26 +173,42 @@ fn python_version(python_path: &Path) -> eyre::Result<PythonVersion> {
     })
 }
 
+// The base16 encoded hash of a distribution file, in most cases of a wheel file
+// but it could also be of a tar.gz file, for example.
+// Has the form "sha256=[0-9a-fA-F]{64}".
 #[derive(
     Clone, Hash, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
+pub struct DistributionHash(String);
 
-// has the form "sha256=[0-9a-fA-F]{64}"
-pub struct DependencyHash(String);
+// The base64 encoded hash of a file in a wheel.
+// has the form "sha256=${base64_encoded_string}"
 
-impl DependencyHash {
+#[derive(
+    Clone, Hash, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+pub struct FileHash(String);
+
+impl DistributionHash {
     fn from_file(path: &Path) -> Self {
         Self(format!("sha256={}", hash_of_file_sha256_base16(path)))
     }
 }
 
-impl std::fmt::Display for DependencyHash {
+impl FileHash {
+    fn from_file(path: &Path) -> Self {
+        Self(format!("sha256={}", hash_of_file_sha256_base64(path)))
+    }
+}
+
+impl std::fmt::Display for DistributionHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
 // TODO: make into newtype
+//       Maybe replace with FileHash?
 type PackageFileHash = String;
 
 // TODO: unify with `Distribution`
@@ -225,7 +241,7 @@ enum StoredDistributionType {
 // We currently assume they don't.
 // key = python version "major.minor"
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq, Debug)]
-struct StoredDistributions(HashMap<String, HashMap<DependencyHash, StoredDistribution>>);
+struct StoredDistributions(HashMap<String, HashMap<DistributionHash, StoredDistribution>>);
 
 // TODO: use lockguards instead of the primitives exposed by fs2.
 //       Also find a good crate that offers locking with timeouts and
@@ -233,12 +249,14 @@ struct StoredDistributions(HashMap<String, HashMap<DependencyHash, StoredDistrib
 //       detected if the locking process is dead.
 impl StoredDistributions {
     fn try_load_old(reader: impl std::io::Read) -> Option<Self> {
-        let stored_distribs =
-            serde_json::from_reader::<_, HashMap<String, HashMap<DependencyHash, String>>>(reader)
-                .ok()?;
+        let stored_distribs = serde_json::from_reader::<
+            _,
+            HashMap<String, HashMap<DistributionHash, String>>,
+        >(reader)
+        .ok()?;
 
         let mut new_format_stored_distribs =
-            HashMap::<String, HashMap<DependencyHash, StoredDistribution>>::new();
+            HashMap::<String, HashMap<DistributionHash, StoredDistribution>>::new();
 
         for (python_version, inner) in stored_distribs {
             let entry = new_format_stored_distribs
@@ -258,7 +276,7 @@ impl StoredDistributions {
                         distribution: Distribution {
                             name: name.to_owned(),
                             version: version.to_owned(),
-                            sha: DependencyHash(hash.to_owned()),
+                            sha: DistributionHash(hash.to_owned()),
                         },
                         installed_via: StoredDistributionType::FromPip,
                     },
@@ -472,7 +490,7 @@ fn entrypoints(dist_info: &Path) -> Option<Vec<EntryPoint>> {
     Some(entrypoints)
 }
 
-// fn dist_info_dirname(name: &str, version: &str, hash: &DependencyHash) -> String {
+// fn dist_info_dirname(name: &str, version: &str, hash: &DistributionHash) -> String {
 //     format!("{},{},{}", name, version, hash)
 // }
 
@@ -489,8 +507,8 @@ fn register_distribution_files(
     install_folder: &Path,
     distribution_name: &str,
     version: &str,
-    sha: DependencyHash,
-    stored_distributions: &mut HashMap<DependencyHash, StoredDistribution>,
+    sha: DistributionHash,
+    stored_distributions: &mut HashMap<DistributionHash, StoredDistribution>,
     options: crate::Options,
 ) -> eyre::Result<()> {
     let dist_info_foldername = format!("{}-{}.dist-info", distribution_name, version);
@@ -566,7 +584,7 @@ fn register_distribution_files_of_wheel(
     proj_dirs: &ProjectDirs,
     install_folder: &Path,
     distribution: &Distribution,
-    stored_distributions: &mut HashMap<DependencyHash, StoredDistribution>,
+    stored_distributions: &mut HashMap<DistributionHash, StoredDistribution>,
     options: crate::Options,
 ) -> eyre::Result<()> {
     let dist_info_foldername = format!("{}-{}.dist-info", distribution.name, distribution.version);
@@ -869,7 +887,7 @@ fn new_dependencies(
 }
 
 fn wheel_is_already_registered(
-    wheel_hash: DependencyHash,
+    wheel_hash: DistributionHash,
     proj_dirs: &ProjectDirs,
     python_version: PythonVersion,
 ) -> eyre::Result<bool> {
@@ -1744,7 +1762,7 @@ fn virtpy_add_dependency_from_file(
     //install_global_executable: Option<&str>,
     options: Options,
 ) -> eyre::Result<()> {
-    let file_hash = DependencyHash::from_file(file);
+    let file_hash = DistributionHash::from_file(file);
     let requirement = Requirement::from_filename(
         file.file_name().unwrap().to_str().unwrap(),
         file_hash.clone(),
@@ -2492,7 +2510,7 @@ fn ignore_target_exists(err: std::io::Error) -> std::io::Result<()> {
 struct Distribution {
     name: String,
     version: String,
-    sha: DependencyHash,
+    sha: DistributionHash,
 }
 
 impl Distribution {
@@ -2502,7 +2520,7 @@ impl Distribution {
         let mut next = || it.next().unwrap().to_owned();
         let name = next();
         let version = next();
-        let sha = DependencyHash(next());
+        let sha = DistributionHash(next());
         assert!(it.next().is_none());
 
         Self { name, version, sha }
@@ -2545,7 +2563,7 @@ fn newly_installed_distributions(pip_log: &str) -> Vec<Distribution> {
             let version = get(2);
             //let url = get(3);
             let name = get(4);
-            let sha = DependencyHash(get(5));
+            let sha = DistributionHash(get(5));
 
             //installed_distribs.push((url, distribution, version));
             installed_distribs.push(Distribution { version, sha, name })
@@ -2620,7 +2638,7 @@ mod test {
                 Distribution {
                     name: "astroid".into(),
                     version: "2.4.2".into(),
-                    sha: DependencyHash(
+                    sha: DistributionHash(
                         "sha256=bc58d83eb610252fd8de6363e39d4f1d0619c894b0ed24603b881c02e64c7386"
                             .into()
                     )
@@ -2628,7 +2646,7 @@ mod test {
                 Distribution {
                     name: "isort".into(),
                     version: "4.3.21".into(),
-                    sha: DependencyHash(
+                    sha: DistributionHash(
                         "sha256=6e811fcb295968434526407adb8796944f1988c5b65e8139058f2014cbe100fd"
                             .into()
                     )
@@ -2636,7 +2654,7 @@ mod test {
                 Distribution {
                     name: "lazy_object_proxy".into(),
                     version: "1.4.3".into(),
-                    sha: DependencyHash(
+                    sha: DistributionHash(
                         "sha256=a6ae12d08c0bf9909ce12385803a543bfe99b95fe01e752536a60af2b7797c62"
                             .into()
                     )
@@ -2644,7 +2662,7 @@ mod test {
                 Distribution {
                     name: "mccabe".into(),
                     version: "0.6.1".into(),
-                    sha: DependencyHash(
+                    sha: DistributionHash(
                         "sha256=ab8a6258860da4b6677da4bd2fe5dc2c659cff31b3ee4f7f5d64e79735b80d42"
                             .into()
                     )
@@ -2652,7 +2670,7 @@ mod test {
                 Distribution {
                     name: "pylint".into(),
                     version: "2.5.3".into(),
-                    sha: DependencyHash(
+                    sha: DistributionHash(
                         "sha256=d0ece7d223fe422088b0e8f13fa0a1e8eb745ebffcb8ed53d3e95394b6101a1c"
                             .into()
                     )
@@ -2660,7 +2678,7 @@ mod test {
                 Distribution {
                     name: "six".into(),
                     version: "1.15.0".into(),
-                    sha: DependencyHash(
+                    sha: DistributionHash(
                         "sha256=8b74bedcbbbaca38ff6d7491d76f2b06b3592611af620f8426e82dddb04a5ced"
                             .into()
                     )
@@ -2668,7 +2686,7 @@ mod test {
                 Distribution {
                     name: "toml".into(),
                     version: "0.10.1".into(),
-                    sha: DependencyHash(
+                    sha: DistributionHash(
                         "sha256=bda89d5935c2eac546d648028b9901107a595863cb36bae0c73ac804a9b4ce88"
                             .into()
                     )
@@ -2676,7 +2694,7 @@ mod test {
                 Distribution {
                     name: "wrapt".into(),
                     version: "1.12.1".into(),
-                    sha: DependencyHash(
+                    sha: DistributionHash(
                         "sha256=b62ffa81fb85f4332a4f609cab4ac40709470da05643a082ec1eb88e6d9b97d7"
                             .into()
                     )

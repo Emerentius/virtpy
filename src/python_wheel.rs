@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::DependencyHash;
+use crate::FileHash;
 
 // This implements a wheel installer following the specification here:
 // https://packaging.python.org/specifications/binary-distribution-format/
@@ -215,7 +215,7 @@ pub struct WheelRecord {
 )]
 pub struct RecordEntry {
     pub path: PathBuf,
-    pub hash: DependencyHash,
+    pub hash: FileHash,
     pub filesize: u64,
 }
 
@@ -270,10 +270,7 @@ impl WheelRecord {
 
             files.push(RecordEntry {
                 path: entry.path().strip_prefix(parent)?.to_owned(), // strip_prefix shouldn't ever fail here
-                hash: DependencyHash(format!(
-                    "sha256={}",
-                    crate::hash_of_file_sha256_base64(entry.path())
-                )),
+                hash: FileHash::from_file(entry.path()),
                 filesize: metadata.len(),
             })
         }
@@ -317,7 +314,7 @@ impl WheelRecord {
             .filter(|entry| entry.filesize.is_some())
             .map(|entry| RecordEntry {
                 path: entry.path.into(),
-                hash: DependencyHash(entry.hash),
+                hash: FileHash(entry.hash),
                 filesize: entry.filesize.unwrap(),
             })
             .collect::<Vec<_>>();
@@ -401,35 +398,35 @@ mod test {
                 files: vec![
                     RecordEntry {
                         path: "foo-1.0.data/data/some_data.json".into(),
-                        hash: DependencyHash(
+                        hash: FileHash(
                             "sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU".to_owned()
                         ),
                         filesize: 0
                     },
                     RecordEntry {
                         path: "foo-1.0.data/include/header.h".into(),
-                        hash: DependencyHash(
+                        hash: FileHash(
                             "sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU".to_owned()
                         ),
                         filesize: 0
                     },
                     RecordEntry {
                         path: "foo-1.0.data/platlib/conflicting".into(),
-                        hash: DependencyHash(
+                        hash: FileHash(
                             "sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU".to_owned()
                         ),
                         filesize: 0
                     },
                     RecordEntry {
                         path: "foo-1.0.data/purelib/conflicting".into(),
-                        hash: DependencyHash(
+                        hash: FileHash(
                             "sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU".to_owned()
                         ),
                         filesize: 0
                     },
                     RecordEntry {
                         path: "foo-1.0.data/scripts/rewrite_me.py".into(),
-                        hash: DependencyHash(
+                        hash: FileHash(
                             "sha256=rkVeTeb1PZLAeS6yS3oqEEGwMnZrcz3ngLHWVw3aDVs".to_owned()
                         ),
                         filesize: 25
