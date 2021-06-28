@@ -2306,15 +2306,22 @@ fn link_requirements_into_virtpy(
             }
         };
 
-        link_single_requirement_into_virtpy(
-            proj_dirs,
-            virtpy,
-            &distribution,
-            options,
-            install_global_executable,
-            &stored_distrib,
-            &site_packages,
-        )?;
+        let StoredDistribution {
+            distribution,
+            installed_via,
+        } = stored_distrib;
+
+        match installed_via {
+            StoredDistributionType::FromPip => link_single_requirement_into_virtpy(
+                proj_dirs,
+                virtpy,
+                options,
+                install_global_executable,
+                &distribution,
+                &site_packages,
+            )?,
+            StoredDistributionType::FromWheel => todo!(),
+        }
     }
 
     Ok(())
@@ -2323,18 +2330,14 @@ fn link_requirements_into_virtpy(
 fn link_single_requirement_into_virtpy(
     proj_dirs: &ProjectDirs,
     virtpy: &CheckedVirtpy,
-    distribution: &Requirement,
     options: Options,
     install_global_executable: Option<&str>,
-    stored_distrib: &StoredDistribution,
+    distrib: &Distribution,
     site_packages: &Path,
 ) -> eyre::Result<()> {
-    assert!(stored_distrib.installed_via == StoredDistributionType::FromPip);
-    let dist_info_path = proj_dirs
-        .dist_infos()
-        .join(stored_distrib.distribution.as_csv());
+    let dist_info_path = proj_dirs.dist_infos().join(distrib.as_csv());
 
-    let dist_info_foldername = format!("{}-{}.dist-info", distribution.name, distribution.version);
+    let dist_info_foldername = format!("{}-{}.dist-info", distrib.name, distrib.version);
     let target = site_packages.join(&dist_info_foldername);
     if options.verbose >= 1 {
         println!(
@@ -2354,13 +2357,13 @@ fn link_single_requirement_into_virtpy(
         virtpy,
         &site_packages,
         proj_dirs,
-        &distribution,
+        &distrib,
         dist_info_foldername,
     );
 
     install_executables(
         install_global_executable,
-        distribution,
+        distrib,
         dist_info_path,
         virtpy,
         proj_dirs,
@@ -2372,7 +2375,7 @@ fn link_files_from_record_into_virtpy(
     virtpy: &CheckedVirtpy,
     site_packages: &Path,
     proj_dirs: &ProjectDirs,
-    distribution: &Requirement,
+    distribution: &Distribution,
     dist_info_foldername: String,
 ) {
     for record in records(&dist_info_path.join("RECORD"))
@@ -2442,7 +2445,7 @@ fn link_file_into_virtpy(
 // TODO: adapt to new method
 fn install_executables(
     install_global_executable: Option<&str>,
-    distribution: &Requirement,
+    distribution: &Distribution,
     dist_info_path: PathBuf,
     virtpy: &CheckedVirtpy,
     proj_dirs: &ProjectDirs,
