@@ -2107,17 +2107,44 @@ trait VirtpyPaths {
     }
 }
 
-// The result of sysconfig.get_paths().
-// This is a mapping like `{ "include": "some/path/to/place/headers", "purelib": "other/path" }`.
-// Necessary for finding the path where files from a wheel's .data directory should be placed.
+// The paths where the contents of subdirs of a wheel's data directory should be placed.
+// The documentation does not say what these are or where to get them, but it says that it follows
+// distutils.commands.install.install and we can seemingly extract them from there.
+// Is this correct? Who knows with "standards" like in the python world.
+//
+// This is a mapping like `{ "headers": "some/path/to/place/headers", "purelib": "other/path" }`.
 struct InstallPaths(HashMap<String, String>);
 
 impl InstallPaths {
     fn detect(python_path: impl AsRef<Path>) -> eyre::Result<Self> {
-        let output = check_output(std::process::Command::new(python_path.as_ref()).args(&[
-            "-c",
-            "import sysconfig; import json; print(json.dumps(sysconfig.get_paths()))",
-        ]))?;
+        let get_paths = |sys_name| {
+            format!(
+                r#"import json
+from distutils import dist
+from distutils.command import install
+
+distrib = dist.Distribution({{"name": "{}"}})
+inst = install.install(distrib)
+inst.finalize_options()
+
+paths = {{
+    k: getattr(inst, f"install_{{k}}") for k in install.SCHEME_KEYS
+}}
+print(json.dumps(paths))"#,
+                sys_name
+            )
+        };
+
+        let get_paths = if cfg!(unix) {
+            get_paths("unix_prefix")
+        } else {
+            // TODO: check that this is correct
+            get_paths("nt")
+        };
+
+        let output = check_output(
+            std::process::Command::new(python_path.as_ref()).args(&["-c", &get_paths]),
+        )?;
 
         Ok(InstallPaths(serde_json::from_str(&output)?))
     }
@@ -2798,7 +2825,7 @@ mod test {
             true,
         )?;
         let install_paths = virtpy.install_paths()?;
-        let required_keys = ["purelib", "platlib", "include", "scripts", "data"]
+        let required_keys = ["purelib", "platlib", "headers", "scripts", "data"]
             .iter()
             .map(<_>::to_string)
             .collect::<HashSet<_>>();
