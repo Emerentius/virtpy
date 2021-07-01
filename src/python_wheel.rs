@@ -241,6 +241,7 @@ impl WheelRecord {
             .from_path(record.as_ref())?;
 
         Self::_from_csv_reader(reader)
+            .wrap_err_with(|| eyre::eyre!("failed to read record from {:?}", record.as_ref()))
     }
 
     // Create a record of all files in a directory.
@@ -248,7 +249,13 @@ impl WheelRecord {
     // This directory is not recorded in the dist-info for whatever dumb reason.
     // Consequently, one can't check integrity of the files there but we still need a record so we can add
     // the files to the internal repository and to get them back out.
-    fn create_for_dir(dir: &Path) -> eyre::Result<Self> {
+    pub fn create_for_dir(dir: impl AsRef<Path>) -> eyre::Result<Self> {
+        let dir = dir.as_ref();
+        Self::_create_for_dir(dir)
+            .wrap_err_with(|| eyre::eyre!("failed to create record for {:?}", dir))
+    }
+
+    fn _create_for_dir(dir: &Path) -> eyre::Result<Self> {
         eyre::ensure!(dir.is_dir(), "target is not a directory: {}", dir.display());
         let parent = dir
             .parent()
@@ -281,7 +288,13 @@ impl WheelRecord {
         })
     }
 
-    fn save_to_file(&self, dest: &Path) -> eyre::Result<()> {
+    pub fn save_to_file(&self, dest: impl AsRef<Path>) -> eyre::Result<()> {
+        let dest = dest.as_ref();
+        self._save_to_file(dest)
+            .wrap_err_with(|| eyre::eyre!("failed to save record to {:?}", dest))
+    }
+
+    fn _save_to_file(&self, dest: &Path) -> eyre::Result<()> {
         let mut writer = csv::WriterBuilder::new()
             .has_headers(false)
             .from_path(dest)?;
@@ -388,7 +401,7 @@ mod test {
 
     #[test]
     fn create_record_for_data_dir() -> eyre::Result<()> {
-        let mut record = WheelRecord::create_for_dir("test_files/foo-1.0.data".as_ref())?;
+        let mut record = WheelRecord::create_for_dir("test_files/foo-1.0.data")?;
         record.files.sort();
 
         assert_eq!(
