@@ -34,5 +34,8 @@ itertools = "0.10.0"
 lazy-regex = "2.2.1"
 base16 = "0.2.1"
 
+[profile.release]
+debug = true
+
 [profile.dev.package.backtrace]
 opt-level = 3
