@@ -2198,7 +2198,7 @@ trait VirtpyPaths {
 // Is this correct? Who knows with "standards" like in the python world.
 //
 // This is a mapping like `{ "headers": "some/path/to/place/headers", "purelib": "other/path" }`.
-struct InstallPaths(HashMap<String, String>);
+struct InstallPaths(HashMap<String, PathBuf>);
 
 impl InstallPaths {
     fn detect(python_path: impl AsRef<Path>) -> eyre::Result<Self> {
@@ -2467,7 +2467,18 @@ fn link_single_requirement_into_virtpy(
             );
         }
         StoredDistributionType::FromWheel => {
-            todo!()
+            let record_dir = proj_dirs.records().join(distrib.distribution.as_csv());
+            let record_path = record_dir.join("RECORD");
+            let data_record_path = record_dir.join("DATA_RECORD");
+
+            link_files_from_record_into_virtpy_new(
+                &record_path,
+                &data_record_path,
+                virtpy,
+                &site_packages,
+                proj_dirs,
+                &distrib.distribution,
+            )?;
         }
     }
 
@@ -2518,6 +2529,101 @@ fn link_files_from_record_into_virtpy(
         };
         link_file_into_virtpy(proj_dirs, &record, dest, distribution);
     }
+}
+
+fn link_files_from_record_into_virtpy_new(
+    record_path: &PathBuf,
+    data_record_path: &PathBuf,
+    virtpy: &CheckedVirtpy,
+    site_packages: &Path,
+    proj_dirs: &ProjectDirs,
+    distribution: &Distribution,
+) -> eyre::Result<()> {
+    let mut record = WheelRecord::from_file(record_path)?;
+    for record in &record.files {
+        let dest = site_packages.join(&record.path);
+        let dir = dest.parent().unwrap();
+        // TODO: assert we're still in the virtpy
+        fs_err::create_dir_all(&dir).unwrap();
+        link_file_into_virtpy(proj_dirs, record, dest, distribution);
+    }
+
+    // yeah, yeah, TOCTTOU race condition
+    if data_record_path.exists() {
+        let data_record = WheelRecord::from_file(data_record_path)?;
+        let paths = virtpy.install_paths()?;
+
+        for mut f in data_record.files {
+            assert!(f.path.is_relative());
+            let mut iter = f.path.iter();
+            let subdir = iter
+                .by_ref()
+                .nth(1)
+                .expect("invalid data record")
+                .to_str()
+                .unwrap();
+            let subpath = iter.as_path();
+            let base_path = &paths.0[subdir];
+
+            let dst = base_path.join(subpath);
+            f.path = relative_path(site_packages, &dst);
+
+            // TODO: if it's an executable, copy and fix the shebang
+            link_file_into_virtpy(proj_dirs, &f, dst, distribution);
+            record.files.push(f)
+
+            // TODO: assert we're still in venv. The target path will probably point to the backing.
+        }
+    }
+
+    // TODO: generate executables (and add to RECORD)
+
+    // The RECORD is not linked in, because it doesn't (can't) contain its own hash.
+    // Save the (possibly amended) record into the virtpy
+    record.save_to_file(
+        &site_packages
+            .join(distribution.dist_info_name())
+            .join("RECORD"),
+    )?;
+
+    Ok(())
+}
+
+// Returns a relative path that can be joined onto `base` to get `path`.
+// Both `base` and `path` must be absolute.
+fn relative_path(base: impl AsRef<Path>, path: impl AsRef<Path>) -> PathBuf {
+    _relative_path(base.as_ref(), path.as_ref())
+}
+
+fn _relative_path(base: &Path, path: &Path) -> PathBuf {
+    assert!(base.is_absolute());
+    // can't assert this, because it requires IO and this function should be pure. But it SHOULD be true.
+    //assert!(base.is_dir());
+    assert!(path.is_absolute());
+
+    let mut iter_base = base.iter();
+    let mut iter_path = path.iter();
+
+    // get rid of common components
+    {
+        loop {
+            match (iter_base.clone().next(), iter_path.clone().next()) {
+                (Some(a), Some(b)) if a == b => {
+                    iter_base.next();
+                    iter_path.next();
+                }
+                _ => break,
+            }
+        }
+    }
+
+    let mut rel_path = PathBuf::new();
+    for _ in iter_base {
+        rel_path.push("..");
+    }
+
+    rel_path.push(iter_path.as_path());
+    rel_path
 }
 
 fn link_file_into_virtpy(
@@ -2928,5 +3034,19 @@ mod test {
         let missing = required_keys.difference(&existent_keys).collect::<Vec<_>>();
         assert!(missing.is_empty(), "missing keys: {:?}", missing);
         Ok(())
+    }
+
+    #[test]
+    fn relative_path_is_correct() {
+        // I bet there's a library for this
+        let case = |base: &str, path: &str, expected: &str| {
+            assert_eq!(relative_path(base, path), Path::new(expected))
+        };
+
+        case("/c0/c1/a0/a1/", "/c0/c1/b0/b1", "../../b0/b1");
+        case("/c0/c1/a0/a1/a2", "/c0/c1/b0/b1", "../../../b0/b1");
+        case("/c0/c1/a0/a1/", "/c0/c1/b0/b1/b2", "../../b0/b1/b2");
+        case("/c0/c1/a0/a1/a2", "/c0/c1/b0/b1/b2", "../../../b0/b1/b2");
+        case("/c0/c1", "/c0/c1", "");
     }
 }
