@@ -240,15 +240,25 @@ enum StoredDistributionType {
 // might result in incompatible files.
 // We currently assume they don't.
 // key = python version "major.minor"
-#[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq, Debug)]
-struct StoredDistributions(HashMap<String, HashMap<DistributionHash, StoredDistribution>>);
+#[derive(Debug)]
+struct StoredDistributions(_StoredDistributions, FileLockGuard);
+
+type _StoredDistributions = HashMap<String, HashMap<DistributionHash, StoredDistribution>>;
+
+impl PartialEq for StoredDistributions {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.eq(&other.0)
+    }
+}
+
+impl Eq for StoredDistributions {}
 
 // TODO: use lockguards instead of the primitives exposed by fs2.
 //       Also find a good crate that offers locking with timeouts and
 //       a lock that contains the pid of the process holding it, so it can be
 //       detected if the locking process is dead.
 impl StoredDistributions {
-    fn try_load_old(reader: impl std::io::Read) -> Option<Self> {
+    fn try_load_old(reader: impl std::io::Read) -> Option<_StoredDistributions> {
         let stored_distribs = serde_json::from_reader::<
             _,
             HashMap<String, HashMap<DistributionHash, String>>,
@@ -283,7 +293,7 @@ impl StoredDistributions {
                 );
             }
         }
-        Some(Self(new_format_stored_distribs))
+        Some(new_format_stored_distribs)
     }
 
     fn load(proj_dirs: &ProjectDirs) -> eyre::Result<Self> {
@@ -295,8 +305,7 @@ impl StoredDistributions {
     }
 
     fn _load_from(path: &Path) -> eyre::Result<Self> {
-        use fs2::FileExt;
-        let mut file = fs_err::OpenOptions::new()
+        let file = fs_err::OpenOptions::new()
             .create(true)
             .read(true)
             // we're actually only reading, but when create(true) is used,
@@ -304,38 +313,70 @@ impl StoredDistributions {
             .write(true)
             .open(path)
             .wrap_err("failed to open stored distributions log")?;
-        // FIXME: use RAII guard.
-        file.file().lock_exclusive()?;
-        if file.metadata().unwrap().len() == 0 {
+
+        let mut lock = lock_file(file)?;
+        if lock.metadata().unwrap().len() == 0 {
             // if it's empty, then deserializing it doesn't work
             // TODO: check if deserializing into Option<T> will allow deserializing from empty
-            return Ok(StoredDistributions(HashMap::new()));
+            return Ok(StoredDistributions(HashMap::new(), lock));
         }
 
-        if let Some(stored_distribs) = Self::try_load_old(BufReader::new(&file)) {
-            return Ok(stored_distribs);
+        if let Some(stored_distribs) = Self::try_load_old(BufReader::new(&*lock)) {
+            return Ok(Self(stored_distribs, lock));
         }
 
-        file.seek(std::io::SeekFrom::Start(0))
+        lock.seek(std::io::SeekFrom::Start(0))
             .wrap_err("failed to seek to 0")?;
 
-        serde_json::from_reader(BufReader::new(&file))
-            .wrap_err("couldn't load stored distributions")
+        let distribs = serde_json::from_reader(BufReader::new(&*lock))
+            .wrap_err("couldn't load stored distributions")?;
+        Ok(Self(distribs, lock))
     }
 
     fn save(&self, proj_dirs: &ProjectDirs) -> eyre::Result<()> {
-        use fs2::FileExt;
         let path = proj_dirs.installed_distributions_log();
         File::create(&path)
             .map_err(eyre::Report::new)
             .and_then(|file| {
                 // NOTE: does this need a BufWriter?
-                let result = serde_json::to_writer_pretty(&file, self)
+                let result = serde_json::to_writer_pretty(&file, &self.0)
                     .wrap_err("failed to serialize stored distributions");
-                file.file().unlock().unwrap();
                 result
             })
             .wrap_err("failed to save stored distributions")
+    }
+}
+
+// TODO: replace with library
+fn lock_file(file: fs_err::File) -> eyre::Result<FileLockGuard> {
+    use fs2::FileExt;
+    file.file().lock_exclusive()?;
+    Ok(FileLockGuard { file })
+}
+
+#[derive(Debug)]
+struct FileLockGuard {
+    file: File,
+}
+
+impl Drop for FileLockGuard {
+    fn drop(&mut self) {
+        use fs2::FileExt;
+        let _ = self.file.file().unlock();
+    }
+}
+
+impl std::ops::Deref for FileLockGuard {
+    type Target = File;
+
+    fn deref(&self) -> &Self::Target {
+        &self.file
+    }
+}
+
+impl std::ops::DerefMut for FileLockGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.file
     }
 }
 
@@ -2799,7 +2840,7 @@ mod test {
             .ok_or_else(|| eyre::eyre!("failed to load old stored dstributions"))?;
 
         let new_file = fs_err::read_to_string("test_files/new_installed_distributions.json")?;
-        let new_stored_distribs: StoredDistributions =
+        let new_stored_distribs: _StoredDistributions =
             serde_json::from_str(&new_file).wrap_err("failed to deserialize new file format")?;
         assert_eq!(old_stored_distribs, new_stored_distribs);
         Ok(())
