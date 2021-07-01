@@ -2,6 +2,7 @@ use eyre::WrapErr;
 use fs_err::File;
 use itertools::Itertools;
 use python_requirements::Requirement;
+use python_wheel::{RecordEntry, WheelRecord};
 use rand::Rng;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -252,6 +253,40 @@ impl PartialEq for StoredDistributions {
 }
 
 impl Eq for StoredDistributions {}
+
+impl StoredDistribution {
+    fn dist_info_file(&self, proj_dirs: &ProjectDirs, file: &str) -> Option<PathBuf> {
+        match self.installed_via {
+            StoredDistributionType::FromPip => {
+                let file = proj_dirs
+                    .dist_infos()
+                    .join(self.distribution.as_csv())
+                    .join(file);
+                file.exists().then(|| file)
+            }
+            StoredDistributionType::FromWheel => {
+                // TODO: optimize. kinda wasteful to keep rereading this on every call
+                let path_in_record = PathBuf::from(self.distribution.dist_info_name()).join(file);
+                let record = WheelRecord::from_file(
+                    proj_dirs
+                        .records()
+                        .join(self.distribution.as_csv())
+                        .join("RECORD"),
+                )
+                .unwrap();
+                record
+                    .files
+                    .into_iter()
+                    .map(|entry| entry.path)
+                    .find(|path| path == &path_in_record)
+            }
+        }
+    }
+
+    fn entrypoints(&self, proj_dirs: &ProjectDirs) -> Option<Vec<EntryPoint>> {
+        _entrypoints(&self.dist_info_file(proj_dirs, "entry_points.txt")?)
+    }
+}
 
 // TODO: use lockguards instead of the primitives exposed by fs2.
 //       Also find a good crate that offers locking with timeouts and
@@ -510,9 +545,14 @@ if __name__ == '__main__':
     }
 }
 
+// TODO: remove every use with StoredDistribution::entrypoints
 fn entrypoints(dist_info: &Path) -> Option<Vec<EntryPoint>> {
     let ini = dist_info.join("entry_points.txt");
-    let ini = ini::Ini::load_from_file(ini);
+    _entrypoints(&ini)
+}
+
+fn _entrypoints(path: &Path) -> Option<Vec<EntryPoint>> {
+    let ini = ini::Ini::load_from_file(path);
 
     match ini {
         Err(ini::ini::Error::Io(err)) if is_not_found(&err) => return None,
@@ -546,21 +586,15 @@ fn move_file(src: &Path, dst: &Path, use_move: bool) -> std::io::Result<()> {
 fn register_distribution_files(
     proj_dirs: &ProjectDirs,
     install_folder: &Path,
-    distribution_name: &str,
-    version: &str,
-    sha: DistributionHash,
+    distribution: &Distribution,
     stored_distributions: &mut HashMap<DistributionHash, StoredDistribution>,
     options: crate::Options,
 ) -> eyre::Result<()> {
-    let dist_info_foldername = format!("{}-{}.dist-info", distribution_name, version);
+    let dist_info_foldername = distribution.dist_info_name();
     let src_dist_info = install_folder.join(&dist_info_foldername);
 
     let stored_distrib = StoredDistribution {
-        distribution: Distribution {
-            name: distribution_name.into(),
-            version: version.into(),
-            sha: sha.clone(),
-        },
+        distribution: distribution.clone(),
         installed_via: StoredDistributionType::FromPip,
     };
     let dst_dist_info = proj_dirs
@@ -574,11 +608,14 @@ fn register_distribution_files(
         // add it here, because it may have been installed by a different
         // python version. In that case, the current python version's list
         // may be missing this distribution.
-        stored_distributions.insert(sha, stored_distrib);
+        stored_distributions.insert(distribution.sha.clone(), stored_distrib);
         return Ok(());
     }
     if options.verbose >= 1 {
-        println!("Adding {} {} to central store.", distribution_name, version);
+        println!(
+            "Adding {} {} to central store.",
+            distribution.name, distribution.version
+        );
     }
 
     for file in records(&src_dist_info.join("RECORD"))
@@ -597,10 +634,10 @@ fn register_distribution_files(
             continue;
         }
 
-        debug_assert_ne!(file.hash, "");
+        debug_assert_ne!(file.hash, FileHash("".to_owned()));
 
         let src = install_folder.join(path);
-        let dest = proj_dirs.package_files().join(file.hash);
+        let dest = proj_dirs.package_files().join(file.hash.0);
         if options.verbose >= 2 {
             println!("    copying {} to {}", src.display(), dest.display());
         }
@@ -608,7 +645,7 @@ fn register_distribution_files(
         let res = move_file(&src, &dest, use_move);
         match &res {
             Err(err) if is_not_found(err) => {
-                print_error_missing_file_in_record(&dist_info_foldername, &file.path)
+                print_error_missing_file_in_record(&distribution, &file.path)
             }
             _ => {
                 res.unwrap();
@@ -617,7 +654,7 @@ fn register_distribution_files(
     }
 
     copy_directory(&src_dist_info, &dst_dist_info, use_move);
-    stored_distributions.insert(sha, stored_distrib);
+    stored_distributions.insert(distribution.sha.clone(), stored_distrib);
     Ok(())
 }
 
@@ -671,7 +708,7 @@ fn register_distribution_files_of_wheel(
             // TODO: Add check of RECORD during wheel installation before registration.
             //       It must be complete and correct so we should never run into this.
             Err(err) if is_not_found(err) => {
-                print_error_missing_file_in_record(&dist_info_foldername, &file.path)
+                print_error_missing_file_in_record(&distribution, &file.path)
             }
             _ => {
                 res.unwrap();
@@ -694,15 +731,8 @@ fn register_distribution_files_of_wheel(
 //     Ok(can_move)
 // }
 
-#[derive(Debug, serde::Deserialize, PartialEq, Eq, Hash, Clone)]
-struct InstalledFile {
-    path: PathBuf,
-    hash: String,
-    filesize: u64,
-}
-
 // returns all files recorded in RECORDS, except for .dist-info files
-fn records(record: &Path) -> csv::Result<impl Iterator<Item = csv::Result<InstalledFile>>> {
+fn records(record: &Path) -> csv::Result<impl Iterator<Item = csv::Result<RecordEntry>>> {
     Ok(csv::ReaderBuilder::new()
         .has_headers(false)
         .from_path(record)?
@@ -843,9 +873,7 @@ fn register_new_distributions(
         register_distribution_files(
             proj_dirs,
             tmp_dir.as_ref(),
-            &distrib.name,
-            &distrib.version,
-            distrib.sha.clone(),
+            &distrib,
             stored_distributions,
             options,
         )
@@ -1001,6 +1029,11 @@ impl ProjectDirs {
 
     fn package_files(&self) -> PathBuf {
         self.data().join("package_files")
+    }
+
+    // TODO: use everywhere possible
+    fn package_file(&self, hash: &FileHash) -> PathBuf {
+        self.package_files().join(&hash.0)
     }
 
     fn executables(&self) -> PathBuf {
@@ -1602,7 +1635,7 @@ fn _hash_of_file_sha256(path: &Path) -> impl AsRef<[u8]> {
 
 // fn file_dependents<'a>(
 //     proj_dirs: &ProjectDirs,
-//     distribution_files: &HashMap<Distribution, (Vec<InstalledFile>, u64)>,
+//     distribution_files: &HashMap<Distribution, (Vec<RecordEntry>, u64)>,
 // ) -> HashMap<PackageFileHash, Vec<Distribution>> {
 //     let mut dependents = HashMap::new();
 
@@ -1671,7 +1704,7 @@ fn _hash_of_file_sha256(path: &Path) -> impl AsRef<[u8]> {
 // Also computes the total size of all distribution files
 // fn files_of_distribution(
 //     proj_dirs: &ProjectDirs,
-// ) -> HashMap<Distribution, (Vec<InstalledFile>, u64)> {
+// ) -> HashMap<Distribution, (Vec<RecordEntry>, u64)> {
 //     proj_dirs
 //         .installed_distributions()
 //         .map(|distribution| {
@@ -2374,22 +2407,14 @@ fn link_requirements_into_virtpy(
             }
         };
 
-        let StoredDistribution {
-            distribution,
-            installed_via,
-        } = stored_distrib;
-
-        match installed_via {
-            StoredDistributionType::FromPip => link_single_requirement_into_virtpy(
-                proj_dirs,
-                virtpy,
-                options,
-                install_global_executable,
-                &distribution,
-                &site_packages,
-            )?,
-            StoredDistributionType::FromWheel => todo!(),
-        }
+        link_single_requirement_into_virtpy(
+            proj_dirs,
+            virtpy,
+            options,
+            install_global_executable,
+            &stored_distrib,
+            &site_packages,
+        )?;
     }
 
     Ok(())
@@ -2400,42 +2425,42 @@ fn link_single_requirement_into_virtpy(
     virtpy: &CheckedVirtpy,
     options: Options,
     install_global_executable: Option<&str>,
-    distrib: &Distribution,
+    distrib: &StoredDistribution,
     site_packages: &Path,
 ) -> eyre::Result<()> {
-    let dist_info_path = proj_dirs.dist_infos().join(distrib.as_csv());
+    match distrib.installed_via {
+        StoredDistributionType::FromPip => {
+            let dist_info_path = proj_dirs.dist_infos().join(distrib.distribution.as_csv());
 
-    let dist_info_foldername = format!("{}-{}.dist-info", distrib.name, distrib.version);
-    let target = site_packages.join(&dist_info_foldername);
-    if options.verbose >= 1 {
-        println!(
-            "symlinking dist info from {} to {}",
-            dist_info_path.display(),
-            target.display()
-        );
+            let dist_info_foldername = distrib.distribution.dist_info_name();
+            let target = site_packages.join(&dist_info_foldername);
+            if options.verbose >= 1 {
+                println!(
+                    "symlinking dist info from {} to {}",
+                    dist_info_path.display(),
+                    target.display()
+                );
+            }
+
+            // TODO: create directory and hardlink contents
+            symlink_dir(&dist_info_path, &target)
+                .or_else(ignore_target_exists)
+                .unwrap();
+
+            link_files_from_record_into_virtpy(
+                &dist_info_path,
+                virtpy,
+                &site_packages,
+                proj_dirs,
+                &distrib.distribution,
+            );
+        }
+        StoredDistributionType::FromWheel => {
+            todo!()
+        }
     }
 
-    // TODO: create directory and hardlink contents
-    symlink_dir(&dist_info_path, &target)
-        .or_else(ignore_target_exists)
-        .unwrap();
-
-    link_files_from_record_into_virtpy(
-        &dist_info_path,
-        virtpy,
-        &site_packages,
-        proj_dirs,
-        &distrib,
-        dist_info_foldername,
-    );
-
-    install_executables(
-        install_global_executable,
-        distrib,
-        dist_info_path,
-        virtpy,
-        proj_dirs,
-    )
+    install_executables(install_global_executable, distrib, virtpy, proj_dirs)
 }
 
 fn link_files_from_record_into_virtpy(
@@ -2444,7 +2469,6 @@ fn link_files_from_record_into_virtpy(
     site_packages: &Path,
     proj_dirs: &ProjectDirs,
     distribution: &Distribution,
-    dist_info_foldername: String,
 ) {
     for record in records(&dist_info_path.join("RECORD"))
         .unwrap()
@@ -2481,25 +2505,23 @@ fn link_files_from_record_into_virtpy(
                 dest
             }
         };
-        link_file_into_virtpy(proj_dirs, record, dest, &dist_info_foldername);
+        link_file_into_virtpy(proj_dirs, &record, dest, distribution);
     }
 }
 
 fn link_file_into_virtpy(
     proj_dirs: &ProjectDirs,
-    record: InstalledFile,
+    record: &RecordEntry, // TODO: take only hash
     dest: PathBuf,
-    dist_info_foldername: &str,
+    distribution: &Distribution,
 ) {
-    let src = proj_dirs.package_files().join(record.hash);
+    let src = proj_dirs.package_file(&record.hash);
     match fs_err::hard_link(&src, &dest) {
         Ok(_) => (),
         // TODO: can this error exist? Docs don't say anything about this being a failure
         //       condition
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => (),
-        Err(err) if is_not_found(&err) => {
-            print_error_missing_file_in_record(&dist_info_foldername, &src)
-        }
+        Err(err) if is_not_found(&err) => print_error_missing_file_in_record(&distribution, &src),
         Err(err) => panic!(
             "failed to hardlink file from {} to {}: {}",
             src.display(),
@@ -2513,15 +2535,21 @@ fn link_file_into_virtpy(
 // TODO: adapt to new method
 fn install_executables(
     install_global_executable: Option<&str>,
-    distribution: &Distribution,
-    dist_info_path: PathBuf,
+    stored_distrib: &StoredDistribution,
     virtpy: &CheckedVirtpy,
     proj_dirs: &ProjectDirs,
 ) -> Result<(), color_eyre::Report> {
-    let install_global_executable = install_global_executable == Some(&distribution.name[..]);
-    let entrypoints = match (entrypoints(&dist_info_path), install_global_executable) {
+    let install_global_executable =
+        install_global_executable == Some(&stored_distrib.distribution.name[..]);
+    let entrypoints = match (
+        stored_distrib.entrypoints(proj_dirs),
+        install_global_executable,
+    ) {
         (Some(ep), _) => ep,
-        (None, true) => eyre::bail!("{} contains no executables", distribution.name),
+        (None, true) => eyre::bail!(
+            "{} contains no executables",
+            stored_distrib.distribution.name
+        ),
         (None, false) => vec![],
     };
     Ok(for entrypoint in entrypoints {
@@ -2540,10 +2568,10 @@ fn install_executables(
     })
 }
 
-fn print_error_missing_file_in_record(dist_info: &str, missing_file: &Path) {
+fn print_error_missing_file_in_record(distribution: &Distribution, missing_file: &Path) {
     println!(
         "couldn't find recorded file from {}: {}",
-        dist_info,
+        distribution.name_and_version(),
         missing_file.display()
     )
 }
@@ -2601,6 +2629,20 @@ impl Distribution {
         format!("{},{},{}", self.name, self.version, self.sha)
     }
 
+    fn name_and_version(&self) -> String {
+        // used for the dist-info directory and some error reports
+        // TODO: implement Display?
+        format!("{}-{}", self.name, self.version)
+    }
+
+    fn dist_info_name(&self) -> String {
+        format!("{}-{}.dist-info", self.name, self.version)
+    }
+
+    fn data_dir_name(&self) -> String {
+        format!("{}-{}.data", self.name, self.version)
+    }
+
     // TODO: move to StoredDistribution
     //       and prepare for distribs installed from wheel without pip
     // fn path(&self, project_dirs: &ProjectDirs) -> PathBuf {
@@ -2614,7 +2656,7 @@ impl Distribution {
     // fn records(
     //     &self,
     //     project_dirs: &ProjectDirs,
-    // ) -> csv::Result<impl Iterator<Item = csv::Result<InstalledFile>>> {
+    // ) -> csv::Result<impl Iterator<Item = csv::Result<RecordEntry>>> {
     //     records(&self.record(project_dirs))
     // }
 }
