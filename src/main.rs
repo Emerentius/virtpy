@@ -998,6 +998,7 @@ impl ProjectDirs {
             self.executables(),
             self.virtpys(),
             self.tmp(),
+            self.records(),
         ] {
             fs_err::create_dir(path).or_else(ignore_target_exists)?;
         }
