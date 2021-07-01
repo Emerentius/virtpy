@@ -188,6 +188,7 @@ pub struct DistributionHash(String);
 #[derive(
     Clone, Hash, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
+#[must_use]
 pub struct FileHash(String);
 
 impl DistributionHash {

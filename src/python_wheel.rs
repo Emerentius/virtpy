@@ -213,6 +213,7 @@ pub struct WheelRecord {
 #[derive(
     Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Clone,
 )]
+#[must_use]
 pub struct RecordEntry {
     pub path: PathBuf,
     pub hash: FileHash,
