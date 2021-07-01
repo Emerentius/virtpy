@@ -200,6 +200,10 @@ impl FileHash {
     fn from_file(path: &Path) -> Self {
         Self(format!("sha256={}", hash_of_file_sha256_base64(path)))
     }
+
+    fn from_reader(reader: impl std::io::Read) -> Self {
+        Self(hash_of_reader_sha256_base64(reader))
+    }
 }
 
 impl std::fmt::Display for DistributionHash {
@@ -490,21 +494,35 @@ if __name__ == '__main__':
         )
     }
 
-    fn generate_executable(&self, dest: &Path, python_path: &Path) -> std::io::Result<()> {
+    fn generate_executable(
+        &self,
+        dest: &Path,
+        python_path: &Path,
+        site_packages: &Path,
+    ) -> std::io::Result<RecordEntry> {
         let dest = match dest.is_dir() {
             true => dest.join(&self.name),
             false => dest.to_owned(),
         };
         let code = self.executable_code();
-        generate_executable(&dest, python_path, &code)
+        generate_executable(&dest, python_path, &code, site_packages)
     }
 }
 
-fn generate_executable(dest: &Path, python_path: &Path, code: &str) -> std::io::Result<()> {
+fn generate_executable(
+    dest: &Path,
+    python_path: &Path,
+    code: &str,
+    site_packages: &Path,
+) -> std::io::Result<RecordEntry> {
     let shebang = format!("#!{}", python_path.display());
     #[cfg(unix)]
     {
-        _generate_executable(&dest, format!("{}\n{}", shebang, code).as_bytes())
+        _generate_executable(
+            &dest,
+            format!("{}\n{}", shebang, code).as_bytes(),
+            site_packages,
+        )
     }
 
     #[cfg(windows)]
@@ -526,11 +544,15 @@ fn generate_executable(dest: &Path, python_path: &Path, code: &str) -> std::io::
         wrapper.extend(b".exe");
         wrapper.extend(b"\r\n");
         wrapper.extend(zip_writer.finish()?.into_inner());
-        _generate_executable(&dest.with_extension("exe"), &wrapper)
+        _generate_executable(&dest.with_extension("exe"), &wrapper, site_packages)
     }
 }
 
-fn _generate_executable(dest: &Path, bytes: &[u8]) -> std::io::Result<()> {
+fn _generate_executable(
+    dest: &Path,
+    bytes: &[u8],
+    site_packages: &Path,
+) -> std::io::Result<RecordEntry> {
     let mut opts = fs_err::OpenOptions::new();
     // create_new causes failure if the target already exists
     // TODO: handle error
@@ -543,7 +565,12 @@ fn _generate_executable(dest: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
     let mut f = opts.open(dest)?;
     use std::io::Write;
-    f.write_all(bytes)
+    f.write_all(bytes)?;
+    Ok(RecordEntry {
+        path: relative_path(site_packages, dest),
+        hash: FileHash::from_reader(bytes),
+        filesize: bytes.len() as u64,
+    })
 }
 
 // TODO: remove every use with StoredDistribution::entrypoints
@@ -1587,10 +1614,24 @@ fn hash_of_file_sha256_base16(path: &Path) -> String {
     base16::encode_lower(hash.as_ref())
 }
 
+fn hash_of_reader_sha256_base16(reader: impl std::io::Read) -> String {
+    let hash = _hash_of_reader_sha256(reader);
+    base16::encode_lower(hash.as_ref())
+}
+
+fn hash_of_reader_sha256_base64(reader: impl std::io::Read) -> String {
+    let hash = _hash_of_reader_sha256(reader);
+    base64::encode_config(hash.as_ref(), base64::URL_SAFE_NO_PAD)
+}
+
 fn _hash_of_file_sha256(path: &Path) -> impl AsRef<[u8]> {
-    let mut file = fs_err::File::open(path).unwrap();
+    let file = fs_err::File::open(path).unwrap();
+    _hash_of_reader_sha256(file)
+}
+
+fn _hash_of_reader_sha256(mut reader: impl std::io::Read) -> impl AsRef<[u8]> {
     let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher).unwrap();
+    std::io::copy(&mut reader, &mut hasher).unwrap();
     hasher.finalize()
 }
 
@@ -2014,7 +2055,11 @@ fn add_pip_shim(virtpy: &CheckedVirtpy) -> eyre::Result<()> {
         module: "pip".to_owned(),
         qualname: Some("main".to_owned()),
     };
-    entry_point.generate_executable(&virtpy.executables(), &virtpy.python())?;
+    let _ = entry_point.generate_executable(
+        &virtpy.executables(),
+        &virtpy.python(),
+        &virtpy.site_packages(),
+    )?;
     virtpy.set_has_pip_shim();
 
     Ok(())
@@ -2472,18 +2517,35 @@ fn link_single_requirement_into_virtpy(
             let record_path = record_dir.join("RECORD");
             let data_record_path = record_dir.join("DATA_RECORD");
 
+            let mut record = WheelRecord::from_file(record_path)?;
+
             link_files_from_record_into_virtpy_new(
-                &record_path,
+                &mut record,
                 &data_record_path,
                 virtpy,
                 &site_packages,
                 proj_dirs,
                 &distrib.distribution,
             )?;
+            install_executables(
+                install_global_executable,
+                distrib,
+                virtpy,
+                proj_dirs,
+                Some(&mut record),
+            )?;
+            // TODO: add generated executables from entrypoints to RECORD
+
+            // The RECORD is not linked in, because it doesn't (can't) contain its own hash.
+            // Save the (possibly amended) record into the virtpy
+            record.save_to_file(
+                &site_packages
+                    .join(distrib.distribution.dist_info_name())
+                    .join("RECORD"),
+            )?;
         }
     }
-
-    install_executables(install_global_executable, distrib, virtpy, proj_dirs)
+    Ok(())
 }
 
 fn link_files_from_record_into_virtpy(
@@ -2533,14 +2595,13 @@ fn link_files_from_record_into_virtpy(
 }
 
 fn link_files_from_record_into_virtpy_new(
-    record_path: &PathBuf,
+    record: &mut WheelRecord,
     data_record_path: &PathBuf,
     virtpy: &CheckedVirtpy,
     site_packages: &Path,
     proj_dirs: &ProjectDirs,
     distribution: &Distribution,
 ) -> eyre::Result<()> {
-    let mut record = WheelRecord::from_file(record_path)?;
     for record in &record.files {
         let dest = site_packages.join(&record.path);
         let dir = dest.parent().unwrap();
@@ -2575,25 +2636,14 @@ fn link_files_from_record_into_virtpy_new(
             } else {
                 let src = proj_dirs.package_file(&f.hash);
                 let code = fs_err::read_to_string(src)?;
-                generate_executable(&dst, &virtpy.python(), &code)?;
-                // Rewriting the shebang (or adding a wrapper for windows) changed the hash
-                f.hash = FileHash::from_file(&dst);
+                // Rewriting the shebang (or adding a wrapper for windows) changed the hash and filesize
+                f = generate_executable(&dst, &virtpy.python(), &code, &virtpy.site_packages())?;
             }
             record.files.push(f)
 
             // TODO: assert we're still in venv. The target path will probably point to the backing.
         }
     }
-
-    // TODO: add generated executables from entrypoints to RECORD
-
-    // The RECORD is not linked in, because it doesn't (can't) contain its own hash.
-    // Save the (possibly amended) record into the virtpy
-    record.save_to_file(
-        &site_packages
-            .join(distribution.dist_info_name())
-            .join("RECORD"),
-    )?;
 
     Ok(())
 }
@@ -2664,6 +2714,7 @@ fn install_executables(
     stored_distrib: &StoredDistribution,
     virtpy: &CheckedVirtpy,
     proj_dirs: &ProjectDirs,
+    mut wheel_record: Option<&mut WheelRecord>, // only record when unpacking wheels ourselves
 ) -> Result<(), color_eyre::Report> {
     let install_global_executable =
         install_global_executable == Some(&stored_distrib.distribution.name[..]);
@@ -2682,13 +2733,21 @@ fn install_executables(
         let executables_path = virtpy.executables();
         let err = || eyre::eyre!("failed to install executable {}", entrypoint.name);
         let python_path = executables_path.join("python");
-        entrypoint
-            .generate_executable(&executables_path, &python_path)
+        let record_entry = entrypoint
+            .generate_executable(&executables_path, &python_path, &virtpy.site_packages())
             .wrap_err_with(err)?;
+        if let Some(wheel_record) = &mut wheel_record {
+            wheel_record.files.push(record_entry);
+        }
 
         if install_global_executable {
-            entrypoint
-                .generate_executable(&proj_dirs.executables(), &python_path)
+            // TODO: symlink these
+            let _ = entrypoint
+                .generate_executable(
+                    &proj_dirs.executables(),
+                    &python_path,
+                    &virtpy.site_packages(),
+                )
                 .wrap_err_with(err)?;
         }
     })
