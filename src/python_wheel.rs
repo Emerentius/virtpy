@@ -282,6 +282,9 @@ impl WheelRecord {
             })
         }
 
+        // Not necessary, but nice
+        files.sort_by(|e1, e2| e1.path.cmp(&e2.path));
+
         Ok(Self {
             wheel_name: None,
             files,
