@@ -1389,16 +1389,20 @@ fn main() -> eyre::Result<()> {
 //          PEP 503 defines the concept of a normalized distribution name.
 //          https://www.python.org/dev/peps/pep-0503/#normalized-names
 fn normalized_distribution_name(name: &str) -> String {
-    let pattern = lazy_regex::regex!(r"[-_.]+");
-    pattern.replace_all(&name, "-").to_lowercase()
+    _escape(name, "-")
 }
 
+// TODO: adapt to actual specification: https://packaging.python.org/specifications/binary-distribution-format/#escaping-and-unicode
 // https://www.python.org/dev/peps/pep-0491/#escaping-and-unicode
 // This is important because the wheel name components may contain "-" characters,
 // but those are separators in a wheel name.
-fn wheel_name_escape(wheel_name_part: &str) -> String {
-    let pattern = lazy_regex::regex!(r"[^\w\d.]+");
-    pattern.replace_all(wheel_name_part, "_").into_owned()
+fn normalized_wheel_name_part(wheel_name_part: &str) -> String {
+    _escape(wheel_name_part, "_")
+}
+
+fn _escape(string: &str, replace_with: &str) -> String {
+    let pattern = lazy_regex::regex!(r"[-_.]+");
+    pattern.replace_all(string, replace_with).to_lowercase()
 }
 
 // TODO: refactor
@@ -1408,7 +1412,7 @@ fn virtpy_remove_dependencies(
 ) -> eyre::Result<()> {
     let dists_to_remove = dists_to_remove
         .into_iter()
-        .map(|name| wheel_name_escape(&normalized_distribution_name(&name)))
+        .map(|name| normalized_wheel_name_part(&name))
         .collect::<HashSet<_>>();
 
     let site_packages = virtpy.site_packages();
@@ -1811,8 +1815,8 @@ fn delete_global_package_executables(
     proj_dirs: &ProjectDirs,
     virtpy_dirs: &VirtpyBacking,
     package: &str,
-) -> impl Iterator<Item = eyre::Result<()>> {
-    let dist_info = virtpy_dirs.dist_info(package).unwrap();
+) -> eyre::Result<impl Iterator<Item = eyre::Result<()>>> {
+    let dist_info = virtpy_dirs.dist_info(&package)?;
 
     // FIXME: Install all executables from a package and then also delete them all.
     let executables = entrypoints(&dist_info)
@@ -1833,7 +1837,7 @@ fn delete_global_package_executables(
     //     .collect::<Vec<_>>();
 
     let exe_dir = proj_dirs.executables();
-    executables
+    Ok(executables
         .into_iter()
         .map(move |executable| {
             let path = exe_dir.join(executable);
@@ -1849,7 +1853,7 @@ fn delete_global_package_executables(
                 // as pip does (e.g. because we're leaving out package.data scripts)
                 .or_else(ignore_target_doesnt_exist)
                 .wrap_err_with(|| eyre::eyre!("failed to remove {}", path.display()))
-        })
+        }))
 }
 
 fn virtpy_add_dependencies(
@@ -1918,7 +1922,7 @@ fn is_not_found(error: &std::io::Error) -> bool {
 fn delete_executable_virtpy(proj_dirs: &ProjectDirs, package: &str) -> eyre::Result<()> {
     let virtpy_path = proj_dirs.package_folder(&package);
     let virtpy = CheckedVirtpy::new(&virtpy_path)?;
-    delete_global_package_executables(&proj_dirs, &virtpy.virtpy_backing(), &package)
+    delete_global_package_executables(&proj_dirs, &virtpy.virtpy_backing(), &package)?
         .for_each(Result::unwrap);
 
     virtpy.delete()
@@ -2201,9 +2205,11 @@ trait VirtpyPaths {
         python_path(self.location())
     }
 
-    fn dist_info(&self, package: &str) -> Option<PathBuf> {
+    fn dist_info(&self, package: &str) -> eyre::Result<PathBuf> {
+        let package = &normalized_wheel_name_part(package);
         self.dist_infos()
             .find(|path| dist_info_matches_package(path, package))
+            .ok_or_else(|| eyre::eyre!("failed to find dist-info for {}", package))
     }
 
     fn dist_infos(&self) -> Box<dyn Iterator<Item = PathBuf>> {
