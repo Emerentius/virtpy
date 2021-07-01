@@ -716,7 +716,17 @@ fn register_distribution_files_of_wheel(
         };
     }
 
-    //copy_directory(&src_dist_info, &dst_dist_info, use_move);
+    let repo_records_dir = proj_dirs.records().join(distribution.as_csv());
+    fs_err::create_dir_all(&repo_records_dir)?;
+    records
+        .save_to_file(repo_records_dir.join("RECORD"))
+        .wrap_err("failed to save RECORD")?;
+    let data_dir = install_folder.join(distribution.data_dir_name());
+    if data_dir.exists() {
+        WheelRecord::create_for_dir(data_dir)?
+            .save_to_file(repo_records_dir.join("DATA_RECORD"))?;
+    }
+
     stored_distributions.insert(distribution.sha.clone(), stored_distrib);
     Ok(())
 }
