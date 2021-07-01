@@ -474,11 +474,10 @@ impl EntryPoint {
         }
     }
 
-    fn executable_code(&self, python_path: &Path) -> (String, String) {
-        (
-            format!(r"#!{}", python_path.display()),
-            format!(
-                r"# -*- coding: utf-8 -*-
+    // without shebang
+    fn executable_code(&self) -> String {
+        format!(
+            r"# -*- coding: utf-8 -*-
 import re
 import sys
 from {} import {qualname}
@@ -486,9 +485,8 @@ if __name__ == '__main__':
     sys.argv[0] = re.sub(r'(-script\.pyw|\.exe)?$', '', sys.argv[0])
     sys.exit({qualname}())
 ",
-                self.module,
-                qualname = self.qualname.clone().unwrap()
-            ),
+            self.module,
+            qualname = self.qualname.clone().unwrap()
         )
     }
 
@@ -497,52 +495,55 @@ if __name__ == '__main__':
             true => dest.join(&self.name),
             false => dest.to_owned(),
         };
+        let code = self.executable_code();
+        generate_executable(&dest, python_path, &code)
+    }
+}
 
-        let (shebang, code) = self.executable_code(&python_path);
-
-        #[cfg(unix)]
-        {
-            self._generate_executable(&dest, format!("{}\n{}", shebang, code).as_bytes())
-        }
-
-        #[cfg(windows)]
-        {
-            // Generate .exe wrappers for python scripts.
-            // This uses the same launcher as the python module "distlib", which is what pip uses
-            // to generate exe wrappers.
-            // The launcher needs to be concatenated with a shebang and a zip of the code to be executed.
-            // The launcher code is at https://bitbucket.org/vinay.sajip/simple_launcher/
-
-            // TODO: support 32 bit launchers and maybe GUI launchers
-            use std::io::Write;
-            static LAUNCHER_CODE: &[u8] = include_bytes!("../windows_exe_wrappers/t64.exe");
-            let mut zip_writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::<u8>::new()));
-            zip_writer.start_file("__main__.py", zip::write::FileOptions::default())?;
-            write!(&mut zip_writer, "{}", code).unwrap();
-            let mut wrapper = LAUNCHER_CODE.to_vec();
-            wrapper.extend(shebang.as_bytes());
-            wrapper.extend(b".exe");
-            wrapper.extend(b"\r\n");
-            wrapper.extend(zip_writer.finish()?.into_inner());
-            self._generate_executable(&dest.with_extension("exe"), &wrapper)
-        }
+fn generate_executable(dest: &Path, python_path: &Path, code: &str) -> std::io::Result<()> {
+    let shebang = format!("#!{}", python_path.display());
+    #[cfg(unix)]
+    {
+        _generate_executable(&dest, format!("{}\n{}", shebang, code).as_bytes())
     }
 
-    fn _generate_executable(&self, dest: &Path, bytes: &[u8]) -> std::io::Result<()> {
-        let mut opts = fs_err::OpenOptions::new();
-        // create_new causes failure if the target already exists
-        // TODO: handle error
-        opts.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use fs_err::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o744);
-        }
+    #[cfg(windows)]
+    {
+        // Generate .exe wrappers for python scripts.
+        // This uses the same launcher as the python module "distlib", which is what pip uses
+        // to generate exe wrappers.
+        // The launcher needs to be concatenated with a shebang and a zip of the code to be executed.
+        // The launcher code is at https://bitbucket.org/vinay.sajip/simple_launcher/
 
-        let mut f = opts.open(dest)?;
+        // TODO: support 32 bit launchers and maybe GUI launchers
         use std::io::Write;
-        f.write_all(bytes)
+        static LAUNCHER_CODE: &[u8] = include_bytes!("../windows_exe_wrappers/t64.exe");
+        let mut zip_writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::<u8>::new()));
+        zip_writer.start_file("__main__.py", zip::write::FileOptions::default())?;
+        write!(&mut zip_writer, "{}", code).unwrap();
+        let mut wrapper = LAUNCHER_CODE.to_vec();
+        wrapper.extend(shebang.as_bytes());
+        wrapper.extend(b".exe");
+        wrapper.extend(b"\r\n");
+        wrapper.extend(zip_writer.finish()?.into_inner());
+        _generate_executable(&dest.with_extension("exe"), &wrapper)
     }
+}
+
+fn _generate_executable(dest: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut opts = fs_err::OpenOptions::new();
+    // create_new causes failure if the target already exists
+    // TODO: handle error
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use fs_err::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o744);
+    }
+
+    let mut f = opts.open(dest)?;
+    use std::io::Write;
+    f.write_all(bytes)
 }
 
 // TODO: remove every use with StoredDistribution::entrypoints
@@ -2566,17 +2567,25 @@ fn link_files_from_record_into_virtpy_new(
             let base_path = &paths.0[subdir];
 
             let dst = base_path.join(subpath);
+            let is_executable = subdir == "scripts";
             f.path = relative_path(site_packages, &dst);
 
-            // TODO: if it's an executable, copy and fix the shebang
-            link_file_into_virtpy(proj_dirs, &f, dst, distribution);
+            if !is_executable {
+                link_file_into_virtpy(proj_dirs, &f, dst, distribution);
+            } else {
+                let src = proj_dirs.package_file(&f.hash);
+                let code = fs_err::read_to_string(src)?;
+                generate_executable(&dst, &virtpy.python(), &code)?;
+                // Rewriting the shebang (or adding a wrapper for windows) changed the hash
+                f.hash = FileHash::from_file(&dst);
+            }
             record.files.push(f)
 
             // TODO: assert we're still in venv. The target path will probably point to the backing.
         }
     }
 
-    // TODO: generate executables (and add to RECORD)
+    // TODO: add generated executables from entrypoints to RECORD
 
     // The RECORD is not linked in, because it doesn't (can't) contain its own hash.
     // Save the (possibly amended) record into the virtpy
