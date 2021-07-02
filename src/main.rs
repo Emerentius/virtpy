@@ -750,11 +750,6 @@ fn register_distribution_files_of_wheel(
     records
         .save_to_file(repo_records_dir.join("RECORD"))
         .wrap_err("failed to save RECORD")?;
-    let data_dir = install_folder.join(distribution.data_dir_name());
-    if data_dir.exists() {
-        WheelRecord::create_for_dir(data_dir)?
-            .save_to_file(repo_records_dir.join("DATA_RECORD"))?;
-    }
 
     stored_distributions.insert(distribution.sha.clone(), stored_distrib);
     Ok(())
@@ -2523,13 +2518,11 @@ fn link_single_requirement_into_virtpy(
         StoredDistributionType::FromWheel => {
             let record_dir = proj_dirs.records().join(distrib.distribution.as_csv());
             let record_path = record_dir.join("RECORD");
-            let data_record_path = record_dir.join("DATA_RECORD");
 
             let mut record = WheelRecord::from_file(record_path)?;
 
             link_files_from_record_into_virtpy_new(
                 &mut record,
-                &data_record_path,
                 virtpy,
                 &site_packages,
                 proj_dirs,
@@ -2604,53 +2597,63 @@ fn link_files_from_record_into_virtpy(
 
 fn link_files_from_record_into_virtpy_new(
     record: &mut WheelRecord,
-    data_record_path: &PathBuf,
     virtpy: &CheckedVirtpy,
     site_packages: &Path,
     proj_dirs: &ProjectDirs,
     distribution: &Distribution,
 ) -> eyre::Result<()> {
-    for record in &record.files {
-        let dest = site_packages.join(&record.path);
+    let data_dir = distribution.data_dir_name();
+    let paths = virtpy.install_paths()?;
+
+    let ensure_dir_exists = |dest: &Path| {
         let dir = dest.parent().unwrap();
         // TODO: assert we're still in the virtpy
         fs_err::create_dir_all(&dir).unwrap();
-        link_file_into_virtpy(proj_dirs, record, dest, distribution);
-    }
+    };
 
-    // yeah, yeah, TOCTTOU race condition
-    if data_record_path.exists() {
-        let data_record = WheelRecord::from_file(data_record_path)?;
-        let paths = virtpy.install_paths()?;
+    for record in &mut record.files {
+        match record.path.strip_prefix(&data_dir) {
+            Ok(data_dir_subpath) => {
+                let mut iter = data_dir_subpath.iter();
+                let subdir = iter.next().unwrap().to_str().unwrap();
+                let subpath = iter.as_path();
+                let base_path = &paths.0[subdir];
 
-        for mut f in data_record.files {
-            assert!(f.path.is_relative());
-            let mut iter = f.path.iter();
-            let subdir = iter
-                .by_ref()
-                .nth(1)
-                .expect("invalid data record")
-                .to_str()
-                .unwrap();
-            let subpath = iter.as_path();
-            let base_path = &paths.0[subdir];
+                let dest = base_path.join(subpath);
+                ensure_dir_exists(&dest);
+                let is_executable = subdir == "scripts";
+                record.path = relative_path(site_packages, &dest);
 
-            let dst = base_path.join(subpath);
-            let is_executable = subdir == "scripts";
-            f.path = relative_path(site_packages, &dst);
+                if !is_executable {
+                    link_file_into_virtpy(proj_dirs, &record, dest, distribution);
+                } else {
+                    let src = proj_dirs.package_file(&record.hash);
+                    let script = fs_err::read_to_string(src)?;
 
-            if !is_executable {
-                link_file_into_virtpy(proj_dirs, &f, dst, distribution);
-            } else {
-                let src = proj_dirs.package_file(&f.hash);
-                let code = fs_err::read_to_string(src)?;
-                // Rewriting the shebang (or adding a wrapper for windows) changed the hash and filesize
-                f = generate_executable(&dst, &virtpy.python(), &code, &virtpy.site_packages())?;
+                    // A bit complicated because I'm trying to replace ONLY the first line,
+                    // indepently of \n and \r\n without running more code than necessary.
+                    if script.lines().next() == Some("#!python") {
+                        // lines() iter doesn't have a method for getting the rest of the string, sadly.
+                        let first_linebreak = script.find('\n'); // could actually be None, for an empty script.
+                        let code = first_linebreak.map_or("", |linebreak| &script[linebreak..]);
+                        // Rewriting the shebang (or adding a wrapper for windows) changed the hash and filesize
+                        *record = generate_executable(
+                            &dest,
+                            &virtpy.python(),
+                            &code,
+                            &virtpy.site_packages(),
+                        )?;
+                    } else {
+                        link_file_into_virtpy(proj_dirs, &record, dest, distribution);
+                    }
+                }
             }
-            record.files.push(f)
-
-            // TODO: assert we're still in venv. The target path will probably point to the backing.
-        }
+            Err(_) => {
+                let dest = site_packages.join(&record.path);
+                ensure_dir_exists(&dest);
+                link_file_into_virtpy(proj_dirs, record, dest, distribution);
+            }
+        };
     }
 
     Ok(())
@@ -2742,7 +2745,7 @@ fn install_executables(
         ),
         (None, false) => vec![],
     };
-    Ok(for entrypoint in entrypoints {
+    for entrypoint in entrypoints {
         let executables_path = virtpy.executables();
         let err = || eyre::eyre!("failed to install executable {}", entrypoint.name);
         let python_path = executables_path.join("python");
@@ -2763,7 +2766,8 @@ fn install_executables(
                 )
                 .wrap_err_with(err)?;
         }
-    })
+    }
+    Ok(())
 }
 
 fn print_error_missing_file_in_record(distribution: &Distribution, missing_file: &Path) {
