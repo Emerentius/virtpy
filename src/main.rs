@@ -2662,10 +2662,15 @@ fn relative_path(base: impl AsRef<Path>, path: impl AsRef<Path>) -> PathBuf {
 }
 
 fn _relative_path(base: &Path, path: &Path) -> PathBuf {
-    assert!(base.is_absolute());
+    // TODO: convert to error
+    assert!(
+        base.is_absolute() && path.is_absolute() || base.is_relative() && path.is_relative(),
+        "paths need to be both relative or both absolute: {:?}, {:?}",
+        base,
+        path
+    );
     // can't assert this, because it requires IO and this function should be pure. But it SHOULD be true.
     //assert!(base.is_dir());
-    assert!(path.is_absolute());
 
     let mut iter_base = base.iter();
     let mut iter_path = path.iter();
