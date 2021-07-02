@@ -282,8 +282,8 @@ impl StoredDistribution {
                 record
                     .files
                     .into_iter()
-                    .map(|entry| entry.path)
-                    .find(|path| path == &path_in_record)
+                    .find(|entry| entry.path == path_in_record)
+                    .map(|entry| proj_dirs.package_file(&entry.hash))
             }
         }
     }
