@@ -85,8 +85,7 @@ impl WheelFormatVersion {
     const SUPPORTED: &'static [WheelFormatVersion] = &[WheelFormatVersion { major: 1, minor: 0 }];
 
     fn from_str(version: &str) -> eyre::Result<Self> {
-        let captures = lazy_regex::regex!(r"^(\d+)\.(\d+)$")
-            .captures(version)
+        let (_, major, minor) = lazy_regex::regex_captures!(r"^(\d+)\.(\d+)$", version)
             .ok_or_else(|| {
                 eyre::eyre!(
                     "version does not match format $MAJOR_NUM.$MINOR_NUM: {}",
@@ -94,13 +93,14 @@ impl WheelFormatVersion {
                 )
             })?;
 
+        let parse_version = |num: &str, info: &str| {
+            num.parse().wrap_err_with(|| {
+                eyre::eyre!("could not parse {} version number: \"{:?}\"", info, num)
+            })
+        };
         Ok(Self {
-            major: captures[1]
-                .parse()
-                .wrap_err("could not parse major version number")?,
-            minor: captures[2]
-                .parse()
-                .wrap_err("could not parse minor version number")?,
+            major: parse_version(major, "major")?,
+            minor: parse_version(minor, "minor")?,
         })
     }
 

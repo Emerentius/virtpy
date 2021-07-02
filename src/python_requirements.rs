@@ -154,12 +154,13 @@ impl Requirement {
 
     pub fn from_filename(filename: &str, hash: DistributionHash) -> eyre::Result<Self> {
         // TODO: use a better parser
-        let pattern = lazy_regex::regex!(r"^([\w\d]+)-(\d+(\.\d+)*)(\.tar\.gz|.*\.whl)");
-        let m = pattern.captures(filename).unwrap();
+        let (_, name, version, _, _) =
+            lazy_regex::regex_captures!(r"^([\w\d]+)-(\d+(\.\d+)*)(\.tar\.gz|.*\.whl)", filename)
+                .unwrap();
 
         Ok(Requirement {
-            name: m[1].to_owned(),
-            version: m[2].to_owned(),
+            name: name.to_owned(),
+            version: version.to_owned(),
             marker: None,
             available_hashes: vec![hash],
         })

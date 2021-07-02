@@ -158,19 +158,18 @@ fn python_version(python_path: &Path) -> eyre::Result<PythonVersion> {
             eyre::eyre!("couldn't get python version of `{}`", python_path.display())
         })?;
     let version = output.trim().to_owned();
-    let captures = lazy_regex::regex!(r"Python (\d+)\.(\d+)\.(\d+)")
-        .captures(&version)
-        .ok_or_else(|| eyre::eyre!("failed to read python version from {:?}", version))?;
+    let (_, major, minor, patch) =
+        lazy_regex::regex_captures!(r"Python (\d+)\.(\d+)\.(\d+)", &version)
+            .ok_or_else(|| eyre::eyre!("failed to read python version from {:?}", version))?;
 
-    let get_num = |idx: usize| {
-        captures[idx]
-            .parse::<i32>()
-            .expect("failed to get capture group")
+    let parse_num = |num: &str| {
+        num.parse::<i32>()
+            .wrap_err_with(|| eyre::eyre!("failed to parse number: \"{:?}\"", num))
     };
     Ok(PythonVersion {
-        major: get_num(1),
-        minor: get_num(2),
-        patch: get_num(3),
+        major: parse_num(major)?,
+        minor: parse_num(minor)?,
+        patch: parse_num(patch)?,
     })
 }
 
@@ -1115,12 +1114,12 @@ impl ProjectDirs {
 }
 
 fn package_info_from_dist_info_dirname(dirname: &str) -> (&str, &str) {
-    let captures = lazy_regex::regex!(r"([a-zA-Z_][a-zA-Z0-9_-]*)-(\d*!.*|\d*\..*)\.dist-info")
-        .captures(dirname)
-        .unwrap();
-    let distrib_name = captures.get(1).unwrap();
-    let version = captures.get(2).unwrap();
-    (distrib_name.as_str(), version.as_str())
+    let (_, distrib_name, version) = lazy_regex::regex_captures!(
+        r"([a-zA-Z_][a-zA-Z0-9_-]*)-(\d*!.*|\d*\..*)\.dist-info",
+        dirname
+    )
+    .unwrap();
+    (distrib_name, version)
 }
 
 struct VirtpyBacking {
