@@ -38,13 +38,13 @@ fn find_python_by_version(major: u32, minor: Option<u32>) -> eyre::Result<PathBu
     {
         use color_eyre::section::{Section, SectionExt};
         let mut cmd = std::process::Command::new("py");
-            cmd.args(&[
-                &format!("-{}", version),
-                "-c",
-                "import sys; print(sys.executable)",
-            ]);
+        cmd.args(&[
+            &format!("-{}", version),
+            "-c",
+            "import sys; print(sys.executable)",
+        ]);
 
-            let output = cmd.output()?;
+        let output = cmd.output()?;
 
         let stdout = String::from_utf8(output.stdout)?;
         let path = Path::new(stdout.trim_end());
@@ -52,14 +52,21 @@ fn find_python_by_version(major: u32, minor: Option<u32>) -> eyre::Result<PathBu
             Ok(path.to_path_buf())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-            Err(eyre::eyre!("can't find python version {}", version).section(stdout.header("stdout")).section(stderr.header("stderr")))
+            Err(eyre::eyre!("can't find python version {}", version)
+                .section(stdout.header("stdout"))
+                .section(stderr.header("stderr")))
         }
     }
 }
 
 fn find_executable_in_path(path: impl AsRef<Path>) -> eyre::Result<PathBuf> {
     let path = path.as_ref();
-    pathsearch::find_executable_in_path(path).ok_or_else(|| eyre::eyre!("couldn't find python executable `{}` in PATH", path.display()))
+    pathsearch::find_executable_in_path(path).ok_or_else(|| {
+        eyre::eyre!(
+            "couldn't find python executable `{}` in PATH",
+            path.display()
+        )
+    })
 }
 
 #[cfg(test)]
