@@ -317,21 +317,13 @@ impl StoredDistributions {
                 .entry(python_version)
                 .or_default();
             for (key_hash, name_and_version_and_hash) in inner {
-                let (_, name, version, hash) = lazy_regex::regex_captures!(
-                    r"([^,]+),([^,]+),([^,]+)",
-                    &name_and_version_and_hash
-                )
-                .unwrap();
-                debug_assert_eq!(key_hash.0, hash);
+                let distribution = Distribution::from_store_name(&name_and_version_and_hash);
+                debug_assert_eq!(key_hash, distribution.sha);
 
                 entry.insert(
                     key_hash,
                     StoredDistribution {
-                        distribution: Distribution {
-                            name: name.to_owned(),
-                            version: version.to_owned(),
-                            sha: DistributionHash(hash.to_owned()),
-                        },
+                        distribution,
                         installed_via: StoredDistributionType::FromPip,
                     },
                 );
@@ -2819,16 +2811,15 @@ struct Distribution {
 }
 
 impl Distribution {
-    // TODO: use regex from StoredDistributions::try_load_old()
     fn from_store_name(store_name: &str) -> Self {
-        let mut it = store_name.split(",");
-        let mut next = || it.next().unwrap().to_owned();
-        let name = next();
-        let version = next();
-        let sha = DistributionHash(next());
-        assert!(it.next().is_none());
+        let (_, name, version, hash) =
+            lazy_regex::regex_captures!(r"([^,]+),([^,]+),([^,]+)", store_name).unwrap();
 
-        Self { name, version, sha }
+        Self {
+            name: name.to_owned(),
+            version: version.to_owned(),
+            sha: DistributionHash(hash.to_owned()),
+        }
     }
 
     fn as_csv(&self) -> String {
