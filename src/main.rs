@@ -2518,6 +2518,7 @@ fn link_single_requirement_into_virtpy(
                 proj_dirs,
                 &distrib.distribution,
             );
+            install_executables(install_global_executable, distrib, virtpy, proj_dirs, None)?;
         }
         StoredDistributionType::FromWheel => {
             let record_dir = proj_dirs.records().join(distrib.distribution.as_csv());
