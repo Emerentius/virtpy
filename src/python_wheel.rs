@@ -127,21 +127,18 @@ enum WheelVersionSupport {
     Unsupported,
 }
 
-impl WheelVersionSupport {
-    fn is_supported(&self) -> bool {
-        match self {
-            Self::Supported | Self::SupportedButNewer(_) => true,
-            Self::Unsupported => false,
-        }
-    }
-}
-
 // Metadata about the wheel archive itself, not the contained package
 struct WheelMetadata {
     version: WheelFormatVersion,
+    #[allow(unused)]
     generator: String, // (String, Option<String>), // generator name and optional version
+    // TODO: respect the purelib / platlib distinction
+    #[allow(unused)]
     root_is_purelib: bool,
+    // TODO: check via tags that this wheel is for our platform
+    #[allow(unused)]
     tags: Vec<String>,
+    #[allow(unused)]
     build: Option<String>,
 }
 
@@ -228,13 +225,13 @@ struct MaybeRecordEntry {
 }
 
 impl WheelRecord {
-    fn from_str(record: &str) -> eyre::Result<Self> {
-        let reader = csv::ReaderBuilder::new()
-            .has_headers(false)
-            .from_reader(record.as_bytes());
+    // fn from_str(record: &str) -> eyre::Result<Self> {
+    //     let reader = csv::ReaderBuilder::new()
+    //         .has_headers(false)
+    //         .from_reader(record.as_bytes());
 
-        Self::_from_csv_reader(reader)
-    }
+    //     Self::_from_csv_reader(reader)
+    // }
 
     pub fn from_file(record: impl AsRef<Path>) -> eyre::Result<Self> {
         let reader = csv::ReaderBuilder::new()
@@ -295,14 +292,14 @@ impl WheelRecord {
         self._to_writer(&mut writer)
     }
 
-    fn to_string(&self) -> String {
-        let mut writer = csv::WriterBuilder::new()
-            .has_headers(false)
-            .from_writer(vec![]);
-        self._to_writer(&mut writer).unwrap();
+    // fn to_string(&self) -> String {
+    //     let mut writer = csv::WriterBuilder::new()
+    //         .has_headers(false)
+    //         .from_writer(vec![]);
+    //     self._to_writer(&mut writer).unwrap();
 
-        String::from_utf8(writer.into_inner().unwrap()).unwrap()
-    }
+    //     String::from_utf8(writer.into_inner().unwrap()).unwrap()
+    // }
 
     fn _from_csv_reader<R: std::io::Read>(reader: csv::Reader<R>) -> eyre::Result<Self> {
         let files = reader

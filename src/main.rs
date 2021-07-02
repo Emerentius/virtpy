@@ -198,6 +198,8 @@ impl DistributionHash {
 }
 
 impl FileHash {
+    // TODO: use when checking file hashes in RECORD to be correct
+    #[allow(unused)]
     fn from_file(path: &Path) -> Self {
         Self::from_hash(hash_of_file_sha256_base64(path))
     }
@@ -1375,13 +1377,13 @@ fn main() -> eyre::Result<()> {
     Ok(())
 }
 
-// Related: https://www.python.org/dev/peps/pep-0625/  -- File name of a Source Distribution
-//          Contains a link to a few other PEPs.
-//          PEP 503 defines the concept of a normalized distribution name.
-//          https://www.python.org/dev/peps/pep-0503/#normalized-names
-fn normalized_distribution_name(name: &str) -> String {
-    _escape(name, "-")
-}
+// // Related: https://www.python.org/dev/peps/pep-0625/  -- File name of a Source Distribution
+// //          Contains a link to a few other PEPs.
+// //          PEP 503 defines the concept of a normalized distribution name.
+// //          https://www.python.org/dev/peps/pep-0503/#normalized-names
+// fn normalized_distribution_name(name: &str) -> String {
+//     _escape(name, "-")
+// }
 
 // TODO: adapt to actual specification: https://packaging.python.org/specifications/binary-distribution-format/#escaping-and-unicode
 // https://www.python.org/dev/peps/pep-0491/#escaping-and-unicode
@@ -1610,10 +1612,10 @@ fn hash_of_file_sha256_base16(path: &Path) -> String {
     base16::encode_lower(hash.as_ref())
 }
 
-fn hash_of_reader_sha256_base16(reader: impl std::io::Read) -> String {
-    let hash = _hash_of_reader_sha256(reader);
-    base16::encode_lower(hash.as_ref())
-}
+// fn hash_of_reader_sha256_base16(reader: impl std::io::Read) -> String {
+//     let hash = _hash_of_reader_sha256(reader);
+//     base16::encode_lower(hash.as_ref())
+// }
 
 fn hash_of_reader_sha256_base64(reader: impl std::io::Read) -> String {
     let hash = _hash_of_reader_sha256(reader);
