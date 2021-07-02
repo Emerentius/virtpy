@@ -199,11 +199,15 @@ impl DistributionHash {
 
 impl FileHash {
     fn from_file(path: &Path) -> Self {
-        Self(format!("sha256={}", hash_of_file_sha256_base64(path)))
+        Self::from_hash(hash_of_file_sha256_base64(path))
     }
 
     fn from_reader(reader: impl std::io::Read) -> Self {
-        Self(hash_of_reader_sha256_base64(reader))
+        Self::from_hash(hash_of_reader_sha256_base64(reader))
+    }
+
+    fn from_hash(hash: String) -> Self {
+        Self(format!("sha256={}", hash))
     }
 }
 
