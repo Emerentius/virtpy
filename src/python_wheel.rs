@@ -201,12 +201,27 @@ pub struct WheelRecord {
     // stored separately just so we can easily recreate the line for the RECORD itself
     // without making paths and filesizes optional for all other files.
     // If `None`, don't write a RECORD line.
-    // TODO: change to `own_path` and store the path to self.
-    pub wheel_name: Option<String>,
+    pub record_path: PathBuf,
     // All files in the record except for the record itself.
     pub files: Vec<RecordEntry>,
 }
 
+// On the distinction between RecordEntry and MaybeRecordEntry:
+// MaybeRecordEntry is used only as an intermediate step for (de-)serialization.
+// Internally, we use `RecordEntry` which upholds more invariants.
+//
+// The RECORD file is self-referential which causes some issue for the entry of itself.
+// The file can't (feasibly) contain its own hash, because you can't compute the hash of the file
+// if the file doesn't already contain the hash and for almost all hashes you put there, the file
+// won't hash to that hash. It's like a quine, but worse.
+// The self-referential entry doesn't contain the size either even though that one would actually
+// be possible to put in.
+//
+// So, now all of the records have a path, hash and filesize except for one entry which has only a path
+// and is of limited use anyway.
+// We could deal with having optional-but-not-really hashes and filesizes everywhere,
+// or we store the self-entry separately separately and have all the other entries
+// use decent types.
 #[derive(
     Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Clone,
 )]
@@ -219,7 +234,7 @@ pub struct RecordEntry {
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash, Clone)]
 struct MaybeRecordEntry {
-    path: String,
+    path: PathBuf,
     hash: String,
     filesize: Option<u64>,
 }
@@ -240,42 +255,6 @@ impl WheelRecord {
 
         Self::_from_csv_reader(reader)
             .wrap_err_with(|| eyre::eyre!("failed to read record from {:?}", record.as_ref()))
-    }
-
-    fn _create_for_dir(dir: &Path) -> eyre::Result<Self> {
-        eyre::ensure!(dir.is_dir(), "target is not a directory: {}", dir.display());
-        let parent = dir
-            .parent()
-            .ok_or_else(|| eyre::eyre!("can't get parent of dir {:?}", dir))?;
-
-        let mut files = vec![];
-        for entry in walkdir::WalkDir::new(dir) {
-            let entry = entry?;
-            let metadata = entry.metadata()?;
-            let filetype = metadata.file_type();
-            if filetype.is_dir() {
-                continue;
-            }
-            eyre::ensure!(
-                !filetype.is_symlink(),
-                "can't create record for dir containing symlinks. symlink found at: {:?}",
-                entry.path()
-            );
-
-            files.push(RecordEntry {
-                path: entry.path().strip_prefix(parent)?.to_owned(), // strip_prefix shouldn't ever fail here
-                hash: FileHash::from_file(entry.path()),
-                filesize: metadata.len(),
-            })
-        }
-
-        // Not necessary, but nice
-        files.sort_by(|e1, e2| e1.path.cmp(&e2.path));
-
-        Ok(Self {
-            wheel_name: None,
-            files,
-        })
     }
 
     pub fn save_to_file(&self, dest: impl AsRef<Path>) -> eyre::Result<()> {
@@ -308,10 +287,16 @@ impl WheelRecord {
             .collect::<Result<Vec<MaybeRecordEntry>, _>>()?;
 
         // TODO: add verification
-        let wheel_name = files
+        let record_path = files
             .iter()
-            .find_map(|f| f.path.strip_suffix(".dist-info/RECORD"))
-            .map(<_>::to_owned);
+            .find(|f| {
+                f.path.as_path().to_str().map_or(false, |path| {
+                    lazy_regex::regex_is_match!(r"[^-/]+-[^-/]+\.dist-info/RECORD", path)
+                })
+            })
+            .ok_or_else(|| eyre::eyre!("RECORD does not contain path to itself"))?
+            .path
+            .clone();
         let files = files
             .into_iter()
             .filter(|entry| entry.filesize.is_some())
@@ -322,20 +307,18 @@ impl WheelRecord {
             })
             .collect::<Vec<_>>();
 
-        Ok(Self { files, wheel_name })
+        Ok(Self { files, record_path })
     }
 
     fn _to_writer<W: std::io::Write>(&self, writer: &mut csv::Writer<W>) -> eyre::Result<()> {
         for entry in &self.files {
             writer.serialize(entry)?;
         }
-        if let Some(wheel_name) = &self.wheel_name {
-            writer.serialize(MaybeRecordEntry {
-                path: format!("{}.dist-info/RECORD", wheel_name),
-                hash: String::new(),
-                filesize: None,
-            })?;
-        }
+        writer.serialize(MaybeRecordEntry {
+            path: self.record_path.clone(),
+            hash: String::new(),
+            filesize: None,
+        })?;
         Ok(())
     }
 }
