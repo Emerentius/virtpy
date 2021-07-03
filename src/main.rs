@@ -2685,10 +2685,7 @@ fn _relative_path(base: &Path, path: &Path) -> PathBuf {
     }
 
     let mut rel_path = PathBuf::new();
-    for _ in iter_base {
-        rel_path.push("..");
-    }
-
+    rel_path.extend(iter_base.map(|_| ".."));
     rel_path.push(iter_path.as_path());
     rel_path
 }
