@@ -1,9 +1,10 @@
+use camino::Utf8PathBuf;
 use eyre::{bail, eyre, WrapErr};
 use std::{
     collections::HashMap,
     fmt::Display,
     io::{Read, Seek},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use crate::{EResult, FileHash};
@@ -197,7 +198,7 @@ pub struct WheelRecord {
     // stored separately just so we can easily recreate the line for the RECORD itself
     // without making paths and filesizes optional for all other files.
     // If `None`, don't write a RECORD line.
-    pub record_path: PathBuf,
+    pub record_path: Utf8PathBuf,
     // All files in the record except for the record itself.
     pub files: Vec<RecordEntry>,
 }
@@ -223,14 +224,14 @@ pub struct WheelRecord {
 )]
 #[must_use]
 pub struct RecordEntry {
-    pub path: PathBuf,
+    pub path: Utf8PathBuf,
     pub hash: FileHash,
     pub filesize: u64,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash, Clone)]
 struct MaybeRecordEntry {
-    path: PathBuf,
+    path: Utf8PathBuf,
     hash: String,
     filesize: Option<u64>,
 }
@@ -286,9 +287,7 @@ impl WheelRecord {
         let record_path = files
             .iter()
             .find(|f| {
-                f.path.as_path().to_str().map_or(false, |path| {
-                    lazy_regex::regex_is_match!(r"[^-/]+-[^-/]+\.dist-info/RECORD", path)
-                })
+                lazy_regex::regex_is_match!(r"[^-/]+-[^-/]+\.dist-info/RECORD", f.path.as_str())
             })
             .ok_or_else(|| eyre!("RECORD does not contain path to itself"))?
             .path

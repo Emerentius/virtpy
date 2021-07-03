@@ -1,3 +1,4 @@
+use camino::Utf8Path;
 use eyre::{bail, ensure, eyre, WrapErr};
 use fs_err::File;
 use itertools::Itertools;
@@ -6,6 +7,7 @@ use python_wheel::{RecordEntry, WheelRecord};
 use rand::Rng;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
+use std::convert::TryInto;
 use std::fmt::Write;
 use std::io::Seek;
 use std::{
@@ -448,7 +450,7 @@ fn copy_directory(from: &Path, to: &Path, use_move: bool) {
     }
 }
 
-fn is_path_of_executable(path: &Path) -> bool {
+fn is_path_of_executable(path: &Utf8Path) -> bool {
     path.starts_with("bin") || path.starts_with("Scripts")
 }
 
@@ -564,7 +566,9 @@ fn _generate_executable(
     use std::io::Write;
     f.write_all(bytes)?;
     Ok(RecordEntry {
-        path: relative_path(site_packages, dest),
+        path: relative_path(site_packages, dest)
+            .try_into()
+            .expect("non utf8 path in virtpy"),
         hash: FileHash::from_reader(bytes),
         filesize: bytes.len() as u64,
     })
@@ -670,7 +674,7 @@ fn register_distribution_files(
         let res = move_file(&src, &dest, use_move);
         match &res {
             Err(err) if is_not_found(err) => {
-                print_error_missing_file_in_record(&distribution, &file.path)
+                print_error_missing_file_in_record(&distribution, file.path.as_ref())
             }
             _ => {
                 res.unwrap();
@@ -733,7 +737,7 @@ fn register_distribution_files_of_wheel(
             // TODO: Add check of RECORD during wheel installation before registration.
             //       It must be complete and correct so we should never run into this.
             Err(err) if is_not_found(err) => {
-                print_error_missing_file_in_record(&distribution, &file.path)
+                print_error_missing_file_in_record(&distribution, file.path.as_ref())
             }
             _ => {
                 res.unwrap();
@@ -2560,8 +2564,7 @@ fn link_files_from_record_into_virtpy(
                 if !starts_with_venv_dir {
                     println!(
                         "{}: attempted file placement outside virtpy, ignoring: {}",
-                        distribution.name,
-                        record.path.display()
+                        distribution.name, record.path
                     );
                     continue;
                 }
@@ -2608,14 +2611,16 @@ fn link_files_from_record_into_virtpy_new(
         match record.path.strip_prefix(&data_dir) {
             Ok(data_dir_subpath) => {
                 let mut iter = data_dir_subpath.iter();
-                let subdir = iter.next().unwrap().to_str().unwrap();
+                let subdir = iter.next().unwrap();
                 let subpath = iter.as_path();
                 let base_path = &paths.0[subdir];
 
                 let dest = base_path.join(subpath);
                 ensure_dir_exists(&dest);
                 let is_executable = subdir == "scripts";
-                record.path = relative_path(site_packages, &dest);
+                record.path = relative_path(site_packages, &dest)
+                    .try_into()
+                    .expect("non utf8 path in virtpy");
 
                 if !is_executable {
                     link_file_into_virtpy(proj_dirs, &record, dest, distribution);
@@ -2766,7 +2771,7 @@ fn print_error_missing_file_in_record(distribution: &Distribution, missing_file:
     )
 }
 
-fn remove_leading_parent_dirs(mut path: &Path) -> Result<&Path, &Path> {
+fn remove_leading_parent_dirs(mut path: &Utf8Path) -> Result<&Utf8Path, &Utf8Path> {
     let mut anything_removed = false;
     while let Ok(stripped_path) = path.strip_prefix("..") {
         path = stripped_path;

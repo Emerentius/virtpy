@@ -33,6 +33,7 @@ fs2 = "0.4.3"
 itertools = "0.10.0"
 lazy-regex = "2.2.1"
 base16 = "0.2.1"
+camino = { version = "1.0.4", features = ["serde1"] }
 
 [profile.release]
 debug = true
