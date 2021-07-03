@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 
 use eyre::{bail, eyre};
 
-pub fn detect(python: &str) -> eyre::Result<PathBuf> {
+use crate::EResult;
+
+pub fn detect(python: &str) -> EResult<PathBuf> {
     let path = Path::new(&python);
 
     // If `python` is definitely a path, use it, if it exists.
@@ -26,7 +28,7 @@ pub fn detect(python: &str) -> eyre::Result<PathBuf> {
     find_executable_in_path(python)
 }
 
-fn find_python_by_version(major: u32, minor: Option<u32>) -> eyre::Result<PathBuf> {
+fn find_python_by_version(major: u32, minor: Option<u32>) -> EResult<PathBuf> {
     let version = match minor {
         Some(minor) => format!("{}.{}", major, minor),
         None => major.to_string(),
@@ -61,7 +63,7 @@ fn find_python_by_version(major: u32, minor: Option<u32>) -> eyre::Result<PathBu
     }
 }
 
-fn find_executable_in_path(path: impl AsRef<Path>) -> eyre::Result<PathBuf> {
+fn find_executable_in_path(path: impl AsRef<Path>) -> EResult<PathBuf> {
     let path = path.as_ref();
     pathsearch::find_executable_in_path(path).ok_or_else(|| {
         eyre!(
@@ -76,13 +78,13 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_detect() -> eyre::Result<()> {
+    fn test_detect() -> EResult<()> {
         detect("3").map(drop)
     }
 
     #[cfg(unix)]
     #[test]
-    fn test_detect_by_number_and_by_name() -> eyre::Result<()> {
+    fn test_detect_by_number_and_by_name() -> EResult<()> {
         let python3_path = detect("python3")?;
         let python3_path2 = detect("3")?;
 
@@ -92,7 +94,7 @@ mod test {
 
     #[cfg(unix)]
     #[test]
-    fn test_detect_with_minor_version() -> eyre::Result<()> {
+    fn test_detect_with_minor_version() -> EResult<()> {
         // assuming you have python3 installed because this is 2020+.
 
         let python3_path = detect("python3")?;

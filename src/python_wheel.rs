@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::FileHash;
+use crate::{EResult, FileHash};
 
 // This implements a wheel installer following the specification here:
 // https://packaging.python.org/specifications/binary-distribution-format/
@@ -17,7 +17,7 @@ use crate::FileHash;
 // linked above.
 // https://www.python.org/dev/peps/pep-0491/#pep-deferral
 
-pub fn unpack_wheel(wheel: &Path, dest: &Path) -> eyre::Result<()> {
+pub fn unpack_wheel(wheel: &Path, dest: &Path) -> EResult<()> {
     let mut archive = zip::ZipArchive::new(fs_err::File::open(wheel)?)?;
 
     let wheel_name = wheel
@@ -36,7 +36,7 @@ pub fn unpack_wheel(wheel: &Path, dest: &Path) -> eyre::Result<()> {
 //     let record = crate::records(record);
 // }
 
-fn check_version_support(wheel_name: &str, metadata: WheelMetadata) -> eyre::Result<()> {
+fn check_version_support(wheel_name: &str, metadata: WheelMetadata) -> EResult<()> {
     match metadata.version.support_status() {
         WheelVersionSupport::SupportedButNewer(supported_version) => println!("Warning: wheel {} uses a compatible, but newer version than supported: wheel format version: {}, newest supported: {}", wheel_name, metadata.version, supported_version),
         WheelVersionSupport::Unsupported => bail!("wheel uses unsupported version {}", metadata.version),
@@ -48,7 +48,7 @@ fn check_version_support(wheel_name: &str, metadata: WheelMetadata) -> eyre::Res
 fn parse_wheel_metadata<R: Read + Seek>(
     wheel_name: &str,
     wheel_archive: &mut zip::ZipArchive<R>,
-) -> eyre::Result<WheelMetadata> {
+) -> EResult<WheelMetadata> {
     let dist_info_name = wheel_dist_info_path(wheel_name)?;
     let wheel_version_file = format!("{}/WHEEL", dist_info_name);
     let mut wheel_version_file = wheel_archive
@@ -60,7 +60,7 @@ fn parse_wheel_metadata<R: Read + Seek>(
     WheelMetadata::from_str(&wheel_metadata)
 }
 
-fn wheel_dist_info_path(wheel_name: &str) -> eyre::Result<String> {
+fn wheel_dist_info_path(wheel_name: &str) -> EResult<String> {
     let (idx, _) = wheel_name.char_indices().filter(|&(_, ch)| ch == '-')
     .nth(1).ok_or_else(|| eyre!("deformed wheel name, could not determine distribition and version from wheel name {}", wheel_name))?;
 
@@ -82,7 +82,7 @@ impl WheelFormatVersion {
     // All newest versions that are supported per major number.
     const SUPPORTED: &'static [WheelFormatVersion] = &[WheelFormatVersion { major: 1, minor: 0 }];
 
-    fn from_str(version: &str) -> eyre::Result<Self> {
+    fn from_str(version: &str) -> EResult<Self> {
         let (_, major, minor) = lazy_regex::regex_captures!(r"^(\d+)\.(\d+)$", version)
             .ok_or_else(|| {
                 eyre!(
@@ -146,7 +146,7 @@ impl Display for WheelFormatVersion {
 }
 
 impl WheelMetadata {
-    fn from_str(metadata: &str) -> eyre::Result<Self> {
+    fn from_str(metadata: &str) -> EResult<Self> {
         // First, read all key-value pairs so we can collect all tags into a vec and also detect duplicates.
         // Unknown keys are ignored. They may be from a newer wheel format version.
         let mut key_values: HashMap<_, Vec<_>> = HashMap::new();
@@ -236,7 +236,7 @@ struct MaybeRecordEntry {
 }
 
 impl WheelRecord {
-    // fn from_str(record: &str) -> eyre::Result<Self> {
+    // fn from_str(record: &str) -> EResult<Self> {
     //     let reader = csv::ReaderBuilder::new()
     //         .has_headers(false)
     //         .from_reader(record.as_bytes());
@@ -244,7 +244,7 @@ impl WheelRecord {
     //     Self::_from_csv_reader(reader)
     // }
 
-    pub fn from_file(record: impl AsRef<Path>) -> eyre::Result<Self> {
+    pub fn from_file(record: impl AsRef<Path>) -> EResult<Self> {
         let reader = csv::ReaderBuilder::new()
             .has_headers(false)
             .from_path(record.as_ref())?;
@@ -253,13 +253,13 @@ impl WheelRecord {
             .wrap_err_with(|| eyre!("failed to read record from {:?}", record.as_ref()))
     }
 
-    pub fn save_to_file(&self, dest: impl AsRef<Path>) -> eyre::Result<()> {
+    pub fn save_to_file(&self, dest: impl AsRef<Path>) -> EResult<()> {
         let dest = dest.as_ref();
         self._save_to_file(dest)
             .wrap_err_with(|| eyre!("failed to save record to {:?}", dest))
     }
 
-    fn _save_to_file(&self, dest: &Path) -> eyre::Result<()> {
+    fn _save_to_file(&self, dest: &Path) -> EResult<()> {
         let mut writer = csv::WriterBuilder::new()
             .has_headers(false)
             .from_path(dest)?;
@@ -276,7 +276,7 @@ impl WheelRecord {
     //     String::from_utf8(writer.into_inner().unwrap()).unwrap()
     // }
 
-    fn _from_csv_reader<R: std::io::Read>(reader: csv::Reader<R>) -> eyre::Result<Self> {
+    fn _from_csv_reader<R: std::io::Read>(reader: csv::Reader<R>) -> EResult<Self> {
         let files = reader
             .into_records()
             .map(|record| record.and_then(|rec| rec.deserialize(None)))
@@ -306,7 +306,7 @@ impl WheelRecord {
         Ok(Self { files, record_path })
     }
 
-    fn _to_writer<W: std::io::Write>(&self, writer: &mut csv::Writer<W>) -> eyre::Result<()> {
+    fn _to_writer<W: std::io::Write>(&self, writer: &mut csv::Writer<W>) -> EResult<()> {
         for entry in &self.files {
             writer.serialize(entry)?;
         }
@@ -326,7 +326,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn can_unpack_wheel() -> eyre::Result<()> {
+    fn can_unpack_wheel() -> EResult<()> {
         let tmp_dir = tempdir::TempDir::new("virtpy_wheel_unpack_test")?;
         unpack_wheel(
             "test_files/wheels/result-0.6.0-py3-none-any.whl".as_ref(),
@@ -336,7 +336,7 @@ mod test {
     }
 
     #[test]
-    fn can_parse_wheel_metadata_from_zip() -> eyre::Result<()> {
+    fn can_parse_wheel_metadata_from_zip() -> EResult<()> {
         let wheel_name = "result-0.6.0-py3-none-any.whl";
         let wheel = Path::new("test_files/wheels/").join(wheel_name);
         let mut archive = zip::ZipArchive::new(fs_err::File::open(wheel)?)?;
@@ -347,7 +347,7 @@ mod test {
     }
 
     #[test]
-    fn can_parse_wheel_metadata() -> eyre::Result<()> {
+    fn can_parse_wheel_metadata() -> EResult<()> {
         // TODO: add check for correctness of read metadata
         // Some of the files contain CRLF line endings, some LF.
         // Both must work.
@@ -361,7 +361,7 @@ mod test {
     }
 
     #[test]
-    fn read_record() -> eyre::Result<()> {
+    fn read_record() -> EResult<()> {
         for f in Path::new("test_files/wheel_records").read_dir()? {
             let f = f?;
             WheelRecord::from_file(f.path())?;

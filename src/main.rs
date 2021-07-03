@@ -31,6 +31,10 @@ use fs_err::os::unix::fs::symlink as symlink_file;
 #[cfg(windows)]
 use fs_err::os::windows::fs::symlink_file;
 
+// defining it as an alias allows rust-analyzer to suggest importing it
+// unlike a `use foo as bar` import.
+type EResult<T> = eyre::Result<T>;
+
 #[derive(StructOpt)]
 struct Opt {
     #[structopt(subcommand)] // Note that we mark a field as a subcommand
@@ -124,7 +128,7 @@ const INSTALLED_DISTRIBUTIONS: &str = "installed_distributions.json";
 const CENTRAL_METADATA: &str = "virtpy_central_metadata";
 const LINK_METADATA: &str = "virtpy_link_metadata";
 
-fn check_output(cmd: &mut std::process::Command) -> eyre::Result<String> {
+fn check_output(cmd: &mut std::process::Command) -> EResult<String> {
     let output = cmd.output()?;
     ensure!(output.status.success(), {
         let error = String::from_utf8_lossy(&output.stderr);
@@ -152,7 +156,7 @@ impl PythonVersion {
     }
 }
 
-fn python_version(python_path: &Path) -> eyre::Result<PythonVersion> {
+fn python_version(python_path: &Path) -> EResult<PythonVersion> {
     let output = check_output(std::process::Command::new(python_path).arg("--version"))
         .wrap_err_with(|| eyre!("couldn't get python version of `{}`", python_path.display()))?;
     let version = output.trim().to_owned();
@@ -326,15 +330,15 @@ impl StoredDistributions {
         Some(new_format_stored_distribs)
     }
 
-    fn load(proj_dirs: &ProjectDirs) -> eyre::Result<Self> {
+    fn load(proj_dirs: &ProjectDirs) -> EResult<Self> {
         Self::load_from(proj_dirs.installed_distributions_log())
     }
 
-    fn load_from(path: impl AsRef<Path>) -> eyre::Result<Self> {
+    fn load_from(path: impl AsRef<Path>) -> EResult<Self> {
         Self::_load_from(path.as_ref())
     }
 
-    fn _load_from(path: &Path) -> eyre::Result<Self> {
+    fn _load_from(path: &Path) -> EResult<Self> {
         let file = fs_err::OpenOptions::new()
             .create(true)
             .read(true)
@@ -363,7 +367,7 @@ impl StoredDistributions {
         Ok(Self(distribs, lock))
     }
 
-    fn save(&self, proj_dirs: &ProjectDirs) -> eyre::Result<()> {
+    fn save(&self, proj_dirs: &ProjectDirs) -> EResult<()> {
         let path = proj_dirs.installed_distributions_log();
         File::create(&path)
             .map_err(eyre::Report::new)
@@ -380,7 +384,7 @@ impl StoredDistributions {
 // TODO: Find a good crate for this that also offers locking with timeouts and
 //       a lock that contains the pid of the process holding it, so it can be
 //       detected if the locking process is dead.
-fn lock_file(file: fs_err::File) -> eyre::Result<FileLockGuard> {
+fn lock_file(file: fs_err::File) -> EResult<FileLockGuard> {
     use fs2::FileExt;
     file.file().lock_exclusive()?;
     Ok(FileLockGuard { file })
@@ -610,7 +614,7 @@ fn register_distribution_files(
     distribution: &Distribution,
     stored_distributions: &mut HashMap<DistributionHash, StoredDistribution>,
     options: crate::Options,
-) -> eyre::Result<()> {
+) -> EResult<()> {
     let dist_info_foldername = distribution.dist_info_name();
     let src_dist_info = install_folder.join(&dist_info_foldername);
 
@@ -685,7 +689,7 @@ fn register_distribution_files_of_wheel(
     distribution: &Distribution,
     stored_distributions: &mut HashMap<DistributionHash, StoredDistribution>,
     options: crate::Options,
-) -> eyre::Result<()> {
+) -> EResult<()> {
     let dist_info_foldername = format!("{}-{}.dist-info", distribution.name, distribution.version);
     let src_dist_info = install_folder.join(&dist_info_foldername);
 
@@ -747,7 +751,7 @@ fn register_distribution_files_of_wheel(
     Ok(())
 }
 
-// fn can_move_files(src: &Path, dst: &Path) -> eyre::Result<bool> {
+// fn can_move_files(src: &Path, dst: &Path) -> EResult<bool> {
 //     let filename = ".deleteme_rename_test";
 //     let src = src.join(filename);
 //     let dst = dst.join(filename);
@@ -795,7 +799,7 @@ fn install_and_register_distribution_from_file(
     requirement: Requirement,
     python_version: PythonVersion,
     options: Options,
-) -> eyre::Result<()> {
+) -> EResult<()> {
     let tmp_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), "virtpy_wheel")?;
     // TODO: add conversion to wheel from other file types
     assert!(distrib_path.extension().unwrap().to_str().unwrap() == "whl");
@@ -818,7 +822,7 @@ fn install_and_register_distributions(
     distribs: &[Requirement],
     python_version: PythonVersion,
     options: Options,
-) -> eyre::Result<()> {
+) -> EResult<()> {
     if options.verbose >= 1 {
         println!("Adding {} new distributions", distribs.len());
     }
@@ -868,7 +872,7 @@ fn register_new_distributions(
     pip_log: String,
     python_version: PythonVersion,
     tmp_dir: tempdir::TempDir,
-) -> eyre::Result<()> {
+) -> EResult<()> {
     if options.verbose >= 1 {
         if new_distribs.len() != n_distribs_requested {
             // either an error or a sign that the filters in new_dependencies()
@@ -922,7 +926,7 @@ fn register_new_distribution(
     proj_dirs: &ProjectDirs,
     python_version: PythonVersion,
     tmp_dir: tempdir::TempDir,
-) -> eyre::Result<()> {
+) -> EResult<()> {
     if options.verbose >= 2 {
         println!(
             "    New distribution: {}=={}, {}",
@@ -956,7 +960,7 @@ fn new_dependencies(
     requirements: &[Requirement],
     proj_dirs: &ProjectDirs,
     python_version: PythonVersion,
-) -> eyre::Result<Vec<Requirement>> {
+) -> EResult<Vec<Requirement>> {
     let stored_distributions = StoredDistributions::load(proj_dirs)?;
     let existing_deps = match stored_distributions
         .0
@@ -985,7 +989,7 @@ fn wheel_is_already_registered(
     wheel_hash: DistributionHash,
     proj_dirs: &ProjectDirs,
     python_version: PythonVersion,
-) -> eyre::Result<bool> {
+) -> EResult<bool> {
     let stored_distributions = StoredDistributions::load(proj_dirs)?;
     Ok(stored_distributions
         .0
@@ -1147,7 +1151,7 @@ fn path_to_virtpy(path_override: &Option<PathBuf>) -> &Path {
         .unwrap_or_else(|| DEFAULT_VIRTPY_PATH.as_ref())
 }
 
-fn main() -> eyre::Result<()> {
+fn main() -> EResult<()> {
     color_eyre::install()?;
 
     let opt = Opt::from_args();
@@ -1168,7 +1172,7 @@ fn main() -> eyre::Result<()> {
                 virtpy_path: Option<PathBuf>,
                 options: Options,
                 requirements: PathBuf,
-            ) -> eyre::Result<()> {
+            ) -> EResult<()> {
                 let virtpy = CheckedVirtpy::new(path_to_virtpy(&virtpy_path))?;
                 let requirements = fs_err::read_to_string(requirements)?;
                 let requirements = python_requirements::read_requirements_txt(&requirements);
@@ -1235,7 +1239,7 @@ fn main() -> eyre::Result<()> {
             }
         }
         Command::PoetryInstall {} => {
-            fn poetry_install(proj_dirs: &ProjectDirs, options: Options) -> eyre::Result<()> {
+            fn poetry_install(proj_dirs: &ProjectDirs, options: Options) -> EResult<()> {
                 let virtpy_path: &Path = DEFAULT_VIRTPY_PATH.as_ref();
                 let python_path = python_detection::detect("3")?;
                 let virtpy = match virtpy_path.exists() {
@@ -1397,7 +1401,7 @@ fn _escape(string: &str, replace_with: &str) -> String {
 fn virtpy_remove_dependencies(
     virtpy: &CheckedVirtpy,
     dists_to_remove: HashSet<String>,
-) -> eyre::Result<()> {
+) -> EResult<()> {
     let dists_to_remove = dists_to_remove
         .into_iter()
         .map(|name| normalized_distribution_name_for_wheel(&name))
@@ -1532,7 +1536,7 @@ fn install_executable_package(
     force: bool,
     allow_prereleases: bool,
     python: &str,
-) -> eyre::Result<InstalledStatus> {
+) -> EResult<InstalledStatus> {
     let package_folder = proj_dirs.package_folder(&package);
 
     let python_path = python_detection::detect(&python)?;
@@ -1803,7 +1807,7 @@ fn delete_global_package_executables(
     proj_dirs: &ProjectDirs,
     virtpy_dirs: &VirtpyBacking,
     package: &str,
-) -> eyre::Result<impl Iterator<Item = eyre::Result<()>>> {
+) -> EResult<impl Iterator<Item = EResult<()>>> {
     let dist_info = virtpy_dirs.dist_info(&package)?;
 
     // FIXME: Install all executables from a package and then also delete them all.
@@ -1851,7 +1855,7 @@ fn virtpy_add_dependencies(
     //python_version: PythonVersion,
     install_global_executable: Option<&str>,
     options: Options,
-) -> eyre::Result<()> {
+) -> EResult<()> {
     let new_deps = new_dependencies(&requirements, proj_dirs, virtpy.python_version)?;
 
     // The virtpy doesn't contain pip so get the appropriate global python
@@ -1881,7 +1885,7 @@ fn virtpy_add_dependency_from_file(
     file: &Path,
     //install_global_executable: Option<&str>,
     options: Options,
-) -> eyre::Result<()> {
+) -> EResult<()> {
     let file_hash = DistributionHash::from_file(file);
     let requirement = Requirement::from_filename(
         file.file_name().unwrap().to_str().unwrap(),
@@ -1907,7 +1911,7 @@ fn is_not_found(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::NotFound
 }
 
-fn delete_executable_virtpy(proj_dirs: &ProjectDirs, package: &str) -> eyre::Result<()> {
+fn delete_executable_virtpy(proj_dirs: &ProjectDirs, package: &str) -> EResult<()> {
     let virtpy_path = proj_dirs.package_folder(&package);
     let virtpy = CheckedVirtpy::new(&virtpy_path)?;
     delete_global_package_executables(&proj_dirs, &virtpy.virtpy_backing(), &package)?
@@ -1927,7 +1931,7 @@ fn create_virtpy(
     path: &Path,
     prompt: Option<String>,
     with_pip_shim: bool,
-) -> eyre::Result<CheckedVirtpy> {
+) -> EResult<CheckedVirtpy> {
     let mut rng = rand::thread_rng();
 
     // Generate a random id for the virtpy.
@@ -1965,7 +1969,7 @@ fn create_virtpy_with_id(
     prompt: &str,
     id: &str,
     with_pip_shim: bool,
-) -> eyre::Result<CheckedVirtpy> {
+) -> EResult<CheckedVirtpy> {
     let central_path = project_dirs.virtpys().join(id);
     assert!(!central_path.exists());
     _create_virtpy(central_path, python_path, path, prompt, with_pip_shim)
@@ -1977,7 +1981,7 @@ fn _create_virtpy(
     path: &Path,
     prompt: &str,
     with_pip_shim: bool,
-) -> eyre::Result<CheckedVirtpy> {
+) -> EResult<CheckedVirtpy> {
     _create_bare_venv(python_path, &central_path, prompt)?;
 
     fs_err::create_dir(path)?;
@@ -2035,7 +2039,7 @@ fn _create_virtpy(
     Ok(checked_virtpy)
 }
 
-fn add_pip_shim(virtpy: &CheckedVirtpy) -> eyre::Result<()> {
+fn add_pip_shim(virtpy: &CheckedVirtpy) -> EResult<()> {
     let target_path = virtpy.site_packages().join("pip");
     let shim_zip = include_bytes!("../pip_shim/pip_shim.zip");
     let mut archive = zip::read::ZipArchive::new(std::io::Cursor::new(shim_zip))
@@ -2064,7 +2068,7 @@ enum VirtpyLinkStatus {
     Dangling { target: PathBuf },
 }
 
-fn virtpy_link_status(virtpy_link_path: &Path) -> eyre::Result<VirtpyLinkStatus> {
+fn virtpy_link_status(virtpy_link_path: &Path) -> EResult<VirtpyLinkStatus> {
     let supposed_location = virtpy_link_supposed_location(virtpy_link_path)
         .wrap_err("failed to read original location of virtpy")?;
     if !paths_match(virtpy_link_path, &supposed_location).unwrap() {
@@ -2086,7 +2090,7 @@ fn virtpy_link_status(virtpy_link_path: &Path) -> eyre::Result<VirtpyLinkStatus>
     })
 }
 
-fn paths_match(virtpy: &Path, link_target: &Path) -> eyre::Result<bool> {
+fn paths_match(virtpy: &Path, link_target: &Path) -> EResult<bool> {
     Ok(virtpy.fs_err_canonicalize()? == link_target.fs_err_canonicalize()?)
 }
 
@@ -2111,7 +2115,7 @@ enum VirtpyStatus {
     Orphaned { link: PathBuf },
 }
 
-fn virtpy_status(virtpy_path: &Path) -> eyre::Result<VirtpyStatus> {
+fn virtpy_status(virtpy_path: &Path) -> EResult<VirtpyStatus> {
     let link_location = virtpy_link_location(virtpy_path)
         .wrap_err("failed to read location of corresponding virtpy")?;
 
@@ -2140,7 +2144,7 @@ fn virtpy_status(virtpy_path: &Path) -> eyre::Result<VirtpyStatus> {
     })
 }
 
-fn _create_bare_venv(python_path: &Path, path: &Path, prompt: &str) -> eyre::Result<()> {
+fn _create_bare_venv(python_path: &Path, path: &Path, prompt: &str) -> EResult<()> {
     check_output(
         std::process::Command::new(python_path)
             .args(&["-m", "venv", "--without-pip", "--prompt", prompt])
@@ -2151,7 +2155,7 @@ fn _create_bare_venv(python_path: &Path, path: &Path, prompt: &str) -> eyre::Res
     .wrap_err_with(|| eyre!("failed to create virtpy {}", path.display()))
 }
 
-fn check_poetry_available() -> eyre::Result<()> {
+fn check_poetry_available() -> EResult<()> {
     pathsearch::find_executable_in_path("poetry")
         .map(drop)
         .ok_or_else(|| eyre!("this command requires poetry to be installed and on the PATH. (https://github.com/python-poetry/poetry)"))
@@ -2192,7 +2196,7 @@ trait VirtpyPaths {
         python_path(self.location())
     }
 
-    fn dist_info(&self, package: &str) -> eyre::Result<PathBuf> {
+    fn dist_info(&self, package: &str) -> EResult<PathBuf> {
         let package = &normalized_distribution_name_for_wheel(package);
         self.dist_infos()
             .find(|path| dist_info_matches_package(path, package))
@@ -2227,7 +2231,7 @@ trait VirtpyPaths {
         }
     }
 
-    fn install_paths(&self) -> eyre::Result<InstallPaths> {
+    fn install_paths(&self) -> EResult<InstallPaths> {
         InstallPaths::detect(self.python())
     }
 }
@@ -2241,7 +2245,7 @@ trait VirtpyPaths {
 struct InstallPaths(HashMap<String, PathBuf>);
 
 impl InstallPaths {
-    fn detect(python_path: impl AsRef<Path>) -> eyre::Result<Self> {
+    fn detect(python_path: impl AsRef<Path>) -> EResult<Self> {
         let get_paths = |sys_name| {
             format!(
                 r#"import json
@@ -2286,7 +2290,7 @@ impl VirtpyPaths for CheckedVirtpy {
 }
 
 impl CheckedVirtpy {
-    fn new(virtpy_link: &Path) -> eyre::Result<Self> {
+    fn new(virtpy_link: &Path) -> EResult<Self> {
         match virtpy_link_status(virtpy_link).wrap_err("failed to verify virtpy")? {
             VirtpyLinkStatus::WrongLocation { should, .. } => {
                 Err(eyre!("virtpy copied or moved from {}", should.display()))
@@ -2311,7 +2315,7 @@ impl CheckedVirtpy {
 
     // Returns the path of the python installation on which this
     // this virtpy builds
-    fn global_python(&self) -> eyre::Result<PathBuf> {
+    fn global_python(&self) -> EResult<PathBuf> {
         // FIXME: On windows, the virtpy python is a copy, so there's no symlink to resolve.
         //        We need to take the version and then do a search for the real python.
         #[cfg(unix)]
@@ -2341,7 +2345,7 @@ impl CheckedVirtpy {
     //
     // could also do this at initialization and read the python version from there
     // at the same time
-    fn prompt(&self) -> eyre::Result<String> {
+    fn prompt(&self) -> EResult<String> {
         let ini = self.location().join("pyvenv.cfg");
         let ini = ini::Ini::load_from_file(ini)?;
 
@@ -2352,13 +2356,13 @@ impl CheckedVirtpy {
             .to_owned())
     }
 
-    fn delete(self) -> eyre::Result<()> {
+    fn delete(self) -> EResult<()> {
         fs_err::remove_dir_all(self.location())?;
         delete_virtpy_backing(&self.backing)?;
         Ok(())
     }
 
-    fn reset(self, proj_dirs: &ProjectDirs) -> eyre::Result<Self> {
+    fn reset(self, proj_dirs: &ProjectDirs) -> EResult<Self> {
         // Reset virtpy by deleting it.
         // keep the id the same so currently activated environments stay valid.
         let id = self.id().to_owned();
@@ -2410,7 +2414,7 @@ fn link_requirements_into_virtpy(
     mut requirements: Vec<Requirement>,
     options: Options,
     install_global_executable: Option<&str>,
-) -> eyre::Result<()> {
+) -> EResult<()> {
     // FIXME: when new top-level directories are created in the central venv,
     //        they should also be symlinked in the virtpy
     let site_packages = virtpy.site_packages();
@@ -2477,7 +2481,7 @@ fn link_single_requirement_into_virtpy(
     install_global_executable: Option<&str>,
     distrib: &StoredDistribution,
     site_packages: &Path,
-) -> eyre::Result<()> {
+) -> EResult<()> {
     match distrib.installed_via {
         StoredDistributionType::FromPip => {
             let dist_info_path = proj_dirs.dist_infos().join(distrib.distribution.as_csv());
@@ -2590,7 +2594,7 @@ fn link_files_from_record_into_virtpy_new(
     site_packages: &Path,
     proj_dirs: &ProjectDirs,
     distribution: &Distribution,
-) -> eyre::Result<()> {
+) -> EResult<()> {
     let data_dir = distribution.data_dir_name();
     let paths = virtpy.install_paths()?;
 
@@ -2876,8 +2880,6 @@ fn newly_installed_distributions(pip_log: &str) -> Vec<Distribution> {
 
 #[cfg(test)]
 mod test {
-    use eyre::eyre;
-
     use crate::python_detection::detect;
 
     use super::*;
@@ -2891,13 +2893,13 @@ mod test {
     }
 
     #[test]
-    fn test_check_poetry_available() -> eyre::Result<()> {
+    fn test_check_poetry_available() -> EResult<()> {
         check_poetry_available()
     }
 
     // TODO: add test on same mount point as tmp dir and on different one.
     #[test]
-    fn test_install_uninstall() -> eyre::Result<()> {
+    fn test_install_uninstall() -> EResult<()> {
         let proj_dirs = test_proj_dirs();
 
         let options = Options { verbose: 3 };
@@ -3063,7 +3065,7 @@ mod test {
     }
 
     #[test]
-    fn can_load_old_stored_distribs() -> eyre::Result<()> {
+    fn can_load_old_stored_distribs() -> EResult<()> {
         let old_file = fs_err::File::open("test_files/old_installed_distributions.json")?;
         let old_stored_distribs = StoredDistributions::try_load_old(BufReader::new(old_file))
             .ok_or_else(|| eyre!("failed to load old stored dstributions"))?;
@@ -3076,7 +3078,7 @@ mod test {
     }
 
     #[test]
-    fn loading_old_and_new_stored_distribs_identical() -> eyre::Result<()> {
+    fn loading_old_and_new_stored_distribs_identical() -> EResult<()> {
         let old = StoredDistributions::load_from("test_files/old_installed_distributions.json")?;
         let new = StoredDistributions::load_from("test_files/new_installed_distributions.json")?;
         assert_eq!(old, new);
@@ -3084,7 +3086,7 @@ mod test {
     }
 
     #[test]
-    fn get_install_paths() -> eyre::Result<()> {
+    fn get_install_paths() -> EResult<()> {
         let proj_dirs = test_proj_dirs();
         let tmp_dir = tempdir::TempDir::new("virtpy_test")?;
         let virtpy = create_virtpy(

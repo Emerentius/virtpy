@@ -2,7 +2,7 @@ use eyre::{eyre, WrapErr};
 use pest::Parser;
 use std::{path::Path, process::Command};
 
-use crate::DistributionHash;
+use crate::{DistributionHash, EResult};
 
 #[derive(pest_derive::Parser)]
 #[grammar = "requirements_txt.pest"] // relative to src
@@ -152,7 +152,7 @@ impl Requirement {
         }
     }
 
-    pub fn from_filename(filename: &str, hash: DistributionHash) -> eyre::Result<Self> {
+    pub fn from_filename(filename: &str, hash: DistributionHash) -> EResult<Self> {
         // TODO: use a better parser
         let (_, name, version, _, _) =
             lazy_regex::regex_captures!(r"^([\w\d]+)-(\d+(\.\d+)*)(\.tar\.gz|.*\.whl)", filename)
@@ -181,11 +181,11 @@ pub fn read_requirements_txt(data: &str) -> Vec<Requirement> {
 
 // Meant for installation of single packages with executables
 // into a self-contained venv, like pipx does.
-pub fn get_requirements(package: &str, allow_prereleases: bool) -> eyre::Result<Vec<Requirement>> {
+pub fn get_requirements(package: &str, allow_prereleases: bool) -> EResult<Vec<Requirement>> {
     fn init_temporary_poetry_project(
         package: &str,
         allow_prereleases: bool,
-    ) -> eyre::Result<tempdir::TempDir> {
+    ) -> EResult<tempdir::TempDir> {
         let tmp_dir = tempdir::TempDir::new("virtpy").unwrap();
 
         crate::check_output(
@@ -216,7 +216,7 @@ pub fn get_requirements(package: &str, allow_prereleases: bool) -> eyre::Result<
         .wrap_err("failed to create temporary poetry project")?;
 
     poetry_get_requirements(tmp_dir.as_ref(), false).wrap_err_with(|| {
-        eyre::eyre!(
+        eyre!(
             "failed to get requirements for {} from poetry (allow_prereleases = {})",
             package,
             allow_prereleases
@@ -227,7 +227,7 @@ pub fn get_requirements(package: &str, allow_prereleases: bool) -> eyre::Result<
 pub fn poetry_get_requirements(
     poetry_proj: &Path,
     include_dev_dependencies: bool,
-) -> eyre::Result<Vec<Requirement>> {
+) -> EResult<Vec<Requirement>> {
     poetry_deactivate_venv_creation(poetry_proj);
 
     // Generating the poetry.lock file without actually installing anything.
