@@ -1445,11 +1445,11 @@ fn virtpy_remove_dependencies(
         for file in records(&record_file)? {
             let file = file?;
 
+            let path = site_packages.join(file.path);
             // NO ESCAPE
-            if file.path.is_absolute() || file.path.starts_with("..") {
+            if !path.starts_with(virtpy.location()) {
                 continue;
             }
-            let path = site_packages.join(file.path);
 
             if path.extension() == Some("py".as_ref()) {
                 files_to_remove.push(path.with_extension("pyc"));
