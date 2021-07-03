@@ -222,7 +222,6 @@ impl std::fmt::Display for DistributionHash {
 //       Maybe replace with FileHash?
 type PackageFileHash = String;
 
-// TODO: unify with `Distribution`
 #[derive(Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize, Clone)]
 struct StoredDistribution {
     distribution: Distribution,
@@ -298,10 +297,6 @@ impl StoredDistribution {
     }
 }
 
-// TODO: use lockguards instead of the primitives exposed by fs2.
-//       Also find a good crate that offers locking with timeouts and
-//       a lock that contains the pid of the process holding it, so it can be
-//       detected if the locking process is dead.
 impl StoredDistributions {
     fn try_load_old(reader: impl std::io::Read) -> Option<_StoredDistributions> {
         let stored_distribs = serde_json::from_reader::<
@@ -384,7 +379,9 @@ impl StoredDistributions {
     }
 }
 
-// TODO: replace with library
+// TODO: Find a good crate for this that also offers locking with timeouts and
+//       a lock that contains the pid of the process holding it, so it can be
+//       detected if the locking process is dead.
 fn lock_file(file: fs_err::File) -> eyre::Result<FileLockGuard> {
     use fs2::FileExt;
     file.file().lock_exclusive()?;
@@ -531,7 +528,7 @@ fn generate_executable(
         // The launcher needs to be concatenated with a shebang and a zip of the code to be executed.
         // The launcher code is at https://bitbucket.org/vinay.sajip/simple_launcher/
 
-        // TODO: support 32 bit launchers and maybe GUI launchers
+        // 32 bit launchers and GUI launchers are not supported (yet)
         use std::io::Write;
         static LAUNCHER_CODE: &[u8] = include_bytes!("../windows_exe_wrappers/t64.exe");
         let mut zip_writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::<u8>::new()));
@@ -2040,7 +2037,6 @@ fn _create_virtpy(
 }
 
 fn add_pip_shim(virtpy: &CheckedVirtpy) -> eyre::Result<()> {
-    // TODO: make the pip shim into a wheel and install it the regular way
     let target_path = virtpy.site_packages().join("pip");
     let shim_zip = include_bytes!("../pip_shim/pip_shim.zip");
     let mut archive = zip::read::ZipArchive::new(std::io::Cursor::new(shim_zip))
@@ -2498,7 +2494,6 @@ fn link_single_requirement_into_virtpy(
                 );
             }
 
-            // TODO: create directory and hardlink contents
             symlink_dir(&dist_info_path, &target)
                 .or_else(ignore_target_exists)
                 .unwrap();
@@ -2532,7 +2527,6 @@ fn link_single_requirement_into_virtpy(
                 proj_dirs,
                 Some(&mut record),
             )?;
-            // TODO: add generated executables from entrypoints to RECORD
 
             // The RECORD is not linked in, because it doesn't (can't) contain its own hash.
             // Save the (possibly amended) record into the virtpy
@@ -2720,8 +2714,6 @@ fn link_file_into_virtpy(
     };
 }
 
-// Currently, this works only for pip installed packages
-// TODO: adapt to new method
 fn install_executables(
     install_global_executable: Option<&str>,
     stored_distrib: &StoredDistribution,
