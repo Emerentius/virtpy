@@ -1381,12 +1381,13 @@ fn main() -> eyre::Result<()> {
 //     _escape(name, "-")
 // }
 
-// TODO: adapt to actual specification: https://packaging.python.org/specifications/binary-distribution-format/#escaping-and-unicode
-// https://www.python.org/dev/peps/pep-0491/#escaping-and-unicode
+// Following https://packaging.python.org/specifications/binary-distribution-format/#escaping-and-unicode
 // This is important because the wheel name components may contain "-" characters,
 // but those are separators in a wheel name.
-fn normalized_wheel_name_part(wheel_name_part: &str) -> String {
-    _escape(wheel_name_part, "_")
+// We need this because the dist-info and data directory contain the normalized distrib name.
+// We may have to add version normalization, if we ever get unnormalized ones.
+fn normalized_distribution_name_for_wheel(distrib_name: &str) -> String {
+    _escape(distrib_name, "_")
 }
 
 fn _escape(string: &str, replace_with: &str) -> String {
@@ -1401,7 +1402,7 @@ fn virtpy_remove_dependencies(
 ) -> eyre::Result<()> {
     let dists_to_remove = dists_to_remove
         .into_iter()
-        .map(|name| normalized_wheel_name_part(&name))
+        .map(|name| normalized_distribution_name_for_wheel(&name))
         .collect::<HashSet<_>>();
 
     let site_packages = virtpy.site_packages();
@@ -2194,7 +2195,7 @@ trait VirtpyPaths {
     }
 
     fn dist_info(&self, package: &str) -> eyre::Result<PathBuf> {
-        let package = &normalized_wheel_name_part(package);
+        let package = &normalized_distribution_name_for_wheel(package);
         self.dist_infos()
             .find(|path| dist_info_matches_package(path, package))
             .ok_or_else(|| eyre::eyre!("failed to find dist-info for {}", package))
