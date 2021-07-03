@@ -1,4 +1,4 @@
-use eyre::WrapErr;
+use eyre::{bail, eyre, WrapErr};
 use std::{
     collections::HashMap,
     fmt::Display,
@@ -22,9 +22,9 @@ pub fn unpack_wheel(wheel: &Path, dest: &Path) -> eyre::Result<()> {
 
     let wheel_name = wheel
         .file_name()
-        .ok_or_else(|| eyre::eyre!("wheel path does not point to file"))?
+        .ok_or_else(|| eyre!("wheel path does not point to file"))?
         .to_str()
-        .ok_or_else(|| eyre::eyre!("wheel name is not valid utf8: {}", wheel.display()))?;
+        .ok_or_else(|| eyre!("wheel name is not valid utf8: {}", wheel.display()))?;
     let metadata = parse_wheel_metadata(wheel_name, &mut archive)?;
     check_version_support(wheel_name, metadata)?;
 
@@ -39,9 +39,7 @@ pub fn unpack_wheel(wheel: &Path, dest: &Path) -> eyre::Result<()> {
 fn check_version_support(wheel_name: &str, metadata: WheelMetadata) -> eyre::Result<()> {
     match metadata.version.support_status() {
         WheelVersionSupport::SupportedButNewer(supported_version) => println!("Warning: wheel {} uses a compatible, but newer version than supported: wheel format version: {}, newest supported: {}", wheel_name, metadata.version, supported_version),
-        WheelVersionSupport::Unsupported => {
-            eyre::bail!("wheel uses unsupported version {}", metadata.version)
-        }
+        WheelVersionSupport::Unsupported => bail!("wheel uses unsupported version {}", metadata.version),
         WheelVersionSupport::Supported => (),
     };
     Ok(())
@@ -64,7 +62,7 @@ fn parse_wheel_metadata<R: Read + Seek>(
 
 fn wheel_dist_info_path(wheel_name: &str) -> eyre::Result<String> {
     let (idx, _) = wheel_name.char_indices().filter(|&(_, ch)| ch == '-')
-    .nth(1).ok_or_else(|| eyre::eyre!("deformed wheel name, could not determine distribition and version from wheel name {}", wheel_name))?;
+    .nth(1).ok_or_else(|| eyre!("deformed wheel name, could not determine distribition and version from wheel name {}", wheel_name))?;
 
     Ok(format!("{}.dist-info", &wheel_name[..idx]))
 }
@@ -87,16 +85,15 @@ impl WheelFormatVersion {
     fn from_str(version: &str) -> eyre::Result<Self> {
         let (_, major, minor) = lazy_regex::regex_captures!(r"^(\d+)\.(\d+)$", version)
             .ok_or_else(|| {
-                eyre::eyre!(
+                eyre!(
                     "version does not match format $MAJOR_NUM.$MINOR_NUM: {}",
                     version
                 )
             })?;
 
         let parse_version = |num: &str, info: &str| {
-            num.parse().wrap_err_with(|| {
-                eyre::eyre!("could not parse {} version number: \"{:?}\"", info, num)
-            })
+            num.parse()
+                .wrap_err_with(|| eyre!("could not parse {} version number: \"{:?}\"", info, num))
         };
         Ok(Self {
             major: parse_version(major, "major")?,
@@ -161,26 +158,25 @@ impl WheelMetadata {
         {
             let (key, value) = line
                 .split_once(": ")
-                .ok_or_else(|| eyre::eyre!("found key without value: {:?}", line))?;
+                .ok_or_else(|| eyre!("found key without value: {:?}", line))?;
             key_values.entry(key).or_default().push(value);
         }
 
         let get_unique_optional = |key| match key_values.get(key) {
             Some(x) if x.len() == 1 => Ok(Some(x[0].to_owned())),
-            Some(_) => Err(eyre::eyre!("multiple key-value pairs for key {}", key)),
+            Some(_) => Err(eyre!("multiple key-value pairs for key {}", key)),
             None => return Ok(None),
         };
 
         let get_unique = |key| {
-            get_unique_optional(key).and_then(|opt_val| {
-                opt_val.ok_or_else(|| eyre::eyre!("missing required key {}", key))
-            })
+            get_unique_optional(key)
+                .and_then(|opt_val| opt_val.ok_or_else(|| eyre!("missing required key {}", key)))
         };
 
         let parse_bool = |value| match value {
             "true" => Ok(true),
             "false" => Ok(false),
-            _ => Err(eyre::eyre!("invalid value for boolean: {:?}", value)),
+            _ => Err(eyre!("invalid value for boolean: {:?}", value)),
         };
 
         Ok(WheelMetadata {
@@ -254,13 +250,13 @@ impl WheelRecord {
             .from_path(record.as_ref())?;
 
         Self::_from_csv_reader(reader)
-            .wrap_err_with(|| eyre::eyre!("failed to read record from {:?}", record.as_ref()))
+            .wrap_err_with(|| eyre!("failed to read record from {:?}", record.as_ref()))
     }
 
     pub fn save_to_file(&self, dest: impl AsRef<Path>) -> eyre::Result<()> {
         let dest = dest.as_ref();
         self._save_to_file(dest)
-            .wrap_err_with(|| eyre::eyre!("failed to save record to {:?}", dest))
+            .wrap_err_with(|| eyre!("failed to save record to {:?}", dest))
     }
 
     fn _save_to_file(&self, dest: &Path) -> eyre::Result<()> {
@@ -294,7 +290,7 @@ impl WheelRecord {
                     lazy_regex::regex_is_match!(r"[^-/]+-[^-/]+\.dist-info/RECORD", path)
                 })
             })
-            .ok_or_else(|| eyre::eyre!("RECORD does not contain path to itself"))?
+            .ok_or_else(|| eyre!("RECORD does not contain path to itself"))?
             .path
             .clone();
         let files = files
@@ -325,6 +321,8 @@ impl WheelRecord {
 
 #[cfg(test)]
 mod test {
+    use eyre::eyre;
+
     use super::*;
 
     #[test]
@@ -357,7 +355,7 @@ mod test {
             let f = f?;
             let data = fs_err::read_to_string(f.path())?;
             WheelMetadata::from_str(&data)
-                .wrap_err_with(|| eyre::eyre!("failed to parse data for {:?}", f.path()))?;
+                .wrap_err_with(|| eyre!("failed to parse data for {:?}", f.path()))?;
         }
         Ok(())
     }

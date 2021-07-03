@@ -1,4 +1,4 @@
-use eyre::WrapErr;
+use eyre::{bail, ensure, eyre, WrapErr};
 use fs_err::File;
 use itertools::Itertools;
 use python_requirements::Requirement;
@@ -126,14 +126,14 @@ const LINK_METADATA: &str = "virtpy_link_metadata";
 
 fn check_output(cmd: &mut std::process::Command) -> eyre::Result<String> {
     let output = cmd.output()?;
-    eyre::ensure!(output.status.success(), {
+    ensure!(output.status.success(), {
         let error = String::from_utf8_lossy(&output.stderr);
-        eyre::eyre!("command failed\n    {:?}:\n{}", cmd, error)
+        eyre!("command failed\n    {:?}:\n{}", cmd, error)
     });
     // TODO: check out what kind error message FromUtf8Error converts into
     //       and whether it's sufficient
     String::from_utf8(output.stdout)
-        .wrap_err_with(|| eyre::eyre!("output isn't valid utf8 for {:?}", cmd))
+        .wrap_err_with(|| eyre!("output isn't valid utf8 for {:?}", cmd))
 }
 
 // probably missing prereleases and such
@@ -154,17 +154,15 @@ impl PythonVersion {
 
 fn python_version(python_path: &Path) -> eyre::Result<PythonVersion> {
     let output = check_output(std::process::Command::new(python_path).arg("--version"))
-        .wrap_err_with(|| {
-            eyre::eyre!("couldn't get python version of `{}`", python_path.display())
-        })?;
+        .wrap_err_with(|| eyre!("couldn't get python version of `{}`", python_path.display()))?;
     let version = output.trim().to_owned();
     let (_, major, minor, patch) =
         lazy_regex::regex_captures!(r"Python (\d+)\.(\d+)\.(\d+)", &version)
-            .ok_or_else(|| eyre::eyre!("failed to read python version from {:?}", version))?;
+            .ok_or_else(|| eyre!("failed to read python version from {:?}", version))?;
 
     let parse_num = |num: &str| {
         num.parse::<i32>()
-            .wrap_err_with(|| eyre::eyre!("failed to parse number: \"{:?}\"", num))
+            .wrap_err_with(|| eyre!("failed to parse number: \"{:?}\"", num))
     };
     Ok(PythonVersion {
         major: parse_num(major)?,
@@ -906,7 +904,7 @@ fn register_new_distributions(
             options,
         )
         .wrap_err_with(|| {
-            eyre::eyre!(
+            eyre!(
                 "failed to add distribution files for {} {}",
                 distrib.name,
                 distrib.version
@@ -944,7 +942,7 @@ fn register_new_distribution(
         options,
     )
     .wrap_err_with(|| {
-        eyre::eyre!(
+        eyre!(
             "failed to add distribution files for {} {}",
             distrib.name,
             distrib.version
@@ -1229,7 +1227,7 @@ fn main() -> eyre::Result<()> {
         Command::Uninstall { package } => {
             for package in package {
                 match delete_executable_virtpy(&proj_dirs, &package)
-                    .wrap_err(eyre::eyre!("failed to uninstall {}", package))
+                    .wrap_err(eyre!("failed to uninstall {}", package))
                 {
                     Ok(()) => println!("uninstalled {}.", package),
                     Err(err) => eprintln!("{:?}", err),
@@ -1842,7 +1840,7 @@ fn delete_global_package_executables(
                 // Necessary when deleting from RECORD and when we're not installing all scripts
                 // as pip does (e.g. because we're leaving out package.data scripts)
                 .or_else(ignore_target_doesnt_exist)
-                .wrap_err_with(|| eyre::eyre!("failed to remove {}", path.display()))
+                .wrap_err_with(|| eyre!("failed to remove {}", path.display()))
         }))
 }
 
@@ -1947,7 +1945,7 @@ fn create_virtpy(
         .take(n_max_attempts)
         .find(|path| !path.exists())
         .ok_or_else(|| {
-            eyre::eyre!(
+            eyre!(
                 "failed to generate an unused virtpy path in {} attempts",
                 n_max_attempts
             )
@@ -2150,13 +2148,13 @@ fn _create_bare_venv(python_path: &Path, path: &Path, prompt: &str) -> eyre::Res
             .stdout(std::process::Stdio::null()),
     )
     .map(drop)
-    .wrap_err_with(|| eyre::eyre!("failed to create virtpy {}", path.display()))
+    .wrap_err_with(|| eyre!("failed to create virtpy {}", path.display()))
 }
 
 fn check_poetry_available() -> eyre::Result<()> {
     pathsearch::find_executable_in_path("poetry")
         .map(drop)
-        .ok_or_else(|| eyre::eyre!("this command requires poetry to be installed and on the PATH. (https://github.com/python-poetry/poetry)"))
+        .ok_or_else(|| eyre!("this command requires poetry to be installed and on the PATH. (https://github.com/python-poetry/poetry)"))
 }
 
 struct CheckedVirtpy {
@@ -2198,7 +2196,7 @@ trait VirtpyPaths {
         let package = &normalized_distribution_name_for_wheel(package);
         self.dist_infos()
             .find(|path| dist_info_matches_package(path, package))
-            .ok_or_else(|| eyre::eyre!("failed to find dist-info for {}", package))
+            .ok_or_else(|| eyre!("failed to find dist-info for {}", package))
     }
 
     fn dist_infos(&self) -> Box<dyn Iterator<Item = PathBuf>> {
@@ -2290,11 +2288,10 @@ impl VirtpyPaths for CheckedVirtpy {
 impl CheckedVirtpy {
     fn new(virtpy_link: &Path) -> eyre::Result<Self> {
         match virtpy_link_status(virtpy_link).wrap_err("failed to verify virtpy")? {
-            VirtpyLinkStatus::WrongLocation { should, .. } => Err(eyre::eyre!(
-                "virtpy copied or moved from {}",
-                should.display()
-            )),
-            VirtpyLinkStatus::Dangling { target } => Err(eyre::eyre!(
+            VirtpyLinkStatus::WrongLocation { should, .. } => {
+                Err(eyre!("virtpy copied or moved from {}", should.display()))
+            }
+            VirtpyLinkStatus::Dangling { target } => Err(eyre!(
                 "backing storage for virtpy not found: {}",
                 target.display()
             )),
@@ -2305,7 +2302,7 @@ impl CheckedVirtpy {
             }),
         }
         .wrap_err_with(|| {
-            eyre::eyre!(
+            eyre!(
                 "the virtpy `{}` is broken, please recreate it.",
                 virtpy_link.display(),
             )
@@ -2320,7 +2317,7 @@ impl CheckedVirtpy {
         #[cfg(unix)]
         {
             self.python().fs_err_canonicalize().wrap_err_with(|| {
-                eyre::eyre!(
+                eyre!(
                     "failed to find path of the global python used by virtpy at {}",
                     self.link.display()
                 )
@@ -2726,7 +2723,7 @@ fn install_executables(
         install_global_executable,
     ) {
         (Some(ep), _) => ep,
-        (None, true) => eyre::bail!(
+        (None, true) => bail!(
             "{} contains no executables",
             stored_distrib.distribution.name
         ),
@@ -2734,7 +2731,7 @@ fn install_executables(
     };
     for entrypoint in entrypoints {
         let executables_path = virtpy.executables();
-        let err = || eyre::eyre!("failed to install executable {}", entrypoint.name);
+        let err = || eyre!("failed to install executable {}", entrypoint.name);
         let python_path = executables_path.join("python");
         let record_entry = entrypoint
             .generate_executable(&executables_path, &python_path, &virtpy.site_packages())
@@ -2879,6 +2876,8 @@ fn newly_installed_distributions(pip_log: &str) -> Vec<Distribution> {
 
 #[cfg(test)]
 mod test {
+    use eyre::eyre;
+
     use crate::python_detection::detect;
 
     use super::*;
@@ -3067,7 +3066,7 @@ mod test {
     fn can_load_old_stored_distribs() -> eyre::Result<()> {
         let old_file = fs_err::File::open("test_files/old_installed_distributions.json")?;
         let old_stored_distribs = StoredDistributions::try_load_old(BufReader::new(old_file))
-            .ok_or_else(|| eyre::eyre!("failed to load old stored dstributions"))?;
+            .ok_or_else(|| eyre!("failed to load old stored dstributions"))?;
 
         let new_file = fs_err::read_to_string("test_files/new_installed_distributions.json")?;
         let new_stored_distribs: _StoredDistributions =

@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use eyre::{bail, eyre};
+
 pub fn detect(python: &str) -> eyre::Result<PathBuf> {
     let path = Path::new(&python);
 
@@ -9,7 +11,7 @@ pub fn detect(python: &str) -> eyre::Result<PathBuf> {
         if path.exists() {
             return Ok(path.to_owned());
         } else {
-            eyre::bail!("python not found at {}", path.display());
+            bail!("python not found at {}", path.display());
         }
     }
 
@@ -52,7 +54,7 @@ fn find_python_by_version(major: u32, minor: Option<u32>) -> eyre::Result<PathBu
             Ok(path.to_path_buf())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-            Err(eyre::eyre!("can't find python version {}", version)
+            Err(eyre!("can't find python version {}", version)
                 .section(stdout.header("stdout"))
                 .section(stderr.header("stderr")))
         }
@@ -62,7 +64,7 @@ fn find_python_by_version(major: u32, minor: Option<u32>) -> eyre::Result<PathBu
 fn find_executable_in_path(path: impl AsRef<Path>) -> eyre::Result<PathBuf> {
     let path = path.as_ref();
     pathsearch::find_executable_in_path(path).ok_or_else(|| {
-        eyre::eyre!(
+        eyre!(
             "couldn't find python executable `{}` in PATH",
             path.display()
         )

@@ -1,4 +1,4 @@
-use eyre::WrapErr;
+use eyre::{eyre, WrapErr};
 use pest::Parser;
 use std::{path::Path, process::Command};
 
@@ -208,7 +208,7 @@ pub fn get_requirements(package: &str, allow_prereleases: bool) -> eyre::Result<
         }
         doc["tool"]["poetry"]["dependencies"][package] = toml_edit::Item::Table(dep_table);
         fs_err::write(&toml_path, doc.to_string())
-            .wrap_err_with(|| eyre::eyre!("failed to add {} to pyproject.toml", package))?;
+            .wrap_err_with(|| eyre!("failed to add {} to pyproject.toml", package))?;
         Ok(tmp_dir)
     }
 
