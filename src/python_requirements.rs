@@ -1,8 +1,10 @@
 use eyre::{eyre, WrapErr};
 use pest::Parser;
-use std::{path::Path, process::Command};
+use std::convert::TryInto;
+use std::process::Command;
 
 use crate::{DistributionHash, EResult};
+use crate::{Path, INVALID_UTF8_PATH};
 
 #[derive(pest_derive::Parser)]
 #[grammar = "requirements_txt.pest"] // relative to src
@@ -215,13 +217,14 @@ pub fn get_requirements(package: &str, allow_prereleases: bool) -> EResult<Vec<R
     let tmp_dir = init_temporary_poetry_project(package, allow_prereleases)
         .wrap_err("failed to create temporary poetry project")?;
 
-    poetry_get_requirements(tmp_dir.as_ref(), false).wrap_err_with(|| {
-        eyre!(
-            "failed to get requirements for {} from poetry (allow_prereleases = {})",
-            package,
-            allow_prereleases
-        )
-    })
+    poetry_get_requirements(tmp_dir.path().try_into().expect(INVALID_UTF8_PATH), false)
+        .wrap_err_with(|| {
+            eyre!(
+                "failed to get requirements for {} from poetry (allow_prereleases = {})",
+                package,
+                allow_prereleases
+            )
+        })
 }
 
 pub fn poetry_get_requirements(

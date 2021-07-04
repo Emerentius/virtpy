@@ -1,13 +1,13 @@
-use camino::Utf8PathBuf;
 use eyre::{bail, eyre, WrapErr};
 use std::{
     collections::HashMap,
     fmt::Display,
     io::{Read, Seek},
-    path::Path,
+    path::Path as StdPath,
 };
 
 use crate::{EResult, FileHash};
+use crate::{Path, PathBuf};
 
 // This implements a wheel installer following the specification here:
 // https://packaging.python.org/specifications/binary-distribution-format/
@@ -18,14 +18,12 @@ use crate::{EResult, FileHash};
 // linked above.
 // https://www.python.org/dev/peps/pep-0491/#pep-deferral
 
-pub fn unpack_wheel(wheel: &Path, dest: &Path) -> EResult<()> {
+pub fn unpack_wheel(wheel: &Path, dest: &StdPath) -> EResult<()> {
     let mut archive = zip::ZipArchive::new(fs_err::File::open(wheel)?)?;
 
     let wheel_name = wheel
         .file_name()
-        .ok_or_else(|| eyre!("wheel path does not point to file"))?
-        .to_str()
-        .ok_or_else(|| eyre!("wheel name is not valid utf8: {}", wheel.display()))?;
+        .ok_or_else(|| eyre!("wheel path does not point to file"))?;
     let metadata = parse_wheel_metadata(wheel_name, &mut archive)?;
     check_version_support(wheel_name, metadata)?;
 
@@ -198,7 +196,7 @@ pub struct WheelRecord {
     // stored separately just so we can easily recreate the line for the RECORD itself
     // without making paths and filesizes optional for all other files.
     // If `None`, don't write a RECORD line.
-    pub record_path: Utf8PathBuf,
+    pub record_path: PathBuf,
     // All files in the record except for the record itself.
     pub files: Vec<RecordEntry>,
 }
@@ -224,14 +222,14 @@ pub struct WheelRecord {
 )]
 #[must_use]
 pub struct RecordEntry {
-    pub path: Utf8PathBuf,
+    pub path: PathBuf,
     pub hash: FileHash,
     pub filesize: u64,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash, Clone)]
 struct MaybeRecordEntry {
-    path: Utf8PathBuf,
+    path: PathBuf,
     hash: String,
     filesize: Option<u64>,
 }
@@ -363,7 +361,7 @@ mod test {
     fn read_record() -> EResult<()> {
         for f in Path::new("test_files/wheel_records").read_dir()? {
             let f = f?;
-            WheelRecord::from_file(f.path())?;
+            WheelRecord::from_file(PathBuf::from_path_buf(f.path()).unwrap())?;
         }
         WheelRecord::from_file("test_files/RECORD")?;
         Ok(())

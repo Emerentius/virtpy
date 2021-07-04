@@ -1,4 +1,4 @@
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
 use eyre::{bail, ensure, eyre, WrapErr};
 use fs_err::File;
 use itertools::Itertools;
@@ -10,11 +10,7 @@ use std::collections::HashSet;
 use std::convert::TryInto;
 use std::fmt::Write;
 use std::io::Seek;
-use std::{
-    collections::HashMap,
-    io::BufReader,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashMap, io::BufReader, path::Path as StdPath};
 use structopt::StructOpt;
 
 mod python_detection;
@@ -36,6 +32,8 @@ use fs_err::os::windows::fs::symlink_file;
 // defining it as an alias allows rust-analyzer to suggest importing it
 // unlike a `use foo as bar` import.
 type EResult<T> = eyre::Result<T>;
+type Path = Utf8Path;
+type PathBuf = Utf8PathBuf;
 
 #[derive(StructOpt)]
 struct Opt {
@@ -130,6 +128,8 @@ const INSTALLED_DISTRIBUTIONS: &str = "installed_distributions.json";
 const CENTRAL_METADATA: &str = "virtpy_central_metadata";
 const LINK_METADATA: &str = "virtpy_link_metadata";
 
+const INVALID_UTF8_PATH: &str = "path is not valid utf8";
+
 fn check_output(cmd: &mut std::process::Command) -> EResult<String> {
     let output = cmd.output()?;
     ensure!(output.status.success(), {
@@ -160,7 +160,7 @@ impl PythonVersion {
 
 fn python_version(python_path: &Path) -> EResult<PythonVersion> {
     let output = check_output(std::process::Command::new(python_path).arg("--version"))
-        .wrap_err_with(|| eyre!("couldn't get python version of `{}`", python_path.display()))?;
+        .wrap_err_with(|| eyre!("couldn't get python version of `{}`", python_path))?;
     let version = output.trim().to_owned();
     let (_, major, minor, patch) =
         lazy_regex::regex_captures!(r"Python (\d+)\.(\d+)\.(\d+)", &version)
@@ -436,7 +436,11 @@ fn serialize_requirements_txt(reqs: &[Requirement]) -> String {
     output
 }
 
-fn copy_directory(from: &Path, to: &Path, use_move: bool) {
+fn copy_directory(from: impl AsRef<StdPath>, to: impl AsRef<StdPath>, use_move: bool) {
+    _copy_directory(from.as_ref(), to.as_ref(), use_move)
+}
+
+fn _copy_directory(from: &StdPath, to: &StdPath, use_move: bool) {
     for dir_entry in walkdir::WalkDir::new(from) {
         let dir_entry = dir_entry.unwrap();
         let path = dir_entry.path();
@@ -514,7 +518,7 @@ fn generate_executable(
     code: &str,
     site_packages: &Path,
 ) -> std::io::Result<RecordEntry> {
-    let shebang = format!("#!{}", python_path.display());
+    let shebang = format!("#!{}", python_path);
     #[cfg(unix)]
     {
         _generate_executable(
@@ -568,7 +572,7 @@ fn _generate_executable(
     Ok(RecordEntry {
         path: relative_path(site_packages, dest)
             .try_into()
-            .expect("non utf8 path in virtpy"),
+            .expect(INVALID_UTF8_PATH),
         hash: FileHash::from_reader(bytes),
         filesize: bytes.len() as u64,
     })
@@ -604,7 +608,15 @@ fn _entrypoints(path: &Path) -> Option<Vec<EntryPoint>> {
 //     format!("{},{},{}", name, version, hash)
 // }
 
-fn move_file(src: &Path, dst: &Path, use_move: bool) -> std::io::Result<()> {
+fn move_file(
+    src: impl AsRef<StdPath>,
+    dst: impl AsRef<StdPath>,
+    use_move: bool,
+) -> std::io::Result<()> {
+    _move_file(src.as_ref(), dst.as_ref(), use_move)
+}
+
+fn _move_file(src: &StdPath, dst: &StdPath, use_move: bool) -> std::io::Result<()> {
     if use_move {
         fs_err::rename(src, dst)
     } else {
@@ -668,7 +680,7 @@ fn register_distribution_files(
         let src = install_folder.join(path);
         let dest = proj_dirs.package_files().join(file.hash.0);
         if options.verbose >= 2 {
-            println!("    copying {} to {}", src.display(), dest.display());
+            println!("    copying {} to {}", src, dest);
         }
 
         let res = move_file(&src, &dest, use_move);
@@ -729,7 +741,7 @@ fn register_distribution_files_of_wheel(
         assert!(src.starts_with(&install_folder));
         let dest = proj_dirs.package_files().join(&file.hash.0);
         if options.verbose >= 2 {
-            println!("    moving {} to {}", src.display(), dest.display());
+            println!("    moving {} to {}", src, dest);
         }
 
         let res = move_file(&src, &dest, use_move);
@@ -783,15 +795,11 @@ fn records(record: &Path) -> csv::Result<impl Iterator<Item = csv::Result<Record
             let first = path
                 .components()
                 .find_map(|comp| match comp {
-                    std::path::Component::Normal(path) => Some(path),
+                    camino::Utf8Component::Normal(path) => Some(path),
                     _ => None,
                 })
                 .unwrap();
-            let is_dist_info = first
-                .to_owned()
-                .into_string()
-                .unwrap()
-                .ends_with(".dist-info");
+            let is_dist_info = first.ends_with(".dist-info");
 
             (!is_dist_info).then(|| record.deserialize(None))
         }))
@@ -806,8 +814,11 @@ fn install_and_register_distribution_from_file(
 ) -> EResult<()> {
     let tmp_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), "virtpy_wheel")?;
     // TODO: add conversion to wheel from other file types
-    assert!(distrib_path.extension().unwrap().to_str().unwrap() == "whl");
-    python_wheel::unpack_wheel(distrib_path, tmp_dir.path())?;
+    assert!(distrib_path.extension().unwrap() == "whl");
+    python_wheel::unpack_wheel(
+        distrib_path,
+        tmp_dir.path().try_into().expect(INVALID_UTF8_PATH),
+    )?;
 
     let distrib = Distribution {
         name: requirement.name,
@@ -906,7 +917,7 @@ fn register_new_distributions(
     for distrib in new_distribs {
         register_distribution_files(
             proj_dirs,
-            tmp_dir.as_ref(),
+            tmp_dir.path().try_into().expect(INVALID_UTF8_PATH),
             &distrib,
             stored_distributions,
             options,
@@ -944,7 +955,7 @@ fn register_new_distribution(
         .or_default();
     register_distribution_files_of_wheel(
         proj_dirs,
-        tmp_dir.as_ref(),
+        tmp_dir.path().try_into().expect(INVALID_UTF8_PATH),
         &distrib,
         stored_distributions,
         options,
@@ -1014,7 +1025,11 @@ struct ProjectDirs {
 impl ProjectDirs {
     fn new() -> Option<Self> {
         directories::ProjectDirs::from("", "", "virtpy").map(|proj_dirs| Self {
-            data_dir: proj_dirs.data_dir().to_owned(),
+            data_dir: proj_dirs
+                .data_dir()
+                .to_owned()
+                .try_into()
+                .expect(INVALID_UTF8_PATH),
         })
     }
 
@@ -1283,7 +1298,7 @@ fn main() -> EResult<()> {
             //     match virtpy_status(&path) {
             //         Ok(VirtpyStatus::Ok { .. }) => (),
             //         Ok(VirtpyStatus::Orphaned { link }) => danglers.push((path, link)),
-            //         Err(err) => println!("failed to check {}: {}", path.display(), err),
+            //         Err(err) => println!("failed to check {}: {}", path, err),
             //     };
             // }
 
@@ -1300,7 +1315,7 @@ fn main() -> EResult<()> {
             //         println!("If you've moved some of these, recreate new ones in their place as they'll break when the orphaned backing stores are deleted.\nRun `virtpy gc --remove` to delete orphans\n");
 
             //         for (target, virtpy_gone_awol) in danglers {
-            //             println!("{} => {}", virtpy_gone_awol.display(), target.display());
+            //             println!("{} => {}", virtpy_gone_awol, target);
             //         }
             //     }
             // }
@@ -1352,7 +1367,7 @@ fn main() -> EResult<()> {
             //             for file in unused_package_files {
             //                 assert!(file.starts_with(&package_files_dir));
             //                 if options.verbose >= 1 {
-            //                     println!("Removing {}", file.display());
+            //                     println!("Removing {}", file);
             //                 }
             //                 fs_err::remove_file(file).unwrap();
             //             }
@@ -1361,7 +1376,7 @@ fn main() -> EResult<()> {
             // }
         }
         Command::Path(PathCmd::Bin) | Command::Path(PathCmd::Executables) => {
-            println!("{}", proj_dirs.executables().display());
+            println!("{}", proj_dirs.executables());
         }
         Command::InternalStore(InternalStoreCmd::Stats) => {
             todo!()
@@ -1415,8 +1430,10 @@ fn virtpy_remove_dependencies(
 
     let mut dist_infos = vec![];
 
+    let site_packages_std: &StdPath = site_packages.as_ref();
+
     // TODO: detect distributions that aren't installed
-    for dir_entry in site_packages.fs_err_read_dir()? {
+    for dir_entry in site_packages_std.fs_err_read_dir()? {
         let dir_entry = dir_entry?;
         // use fs_err::metadata instead of DirEntry::metadata so it traverses symlinks
         // as dist-info dirs are currently symlinked in.
@@ -1424,14 +1441,10 @@ fn virtpy_remove_dependencies(
         if !filetype.is_dir() {
             continue;
         }
-        let dirname = match dir_entry.file_name().into_string() {
-            Ok(name) => name,
-            // Skip the directory and assume it's not for a distribution if not utf8.
-            // Per PEP 508, distribution names are limited to a specific form
-            // that is 100% ASCII, at least when they are used as dependencies.
-            // https://www.python.org/dev/peps/pep-0508/#names
-            Err(_) => continue,
-        };
+        let dirname = dir_entry
+            .file_name()
+            .into_string()
+            .expect(INVALID_UTF8_PATH);
 
         if dirname.ends_with(".dist-info") {
             dist_infos.push(dirname);
@@ -1501,12 +1514,12 @@ fn virtpy_remove_dependencies(
 
         if false {
             if path.extension() != Some("pyc".as_ref()) {
-                println!("deleting {}", path.display());
+                println!("deleting {}", path);
             }
         } else {
             // not using fs_err here, because we're not bubbling the error up
             if let Err(e) = std::fs::remove_file(&path).or_else(ignore_target_doesnt_exist) {
-                eprintln!("failed to delete {}: {}", path.display(), e);
+                eprintln!("failed to delete {}: {}", path, e);
             }
         }
     }
@@ -1581,22 +1594,10 @@ fn print_verify_store(proj_dirs: &ProjectDirs) {
         .map(Result::unwrap)
     {
         // the path is also the hash
-        let path = file.path();
+        let path: PathBuf = file.path().try_into().expect(INVALID_UTF8_PATH);
         let base64_hash = hash_of_file_sha256_base64(&path);
-        if base64_hash
-            != path
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .strip_prefix("sha256=")
-                .unwrap()
-        {
-            println!(
-                "doesn't match hash: {}, hash = {}",
-                path.display(),
-                base64_hash
-            );
+        if base64_hash != path.file_name().unwrap().strip_prefix("sha256=").unwrap() {
+            println!("doesn't match hash: {}, hash = {}", path, base64_hash);
             any_error = true;
         }
     }
@@ -1676,9 +1677,9 @@ fn _hash_of_reader_sha256(mut reader: impl std::io::Read) -> impl AsRef<[u8]> {
 //             if options.verbose >= 2 {
 //                 for dependent in dependents {
 //                     let link_location = virtpy_link_location(&dependent).unwrap();
-//                     print!("    {}", link_location.display());
+//                     print!("    {}", link_location);
 //                     if options.verbose >= 3 {
-//                         print!("  =>  {}", dependent.display());
+//                         print!("  =>  {}", dependent);
 //                     }
 //                     println!();
 //                 }
@@ -1848,7 +1849,7 @@ fn delete_global_package_executables(
                 // Necessary when deleting from RECORD and when we're not installing all scripts
                 // as pip does (e.g. because we're leaving out package.data scripts)
                 .or_else(ignore_target_doesnt_exist)
-                .wrap_err_with(|| eyre!("failed to remove {}", path.display()))
+                .wrap_err_with(|| eyre!("failed to remove {}", path))
         }))
 }
 
@@ -1891,11 +1892,8 @@ fn virtpy_add_dependency_from_file(
     options: Options,
 ) -> EResult<()> {
     let file_hash = DistributionHash::from_file(file);
-    let requirement = Requirement::from_filename(
-        file.file_name().unwrap().to_str().unwrap(),
-        file_hash.clone(),
-    )
-    .unwrap();
+    let requirement =
+        Requirement::from_filename(file.file_name().unwrap(), file_hash.clone()).unwrap();
 
     if !wheel_is_already_registered(file_hash.clone(), proj_dirs, virtpy.python_version)? {
         install_and_register_distribution_from_file(
@@ -1961,7 +1959,7 @@ fn create_virtpy(
 
     let prompt = prompt
         .as_deref()
-        .or_else(|| path.file_name()?.to_str())
+        .or(path.file_name())
         .unwrap_or(DEFAULT_VIRTPY_PATH);
     _create_virtpy(central_path, python_path, path, prompt, with_pip_shim)
 }
@@ -1991,7 +1989,7 @@ fn _create_virtpy(
     fs_err::create_dir(path)?;
     for entry in central_path.read_dir()? {
         let entry = entry?;
-        let target = path.join(entry.file_name());
+        let target = path.join(entry.file_name().to_str().expect(INVALID_UTF8_PATH));
         let filetype = entry.file_type()?;
         if filetype.is_dir() {
             symlink_dir(&entry.path(), &target)?;
@@ -2004,26 +2002,26 @@ fn _create_virtpy(
         }
     }
 
-    let abs_path = path
+    let path_: &StdPath = path.as_ref();
+    let abs_path: PathBuf = path_
         .fs_err_canonicalize()?
-        .into_os_string()
-        .into_string()
-        .unwrap();
+        .try_into()
+        .expect(INVALID_UTF8_PATH);
     {
         let metadata_dir = central_path.join(CENTRAL_METADATA);
         fs_err::create_dir(&metadata_dir)?;
-        fs_err::write(metadata_dir.join("link_location"), &abs_path)?;
+        fs_err::write(metadata_dir.join("link_location"), abs_path.as_str())?;
     }
 
     {
         let link_metadata_dir = path.join(LINK_METADATA);
         fs_err::create_dir(&link_metadata_dir)?;
-        fs_err::write(link_metadata_dir.join("link_location"), &abs_path)?;
+        fs_err::write(link_metadata_dir.join("link_location"), abs_path.as_str())?;
 
         debug_assert!(central_path.is_absolute());
         fs_err::write(
             link_metadata_dir.join("central_location"),
-            central_path.as_os_str().to_str().unwrap(),
+            central_path.as_str(),
         )?;
     }
 
@@ -2075,7 +2073,7 @@ enum VirtpyLinkStatus {
 fn virtpy_link_status(virtpy_link_path: &Path) -> EResult<VirtpyLinkStatus> {
     let supposed_location = virtpy_link_supposed_location(virtpy_link_path)
         .wrap_err("failed to read original location of virtpy")?;
-    if !paths_match(virtpy_link_path, &supposed_location).unwrap() {
+    if !paths_match(virtpy_link_path.as_ref(), supposed_location.as_ref()).unwrap() {
         return Ok(VirtpyLinkStatus::WrongLocation {
             should: supposed_location,
             actual: virtpy_link_path.to_owned(),
@@ -2094,7 +2092,7 @@ fn virtpy_link_status(virtpy_link_path: &Path) -> EResult<VirtpyLinkStatus> {
     })
 }
 
-fn paths_match(virtpy: &Path, link_target: &Path) -> EResult<bool> {
+fn paths_match(virtpy: &StdPath, link_target: &StdPath) -> EResult<bool> {
     Ok(virtpy.fs_err_canonicalize()? == link_target.fs_err_canonicalize()?)
 }
 
@@ -2137,7 +2135,7 @@ fn virtpy_status(virtpy_path: &Path) -> EResult<VirtpyStatus> {
         .map(PathBuf::from)
         .wrap_err("failed to read virtpy link target through backlink")?;
 
-    if !paths_match(virtpy_path, &link_target).unwrap() {
+    if !paths_match(virtpy_path.as_ref(), link_target.as_ref()).unwrap() {
         return Ok(VirtpyStatus::Orphaned {
             link: link_location,
         });
@@ -2156,7 +2154,7 @@ fn _create_bare_venv(python_path: &Path, path: &Path, prompt: &str) -> EResult<(
             .stdout(std::process::Stdio::null()),
     )
     .map(drop)
-    .wrap_err_with(|| eyre!("failed to create virtpy {}", path.display()))
+    .wrap_err_with(|| eyre!("failed to create virtpy {}", path))
 }
 
 fn check_poetry_available() -> EResult<()> {
@@ -2183,7 +2181,7 @@ fn python_path(virtpy: &Path) -> PathBuf {
 }
 
 fn dist_info_matches_package(dist_info: &Path, package: &str) -> bool {
-    let entry_name = dist_info.file_name().unwrap().to_str().unwrap();
+    let entry_name = dist_info.file_name().unwrap();
     let (distrib_name, _version) = package_info_from_dist_info_dirname(entry_name);
     distrib_name == package
 }
@@ -2214,12 +2212,10 @@ trait VirtpyPaths {
                 .unwrap()
                 .map(Result::unwrap)
                 .map(|dir_entry| dir_entry.path())
+                .map(|std_path| PathBuf::from_path_buf(std_path).expect(INVALID_UTF8_PATH))
                 .filter(|path| {
                     path.file_name()
-                        .unwrap()
-                        .to_str()
-                        .unwrap()
-                        .ends_with(".dist-info")
+                        .map_or(false, |fn_| fn_.ends_with(".dist-info"))
                 }),
         )
     }
@@ -2297,12 +2293,11 @@ impl CheckedVirtpy {
     fn new(virtpy_link: &Path) -> EResult<Self> {
         match virtpy_link_status(virtpy_link).wrap_err("failed to verify virtpy")? {
             VirtpyLinkStatus::WrongLocation { should, .. } => {
-                Err(eyre!("virtpy copied or moved from {}", should.display()))
+                Err(eyre!("virtpy copied or moved from {}", should))
             }
-            VirtpyLinkStatus::Dangling { target } => Err(eyre!(
-                "backing storage for virtpy not found: {}",
-                target.display()
-            )),
+            VirtpyLinkStatus::Dangling { target } => {
+                Err(eyre!("backing storage for virtpy not found: {}", target))
+            }
             VirtpyLinkStatus::Ok { matching_virtpy } => Ok(CheckedVirtpy {
                 link: virtpy_link.to_owned(),
                 backing: matching_virtpy,
@@ -2312,7 +2307,7 @@ impl CheckedVirtpy {
         .wrap_err_with(|| {
             eyre!(
                 "the virtpy `{}` is broken, please recreate it.",
-                virtpy_link.display(),
+                virtpy_link,
             )
         })
     }
@@ -2320,16 +2315,20 @@ impl CheckedVirtpy {
     // Returns the path of the python installation on which this
     // this virtpy builds
     fn global_python(&self) -> EResult<PathBuf> {
-        // FIXME: On windows, the virtpy python is a copy, so there's no symlink to resolve.
-        //        We need to take the version and then do a search for the real python.
         #[cfg(unix)]
         {
-            self.python().fs_err_canonicalize().wrap_err_with(|| {
-                eyre!(
-                    "failed to find path of the global python used by virtpy at {}",
-                    self.link.display()
-                )
-            })
+            use std::convert::TryFrom;
+            let python = self.python();
+            let python: &StdPath = python.as_ref();
+            let python: PathBuf =
+                PathBuf::try_from(python.fs_err_canonicalize().wrap_err_with(|| {
+                    eyre!(
+                        "failed to find path of the global python used by virtpy at {}",
+                        self.link
+                    )
+                })?)
+                .expect(INVALID_UTF8_PATH);
+            Ok(python)
         }
 
         #[cfg(windows)]
@@ -2340,7 +2339,7 @@ impl CheckedVirtpy {
     }
 
     fn id(&self) -> &str {
-        self.backing.file_name().unwrap().to_str().unwrap()
+        self.backing.file_name().unwrap()
     }
 
     // read prompt from pyenv.cfg, if it exists
@@ -2493,11 +2492,7 @@ fn link_single_requirement_into_virtpy(
             let dist_info_foldername = distrib.distribution.dist_info_name();
             let target = site_packages.join(&dist_info_foldername);
             if options.verbose >= 1 {
-                println!(
-                    "symlinking dist info from {} to {}",
-                    dist_info_path.display(),
-                    target.display()
-                );
+                println!("symlinking dist info from {} to {}", dist_info_path, target);
             }
 
             symlink_dir(&dist_info_path, &target)
@@ -2620,7 +2615,7 @@ fn link_files_from_record_into_virtpy_new(
                 let is_executable = subdir == "scripts";
                 record.path = relative_path(site_packages, &dest)
                     .try_into()
-                    .expect("non utf8 path in virtpy");
+                    .expect(INVALID_UTF8_PATH);
 
                 if !is_executable {
                     link_file_into_virtpy(proj_dirs, &record, dest, distribution);
@@ -2709,12 +2704,7 @@ fn link_file_into_virtpy(
         //       condition
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => (),
         Err(err) if is_not_found(&err) => print_error_missing_file_in_record(&distribution, &src),
-        Err(err) => panic!(
-            "failed to hardlink file from {} to {}: {}",
-            src.display(),
-            dest.display(),
-            err
-        ),
+        Err(err) => panic!("failed to hardlink file from {} to {}: {}", src, dest, err),
     };
 }
 
@@ -2767,7 +2757,7 @@ fn print_error_missing_file_in_record(distribution: &Distribution, missing_file:
     println!(
         "couldn't find recorded file from {}: {}",
         distribution.name_and_version(),
-        missing_file.display()
+        missing_file
     )
 }
 
@@ -3094,13 +3084,8 @@ mod test {
     fn get_install_paths() -> EResult<()> {
         let proj_dirs = test_proj_dirs();
         let tmp_dir = tempdir::TempDir::new("virtpy_test")?;
-        let virtpy = create_virtpy(
-            &proj_dirs,
-            &detect("3")?,
-            &tmp_dir.path().join("install_paths_test"),
-            None,
-            true,
-        )?;
+        let virtpy_path: Utf8PathBuf = tmp_dir.path().join("install_paths_test").try_into()?;
+        let virtpy = create_virtpy(&proj_dirs, &detect("3")?, &virtpy_path, None, true)?;
         let install_paths = virtpy.install_paths()?;
         let required_keys = ["purelib", "platlib", "headers", "scripts", "data"]
             .iter()

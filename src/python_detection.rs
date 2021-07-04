@@ -1,8 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::convert::TryInto;
 
-use eyre::{bail, eyre};
+use eyre::{bail, eyre, WrapErr};
 
-use crate::EResult;
+use crate::{EResult, INVALID_UTF8_PATH};
+use crate::{Path, PathBuf};
 
 pub fn detect(python: &str) -> EResult<PathBuf> {
     let path = Path::new(&python);
@@ -13,7 +14,7 @@ pub fn detect(python: &str) -> EResult<PathBuf> {
         if path.exists() {
             return Ok(path.to_owned());
         } else {
-            bail!("python not found at {}", path.display());
+            bail!("python not found at {}", path);
         }
     }
 
@@ -65,12 +66,9 @@ fn find_python_by_version(major: u32, minor: Option<u32>) -> EResult<PathBuf> {
 
 fn find_executable_in_path(path: impl AsRef<Path>) -> EResult<PathBuf> {
     let path = path.as_ref();
-    pathsearch::find_executable_in_path(path).ok_or_else(|| {
-        eyre!(
-            "couldn't find python executable `{}` in PATH",
-            path.display()
-        )
-    })
+    let exe_path = pathsearch::find_executable_in_path(path)
+        .ok_or_else(|| eyre!("couldn't find python executable `{}` in PATH", path))?;
+    exe_path.try_into().wrap_err(INVALID_UTF8_PATH)
 }
 
 #[cfg(test)]
