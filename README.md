@@ -16,15 +16,23 @@ The name stands for <b>virt</b>ual <b>py</b>thon and is subject to change. The e
 
 # Create and Add Dependencies
 
-`virtpy new` creates a new barebones venv named '.virtpy' in the current directory.  
-`virtpy add PATH_TO_REQUIREMENTS.TXT` adds the packages from the file to the `.virtpy` environment in the current directory.
+`virtpy new [VENV_PATH]` creates a new barebones venv at `VENV_PATH` or at '.venv' in the current directory, if no path is given.  
 
-These two commands form the core functionality of this tool.
+There are currently two ways to install dependencies into the virtpy:
+1. `virtpy add PATH_TO_REQUIREMENTS.TXT` adds the packages from the file to the `.virtpy` environment in the current directory.
+   This uses pip behind the scenes to select the right package to download and install.
+2. Use `poetry`. `poetry add`, `poetry install` and `poetry remove` all work thanks to a shim. Poetry itself uses pip to install or remove packages and `virtpy` adds a pseudo `pip` package that redirects the commands to `virtpy`.
+
+This forms the core functionality of this tool.
 
 # Install python executables in isolated environments
-`virtpy install PACKAGE` installs `PACKAGE` into a virtpy in this tool's data directory (see [directories::ProjectDirs::data_dir()](https://docs.rs/directories/3.0.1/directories/struct.ProjectDirs.html#method.data_dir)) and places executables in a central location that you can add to your path `${virtpy_data_dir}/bin`.
+`virtpy install PACKAGE` installs `PACKAGE` into a virtpy in this tool's data directory (see [directories::ProjectDirs::data_dir()](https://docs.rs/directories/3.0.1/directories/struct.ProjectDirs.html#method.data_dir)) and places executables in a central location that you can add to your path.
+Run `virtpy path bin` to get the directory to add to your `PATH`.
 
 This is similar to [pipx](https://pypi.org/project/pipx/), but it uses virtpy for isolation insted of venv.
 
 # Create venv from poetry
+**LEGACY command**  
+When using the pip shim, you can use poetry directly with virtpy.
+
 `virtpy poetry-install` does the job that `poetry install` does, but uses `virtpy` instead of `venv`.
