@@ -1,23 +1,25 @@
 use eyre::WrapErr;
+use std::convert::TryFrom;
 
 use crate::{
-    delete_virtpy_backing, hash_of_file_sha256_base64, python_wheel::RecordEntry,
-    virtpy_link_location, virtpy_link_target, virtpy_status, Distribution, EResult, Options,
-    PathBuf, ProjectDirs, StoredDistributions, VirtpyBacking, VirtpyPaths, VirtpyStatus,
+    delete_virtpy_backing, hash_of_file_sha256_base64, package_info_from_dist_info_dirname,
+    python_wheel::RecordEntry, virtpy_link_location, virtpy_link_target, virtpy_status,
+    Distribution, DistributionHash, EResult, FileHash, Options, PathBuf, ProjectDirs,
+    StoredDistribution, StoredDistributions, VirtpyBacking, VirtpyPaths, VirtpyStatus,
     INVALID_UTF8_PATH,
 };
 use std::{collections::HashMap, convert::TryInto};
 
-// TODO: make into newtype
-//       Maybe replace with FileHash?
-type PackageFileHash = String;
-
-fn collect_garbage(proj_dirs: &ProjectDirs, remove: bool, options: Options) -> EResult<()> {
+pub(crate) fn collect_garbage(
+    proj_dirs: &ProjectDirs,
+    remove: bool,
+    options: Options,
+) -> EResult<()> {
     let mut danglers = vec![];
     for virtpy in proj_dirs.virtpys().read_dir().unwrap() {
         let virtpy = virtpy.unwrap();
         assert!(virtpy.file_type().unwrap().is_dir());
-        let path = virtpy.path();
+        let path: PathBuf = virtpy.path().try_into().expect(INVALID_UTF8_PATH);
 
         match virtpy_status(&path) {
             Ok(VirtpyStatus::Ok { .. }) => (),
@@ -53,19 +55,19 @@ fn collect_garbage(proj_dirs: &ProjectDirs, remove: bool, options: Options) -> E
             if remove {
                 let mut stored_distribs = StoredDistributions::load(&proj_dirs)?;
 
-                let dist_info_dir = proj_dirs.dist_infos();
                 for dist in unused_dists {
                     let path = dist.path(&proj_dirs);
-                    assert!(path.starts_with(&dist_info_dir));
+                    assert!(path.starts_with(&proj_dirs.data()));
 
-                    println!("Removing {} {} ({})", dist.name, dist.version, dist.sha);
+                    let Distribution { name, version, sha } = &dist.distribution;
+                    println!("Removing {} {} ({})", name, version, sha);
 
                     let res = fs_err::remove_dir_all(path);
 
                     // Remove distribution from list of installed distributions, for all
                     // python versions.
                     // Save after each attempted removal in case a bug causes the removal to fail prematurely
-                    let hash = dist.sha;
+                    let hash = dist.distribution.sha;
                     for python_specific_stored_distribs in stored_distribs.0.values_mut() {
                         python_specific_stored_distribs.remove(&hash);
                     }
@@ -157,9 +159,9 @@ fn print_stats(proj_dirs: &ProjectDirs, options: Options) {
         for (distr, dependents) in distribution_dependents {
             println!(
                 "{:30} {} dependents    ({})",
-                format!("{} {}", distr.name, distr.version,),
+                format!("{} {}", distr.distribution.name, distr.distribution.version,),
                 dependents.len(),
-                distr.sha
+                distr.distribution.sha
             );
             if options.verbose >= 2 {
                 for dependent in dependents {
@@ -177,8 +179,8 @@ fn print_stats(proj_dirs: &ProjectDirs, options: Options) {
 
 fn file_dependents<'a>(
     proj_dirs: &ProjectDirs,
-    distribution_files: &HashMap<Distribution, (Vec<RecordEntry>, u64)>,
-) -> HashMap<PackageFileHash, Vec<Distribution>> {
+    distribution_files: &HashMap<StoredDistribution, (Vec<RecordEntry>, u64)>,
+) -> HashMap<FileHash, Vec<StoredDistribution>> {
     let mut dependents = HashMap::new();
 
     for file in proj_dirs
@@ -186,17 +188,9 @@ fn file_dependents<'a>(
         .read_dir()
         .unwrap()
         .map(Result::unwrap)
-        .map(|dir_entry| {
-            dir_entry
-                .path()
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_owned()
-        })
+        .map(|dir_entry| PathBuf::try_from(dir_entry.path()).expect(INVALID_UTF8_PATH))
     {
-        let hash = file;
+        let hash = FileHash::from_filename(&file);
         dependents.entry(hash).or_default();
     }
 
@@ -212,7 +206,7 @@ fn file_dependents<'a>(
 }
 
 // return value: path to virtpy
-fn distributions_dependents(proj_dirs: &ProjectDirs) -> HashMap<Distribution, Vec<PathBuf>> {
+fn distributions_dependents(proj_dirs: &ProjectDirs) -> HashMap<StoredDistribution, Vec<PathBuf>> {
     let mut distributions_dependents = HashMap::new();
 
     // Add all distributions to map without dependencies.
@@ -226,7 +220,7 @@ fn distributions_dependents(proj_dirs: &ProjectDirs) -> HashMap<Distribution, Ve
         .read_dir()
         .unwrap()
         .map(Result::unwrap)
-        .map(|entry| entry.path())
+        .map(|entry| PathBuf::try_from(entry.path()).expect(INVALID_UTF8_PATH))
     {
         let virtpy_dirs = VirtpyBacking::from_path(virtpy_path.clone());
         for distr in distributions_used(virtpy_dirs) {
@@ -246,7 +240,7 @@ fn distributions_dependents(proj_dirs: &ProjectDirs) -> HashMap<Distribution, Ve
 // Also computes the total size of all distribution files
 fn files_of_distribution(
     proj_dirs: &ProjectDirs,
-) -> HashMap<Distribution, (Vec<RecordEntry>, u64)> {
+) -> HashMap<StoredDistribution, (Vec<RecordEntry>, u64)> {
     proj_dirs
         .installed_distributions()
         .map(|distribution| {
@@ -267,16 +261,37 @@ fn files_of_distribution(
         .collect()
 }
 
-fn distributions_used(virtpy_dirs: VirtpyBacking) -> impl Iterator<Item = Distribution> {
-    virtpy_dirs
-        .dist_infos()
-        .map(|dist_info_path| dist_info_path.read_link().unwrap())
-        .map(|store_dist_info| {
-            Distribution::from_store_name(store_dist_info.file_name().unwrap().to_str().unwrap())
-        })
+fn distributions_used(virtpy_dirs: VirtpyBacking) -> impl Iterator<Item = StoredDistribution> {
+    virtpy_dirs.dist_infos().map(|dist_info_path| {
+        match dist_info_path.metadata().unwrap().file_type().is_symlink() {
+            true => {
+                let dir_in_repo = dist_info_path.read_link().unwrap();
+                let dirname = dir_in_repo.file_name().unwrap().to_str().unwrap();
+                StoredDistribution {
+                    distribution: Distribution::from_store_name(dirname),
+                    installed_via: crate::StoredDistributionType::FromPip,
+                }
+            }
+            false => {
+                let hash_path = dist_info_path.join(crate::DIST_HASH_FILE);
+                let hash = fs_err::read_to_string(hash_path).unwrap();
+                let (name, version) =
+                    package_info_from_dist_info_dirname(dist_info_path.file_name().unwrap());
+
+                StoredDistribution {
+                    distribution: Distribution {
+                        name: name.into(),
+                        version: version.into(),
+                        sha: DistributionHash(hash),
+                    },
+                    installed_via: crate::StoredDistributionType::FromWheel,
+                }
+            }
+        }
+    })
 }
 
-fn unused_distributions(proj_dirs: &ProjectDirs) -> impl Iterator<Item = Distribution> + '_ {
+fn unused_distributions(proj_dirs: &ProjectDirs) -> impl Iterator<Item = StoredDistribution> + '_ {
     let distribution_dependents = distributions_dependents(proj_dirs);
     distribution_dependents
         .into_iter()

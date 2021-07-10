@@ -197,6 +197,12 @@ pub struct DistributionHash(String);
 #[must_use]
 pub struct FileHash(String);
 
+impl AsRef<Path> for FileHash {
+    fn as_ref(&self) -> &Path {
+        self.0.as_ref()
+    }
+}
+
 impl DistributionHash {
     fn from_file(path: &Path) -> Self {
         Self(format!("sha256={}", hash_of_file_sha256_base16(path)))
@@ -208,6 +214,11 @@ impl FileHash {
     #[allow(unused)]
     fn from_file(path: &Path) -> Self {
         Self::from_hash(hash_of_file_sha256_base64(path))
+    }
+
+    // files in the repository are named after their hash, so we can just use the filename
+    fn from_filename(path: &Path) -> Self {
+        Self(path.file_name().unwrap().to_owned())
     }
 
     fn from_reader(reader: impl std::io::Read) -> Self {
@@ -224,10 +235,6 @@ impl std::fmt::Display for DistributionHash {
         write!(f, "{}", self.0)
     }
 }
-
-// TODO: make into newtype
-//       Maybe replace with FileHash?
-type PackageFileHash = String;
 
 #[derive(Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize, Clone)]
 struct StoredDistribution {
@@ -301,6 +308,36 @@ impl StoredDistribution {
 
     fn entrypoints(&self, proj_dirs: &ProjectDirs) -> Option<Vec<EntryPoint>> {
         _entrypoints(&self.dist_info_file(proj_dirs, "entry_points.txt")?)
+    }
+
+    // Returns the directory where the RECORD of this distribution is stored.
+    // For pip-installed distributions, this is the entire dist-info directory.
+    // For direct-installed distributions, it's a directory containing only the unmodified RECORD
+    // from the wheel archive.
+    //
+    // Deleting this directory means removing all information needed to use the distribution.
+    // Running a garbage collection afterwards will delete all of the distribution's files
+    // that are not shared with other distributions.
+    // It must also be removed from StoredDistributions.
+    fn path(&self, project_dirs: &ProjectDirs) -> PathBuf {
+        let base = match self.installed_via {
+            StoredDistributionType::FromPip => project_dirs.dist_infos(),
+            StoredDistributionType::FromWheel => project_dirs.records(),
+        };
+        base.join(self.distribution.as_csv())
+    }
+
+    fn records(
+        &self,
+        project_dirs: &ProjectDirs,
+    ) -> EResult<Box<dyn Iterator<Item = EResult<RecordEntry>>>> {
+        let record = self.dist_info_file(project_dirs, "RECORD").unwrap();
+        Ok(match self.installed_via {
+            StoredDistributionType::FromPip => Box::new(records(&record)?.map(|rec| Ok(rec?))),
+            StoredDistributionType::FromWheel => {
+                Box::new(WheelRecord::from_file(&record)?.files.into_iter().map(Ok))
+            }
+        })
     }
 }
 
@@ -1501,28 +1538,6 @@ fn install_executable_package(
     Ok(InstalledStatus::NewlyInstalled)
 }
 
-fn print_verify_store(proj_dirs: &ProjectDirs) {
-    // TODO: if there are errors, link them back to their original distribution
-    let mut any_error = false;
-    for file in proj_dirs
-        .package_files()
-        .read_dir()
-        .unwrap()
-        .map(Result::unwrap)
-    {
-        // the path is also the hash
-        let path: PathBuf = file.path().try_into().expect(INVALID_UTF8_PATH);
-        let base64_hash = hash_of_file_sha256_base64(&path);
-        if base64_hash != path.file_name().unwrap().strip_prefix("sha256=").unwrap() {
-            println!("doesn't match hash: {}, hash = {}", path, base64_hash);
-            any_error = true;
-        }
-    }
-    if !any_error {
-        println!("everything valid");
-    }
-}
-
 fn hash_of_file_sha256_base64(path: &Path) -> String {
     let hash = _hash_of_file_sha256(path);
     base64::encode_config(hash.as_ref(), base64::URL_SAFE_NO_PAD)
@@ -2589,23 +2604,6 @@ impl Distribution {
     fn data_dir_name(&self) -> String {
         format!("{}-{}.data", self.name, self.version)
     }
-
-    // TODO: move to StoredDistribution
-    //       and prepare for distribs installed from wheel without pip
-    // fn path(&self, project_dirs: &ProjectDirs) -> PathBuf {
-    //     project_dirs.dist_infos().join(self.as_csv())
-    // }
-
-    // fn record(&self, project_dirs: &ProjectDirs) -> PathBuf {
-    //     self.path(project_dirs).join("RECORD")
-    // }
-
-    // fn records(
-    //     &self,
-    //     project_dirs: &ProjectDirs,
-    // ) -> csv::Result<impl Iterator<Item = csv::Result<RecordEntry>>> {
-    //     records(&self.record(project_dirs))
-    // }
 }
 
 fn newly_installed_distributions(pip_log: &str) -> Vec<Distribution> {
