@@ -104,7 +104,7 @@ pub(crate) fn collect_garbage(
     Ok(())
 }
 
-fn print_verify_store(proj_dirs: &ProjectDirs) {
+pub(crate) fn print_verify_store(proj_dirs: &ProjectDirs) {
     // TODO: if there are errors, link them back to their original distribution
     let mut any_error = false;
     for file in proj_dirs
@@ -126,7 +126,7 @@ fn print_verify_store(proj_dirs: &ProjectDirs) {
     }
 }
 
-fn print_stats(proj_dirs: &ProjectDirs, options: Options) {
+pub(crate) fn print_stats(proj_dirs: &ProjectDirs, options: Options) {
     let total_size: u64 = proj_dirs
         .package_files()
         .read_dir()

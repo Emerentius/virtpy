@@ -13,6 +13,7 @@ use std::io::Seek;
 use std::{collections::HashMap, io::BufReader, path::Path as StdPath};
 use structopt::StructOpt;
 
+mod internal_store;
 mod python_detection;
 mod python_requirements;
 mod python_wheel;
@@ -1328,16 +1329,16 @@ fn main() -> EResult<()> {
                 .wrap_err("failed to install dependencies from poetry project")?;
         }
         Command::InternalStore(InternalStoreCmd::Gc { remove }) => {
-            todo!()
+            internal_store::collect_garbage(&proj_dirs, remove, options)?;
         }
         Command::Path(PathCmd::Bin) | Command::Path(PathCmd::Executables) => {
             println!("{}", proj_dirs.executables());
         }
         Command::InternalStore(InternalStoreCmd::Stats) => {
-            todo!()
+            internal_store::print_stats(&proj_dirs, options);
         }
         Command::InternalStore(InternalStoreCmd::Verify) => {
-            print_verify_store(&proj_dirs);
+            internal_store::print_verify_store(&proj_dirs);
         }
         Command::InternalUseOnly(InternalUseOnly::AddFromFile { virtpy, file }) => {
             let virtpy = CheckedVirtpy::new(&virtpy)?;
