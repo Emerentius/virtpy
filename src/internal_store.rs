@@ -126,7 +126,12 @@ pub(crate) fn print_verify_store(proj_dirs: &ProjectDirs) {
     }
 }
 
-pub(crate) fn print_stats(proj_dirs: &ProjectDirs, options: Options) {
+pub(crate) fn print_stats(
+    proj_dirs: &ProjectDirs,
+    options: Options,
+    human_readable: bool,
+    use_binary_si_prefix: bool,
+) {
     let total_size: u64 = proj_dirs
         .package_files()
         .read_dir()
@@ -143,15 +148,19 @@ pub(crate) fn print_stats(proj_dirs: &ProjectDirs, options: Options) {
         .map(|(distr, dependents)| distribution_files[distr].1 * dependents.len() as u64)
         .sum::<u64>();
 
-    println!("total space used: {}", total_size);
+    let readable_size = |size| match human_readable {
+        true => bytesize::to_string(size, use_binary_si_prefix),
+        false => size.to_string(),
+    };
+    println!("total space used: {}", readable_size(total_size));
     println!(
         "total space used with duplication: {}",
-        total_size_with_duplicates
+        readable_size(total_size_with_duplicates)
     );
 
     println!(
         "total space saved: {}",
-        total_size_with_duplicates - total_size
+        readable_size(total_size_with_duplicates - total_size)
     );
 
     if options.verbose >= 1 {

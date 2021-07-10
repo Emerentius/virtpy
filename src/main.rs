@@ -100,7 +100,17 @@ enum InternalStoreCmd {
         remove: bool,
     },
     /// Show how much storage is used
-    Stats,
+    Stats {
+        /// Show sizes in bytes
+        #[structopt(long, short)]
+        bytes: bool,
+        /// Use binary prefixes instead of SI.
+        ///
+        /// This uses powers of 1024 instead of 1000 and will print the accompanying symbol (e.g. 1 KiB for 1024 bytes).
+        /// Has no effect if `--bytes` is passed.
+        #[structopt(long)]
+        binary_prefix: bool,
+    },
     /// Check integrity of the files of all python modules in the internal store.
     ///
     /// If someone edited a file in any virtpy, those changes are visible in every virtpy
@@ -1334,8 +1344,12 @@ fn main() -> EResult<()> {
         Command::Path(PathCmd::Bin) | Command::Path(PathCmd::Executables) => {
             println!("{}", proj_dirs.executables());
         }
-        Command::InternalStore(InternalStoreCmd::Stats) => {
-            internal_store::print_stats(&proj_dirs, options);
+        Command::InternalStore(InternalStoreCmd::Stats {
+            bytes,
+            binary_prefix,
+        }) => {
+            let human_readable = !bytes;
+            internal_store::print_stats(&proj_dirs, options, human_readable, binary_prefix);
         }
         Command::InternalStore(InternalStoreCmd::Verify) => {
             internal_store::print_verify_store(&proj_dirs);
