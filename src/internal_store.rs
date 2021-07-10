@@ -263,7 +263,12 @@ fn files_of_distribution(
 
 fn distributions_used(virtpy_dirs: VirtpyBacking) -> impl Iterator<Item = StoredDistribution> {
     virtpy_dirs.dist_infos().map(|dist_info_path| {
-        match dist_info_path.metadata().unwrap().file_type().is_symlink() {
+        match dist_info_path
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink()
+        {
             true => {
                 let dir_in_repo = dist_info_path.read_link().unwrap();
                 let dirname = dir_in_repo.file_name().unwrap().to_str().unwrap();
