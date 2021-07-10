@@ -262,38 +262,46 @@ fn files_of_distribution(
 }
 
 fn distributions_used(virtpy_dirs: VirtpyBacking) -> impl Iterator<Item = StoredDistribution> {
-    virtpy_dirs.dist_infos().map(|dist_info_path| {
-        match dist_info_path
-            .symlink_metadata()
-            .unwrap()
-            .file_type()
-            .is_symlink()
-        {
-            true => {
-                let dir_in_repo = dist_info_path.read_link().unwrap();
-                let dirname = dir_in_repo.file_name().unwrap().to_str().unwrap();
-                StoredDistribution {
-                    distribution: Distribution::from_store_name(dirname),
-                    installed_via: crate::StoredDistributionType::FromPip,
+    virtpy_dirs
+        .dist_infos()
+        .filter(|dist_info_path| {
+            // poetry places a dist-info into the venv for the package
+            // whose dependencies are managed by poetry
+            fs_err::read_to_string(dist_info_path.join("INSTALLER"))
+                .map_or(false, |installer| installer.trim() != "poetry")
+        })
+        .map(|dist_info_path| {
+            match dist_info_path
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink()
+            {
+                true => {
+                    let dir_in_repo = dist_info_path.read_link().unwrap();
+                    let dirname = dir_in_repo.file_name().unwrap().to_str().unwrap();
+                    StoredDistribution {
+                        distribution: Distribution::from_store_name(dirname),
+                        installed_via: crate::StoredDistributionType::FromPip,
+                    }
                 }
-            }
-            false => {
-                let hash_path = dist_info_path.join(crate::DIST_HASH_FILE);
-                let hash = fs_err::read_to_string(hash_path).unwrap();
-                let (name, version) =
-                    package_info_from_dist_info_dirname(dist_info_path.file_name().unwrap());
+                false => {
+                    let hash_path = dist_info_path.join(crate::DIST_HASH_FILE);
+                    let hash = fs_err::read_to_string(hash_path).unwrap();
+                    let (name, version) =
+                        package_info_from_dist_info_dirname(dist_info_path.file_name().unwrap());
 
-                StoredDistribution {
-                    distribution: Distribution {
-                        name: name.into(),
-                        version: version.into(),
-                        sha: DistributionHash(hash),
-                    },
-                    installed_via: crate::StoredDistributionType::FromWheel,
+                    StoredDistribution {
+                        distribution: Distribution {
+                            name: name.into(),
+                            version: version.into(),
+                            sha: DistributionHash(hash),
+                        },
+                        installed_via: crate::StoredDistributionType::FromWheel,
+                    }
                 }
             }
-        }
-    })
+        })
 }
 
 fn unused_distributions(proj_dirs: &ProjectDirs) -> impl Iterator<Item = StoredDistribution> + '_ {
