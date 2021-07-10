@@ -130,6 +130,9 @@ const LINK_METADATA: &str = "virtpy_link_metadata";
 
 const INVALID_UTF8_PATH: &str = "path is not valid utf8";
 
+// name of file we add to .dist-info dir containing the distribution's hash
+const DIST_HASH_FILE: &str = "DISTRIBUTION_HASH";
+
 fn check_output(cmd: &mut std::process::Command) -> EResult<String> {
     let output = cmd.output()?;
     ensure!(output.status.success(), {
@@ -2272,6 +2275,22 @@ fn link_single_requirement_into_virtpy(
                 proj_dirs,
                 Some(&mut record),
             )?;
+
+            // ========== This code can be extracted into a fn for "add file with X content to Y path and record it"
+            // Add the hash of the installed wheel to the metadata so we can find out
+            // later what was installed.
+            let hash_path = site_packages
+                .join(distrib.distribution.dist_info_name())
+                .join(DIST_HASH_FILE);
+            let dist_hash = &distrib.distribution.sha.0;
+            fs_err::write(&hash_path, &dist_hash)
+                .wrap_err("failed to write distribution hash file")?;
+            record.files.push(RecordEntry {
+                path: hash_path,
+                hash: FileHash::from_reader(dist_hash.as_bytes()), // It's a hash of a hash => can't just copy it
+                filesize: dist_hash.len() as u64,
+            });
+            // ==========
 
             // The RECORD is not linked in, because it doesn't (can't) contain its own hash.
             // Save the (possibly amended) record into the virtpy
