@@ -37,6 +37,7 @@ type Path = Utf8Path;
 type PathBuf = Utf8PathBuf;
 
 #[derive(StructOpt)]
+#[structopt(global_setting(structopt::clap::AppSettings::ColoredHelp))]
 struct Opt {
     #[structopt(subcommand)] // Note that we mark a field as a subcommand
     cmd: Command,
