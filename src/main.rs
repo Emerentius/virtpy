@@ -354,6 +354,45 @@ impl StoredDistribution {
             }
         })
     }
+
+    // The executables of this distribution that can be added to the global install dir.
+    // For wheel installs this is both entrypoints and scripts from the data dir, but
+    // for the legacy pip installed distributions it is just the entrypoints.
+    fn executable_names(&self, proj_dirs: &ProjectDirs) -> eyre::Result<HashSet<String>> {
+        let entrypoint_exes = self
+            .entrypoints(proj_dirs)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|ep| ep.name)
+            .collect::<HashSet<_>>();
+        let mut exes = entrypoint_exes.clone();
+        if self.installed_via == StoredDistributionType::FromWheel {
+            let record = WheelRecord::from_file(self.dist_info_file(proj_dirs, "RECORD").unwrap())?;
+            let mut data_exes = record.files;
+            let script_path = PathBuf::from(self.distribution.data_dir_name()).join("scripts");
+            data_exes.retain(|entry| entry.path.starts_with(&script_path));
+
+            let data_exes = data_exes
+                .into_iter()
+                .map(|entry| entry.path.file_name().unwrap().to_owned())
+                .collect::<HashSet<_>>();
+
+            let duplicates = entrypoint_exes
+                .intersection(&data_exes)
+                .cloned()
+                .collect::<Vec<_>>();
+            // TODO: actually, this could happen even within entrypoints only.
+            ensure!(
+                duplicates.is_empty(),
+                "distribution {} contains executables with duplicate names: {}",
+                self.distribution.name_and_version(),
+                duplicates.join(", ")
+            );
+
+            exes.extend(data_exes);
+        }
+        Ok(exes)
+    }
 }
 
 impl StoredDistributions {
