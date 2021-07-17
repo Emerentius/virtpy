@@ -1,5 +1,5 @@
 use camino::{Utf8Path, Utf8PathBuf};
-use eyre::{bail, ensure, eyre, WrapErr};
+use eyre::{ensure, eyre, WrapErr};
 use fs_err::File;
 use itertools::Itertools;
 use python_requirements::Requirement;
@@ -670,12 +670,6 @@ fn _generate_executable(
         hash: FileHash::from_reader(bytes),
         filesize: bytes.len() as u64,
     })
-}
-
-// TODO: remove every use with StoredDistribution::entrypoints
-fn entrypoints(dist_info: &Path) -> Option<Vec<EntryPoint>> {
-    let ini = dist_info.join("entry_points.txt");
-    _entrypoints(&ini)
 }
 
 fn _entrypoints(path: &Path) -> Option<Vec<EntryPoint>> {
@@ -2077,6 +2071,7 @@ trait VirtpyPaths {
         python_path(self.location())
     }
 
+    #[allow(unused)]
     fn dist_info(&self, package: &str) -> EResult<PathBuf> {
         let package = &normalized_distribution_name_for_wheel(package);
         self.dist_infos()
@@ -2885,7 +2880,8 @@ mod test {
 
     #[test]
     fn read_entrypoints() {
-        let entrypoints = entrypoints("test_files/entrypoints.dist-info".as_ref()).unwrap();
+        let entrypoints =
+            _entrypoints("test_files/entrypoints.dist-info/entry_points.txt".as_ref()).unwrap();
         assert_eq!(
             entrypoints,
             &[
