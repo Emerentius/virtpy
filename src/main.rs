@@ -1713,52 +1713,6 @@ fn _hash_of_reader_sha256(mut reader: impl std::io::Read) -> impl AsRef<[u8]> {
     hasher.finalize()
 }
 
-#[must_use]
-fn delete_global_package_executables(
-    proj_dirs: &ProjectDirs,
-    virtpy_dirs: &VirtpyBacking,
-    package: &str,
-) -> EResult<impl Iterator<Item = EResult<()>>> {
-    let dist_info = virtpy_dirs.dist_info(&package)?;
-
-    // FIXME: Install all executables from a package and then also delete them all.
-    let executables = entrypoints(&dist_info)
-        .expect("couldn't find entry_points.txt")
-        .into_iter()
-        .map(|ep| ep.name)
-        .collect::<Vec<_>>();
-    // let executables = records(&dist_info.join("RECORD"))
-    //     .unwrap()
-    //     .map(Result::unwrap)
-    //     .flat_map(|record| {
-    //         remove_leading_parent_dirs(&record.path)
-    //             .ok()
-    //             .map(ToOwned::to_owned)
-    //     })
-    //     .filter(|path| is_path_of_executable(path))
-    //     .map(|path| path.file_name().unwrap().to_owned())
-    //     .collect::<Vec<_>>();
-
-    let exe_dir = proj_dirs.executables();
-    Ok(executables
-        .into_iter()
-        .map(move |executable| {
-            let path = exe_dir.join(executable);
-            if cfg!(windows) {
-                path.with_extension("exe")
-            } else {
-                path
-            }
-        })
-        .map(|path| {
-            fs_err::remove_file(&path)
-                // Necessary when deleting from RECORD and when we're not installing all scripts
-                // as pip does (e.g. because we're leaving out package.data scripts)
-                .or_else(ignore_target_doesnt_exist)
-                .wrap_err_with(|| eyre!("failed to remove {}", path))
-        }))
-}
-
 fn virtpy_add_dependencies(
     proj_dirs: &ProjectDirs,
     virtpy: &CheckedVirtpy,
@@ -1814,10 +1768,20 @@ fn is_not_found(error: &std::io::Error) -> bool {
 fn delete_executable_virtpy(proj_dirs: &ProjectDirs, package: &str) -> EResult<()> {
     let virtpy_path = proj_dirs.package_folder(&package);
     let virtpy = CheckedVirtpy::new(&virtpy_path)?;
-    delete_global_package_executables(&proj_dirs, &virtpy.virtpy_backing(), &package)?
-        .for_each(Result::unwrap);
+    virtpy.delete()?;
 
-    virtpy.delete()
+    // delete_global_package_executables
+    // Executables in the binary directory are just symlinks.
+    // The virtpy deletion has broken some of them, just need to find and delete them.
+    for entry in proj_dirs.executables().read_dir()? {
+        let entry = entry?;
+        let target = fs_err::read_link(entry.path())?;
+        // TODO: switch to .try_exists() when stable
+        if !target.exists() {
+            fs_err::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 fn delete_virtpy_backing(backing_folder: &Path) -> std::io::Result<()> {
