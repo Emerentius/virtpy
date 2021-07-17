@@ -301,15 +301,17 @@ impl StoredDistribution {
                 file.exists().then(|| file)
             }
             StoredDistributionType::FromWheel => {
+                let record_path = proj_dirs
+                    .records()
+                    .join(self.distribution.as_csv())
+                    .join("RECORD");
+                if file == "RECORD" {
+                    return Some(record_path);
+                }
+
                 // TODO: optimize. kinda wasteful to keep rereading this on every call
                 let path_in_record = PathBuf::from(self.distribution.dist_info_name()).join(file);
-                let record = WheelRecord::from_file(
-                    proj_dirs
-                        .records()
-                        .join(self.distribution.as_csv())
-                        .join("RECORD"),
-                )
-                .unwrap();
+                let record = WheelRecord::from_file(record_path).unwrap();
                 record
                     .files
                     .into_iter()
