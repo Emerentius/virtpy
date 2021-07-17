@@ -160,7 +160,8 @@ fn check_output(cmd: &mut std::process::Command) -> EResult<String> {
 // probably missing prereleases and such
 // TODO: check official scheme
 #[derive(Copy, Clone)]
-struct PythonVersion {
+pub struct PythonVersion {
+    // TODO: make these u32
     major: i32,
     minor: i32,
     #[allow(unused)]
@@ -865,10 +866,17 @@ fn install_and_register_distribution_from_file(
     options: Options,
 ) -> EResult<()> {
     let tmp_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), "virtpy_wheel")?;
-    // TODO: add conversion to wheel from other file types
+    let (distrib_path, _wheel_tmp_dir) = match distrib_path.extension().unwrap() {
+        "whl" => (distrib_path.to_owned(), None),
+        _ => {
+            let python = python_detection::detect_from_version(python_version)?;
+            let (wheel_path, tmp_dir) = convert_to_wheel(&python, proj_dirs, distrib_path)?;
+            (wheel_path, Some(tmp_dir))
+        }
+    };
     assert!(distrib_path.extension().unwrap() == "whl");
     python_wheel::unpack_wheel(
-        distrib_path,
+        &distrib_path,
         tmp_dir.path().try_into().expect(INVALID_UTF8_PATH),
     )?;
 
@@ -881,6 +889,56 @@ fn install_and_register_distribution_from_file(
     register_new_distribution(options, distrib, proj_dirs, python_version, tmp_dir)?;
 
     Ok(())
+}
+
+// Converts a non-wheel distribution of some type into a wheel.
+// This can be a egg, a tarball (typically gzipped, but other compression algorithms are possible as well as uncompressed),
+// or a zip file.
+//
+// Returns the path to the wheel and the TempDir that contains the wheel file.
+// The TempDir needs to be preserved until the wheel has been used or copied elsewhere as it'll be
+// deleted with the TempDir.
+fn convert_to_wheel(
+    python: &Path,
+    proj_dirs: &ProjectDirs,
+    distrib_path: impl AsRef<Path>,
+) -> EResult<(PathBuf, tempdir::TempDir)> {
+    let path = distrib_path.as_ref();
+    _convert_to_wheel(python, proj_dirs, path)
+        .wrap_err_with(|| eyre!("failed to convert file to wheel: {}", path))
+}
+
+fn _convert_to_wheel(
+    python: &Path,
+    proj_dirs: &ProjectDirs,
+    distrib_path: &Path,
+) -> EResult<(PathBuf, tempdir::TempDir)> {
+    let output_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), "convert_to_wheel")?;
+
+    check_output(
+        std::process::Command::new(python)
+            .args(&["-m", "pip", "wheel", "--no-cache-dir", "--wheel-dir"])
+            .arg(output_dir.path())
+            .arg(distrib_path),
+    )?;
+
+    let output_files = output_dir
+        .path()
+        .read_dir()?
+        .collect::<Result<Vec<_>, _>>()?;
+    match output_files.len() {
+        1 => {
+            let wheel_path = output_files
+                .into_iter()
+                .next()
+                .unwrap()
+                .path()
+                .try_into()
+                .expect(INVALID_UTF8_PATH);
+            Ok((wheel_path, output_dir))
+        }
+        _ => Err(eyre!("wheel generation created more than one file")),
+    }
 }
 
 fn install_and_register_distributions(

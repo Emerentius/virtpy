@@ -29,6 +29,13 @@ pub fn detect(python: &str) -> EResult<PathBuf> {
     find_executable_in_path(python)
 }
 
+pub fn detect_from_version(python_version: crate::PythonVersion) -> EResult<PathBuf> {
+    find_python_by_version(
+        python_version.major.try_into().unwrap(),
+        Some(python_version.minor.try_into().unwrap()),
+    )
+}
+
 fn find_python_by_version(major: u32, minor: Option<u32>) -> EResult<PathBuf> {
     let version = match minor {
         Some(minor) => format!("{}.{}", major, minor),
