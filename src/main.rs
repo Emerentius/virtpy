@@ -1823,20 +1823,7 @@ fn _create_virtpy(
     _create_bare_venv(python_path, &central_path, prompt)?;
 
     fs_err::create_dir(path)?;
-    for entry in central_path.read_dir()? {
-        let entry = entry?;
-        let target = path.join(entry.file_name().to_str().expect(INVALID_UTF8_PATH));
-        let filetype = entry.file_type()?;
-        if filetype.is_dir() {
-            symlink_dir(&entry.path(), &target)?;
-        } else if filetype.is_file() {
-            symlink_file(&entry.path(), &target)?;
-        } else if filetype.is_symlink() {
-            // the only symlink should be lib64 pointing at lib
-            // assert_eq!(entry.file_name(), "lib64");
-            symlink_dir(&entry.path(), &target)?;
-        }
-    }
+    ensure_toplevel_symlinks_exist(&central_path, path)?;
 
     let path_: &StdPath = path.as_ref();
     let abs_path: PathBuf = path_
@@ -1875,6 +1862,36 @@ fn _create_virtpy(
     }
 
     Ok(checked_virtpy)
+}
+
+fn ensure_toplevel_symlinks_exist(backing_location: &Path, virtpy_location: &Path) -> EResult<()> {
+    for entry in backing_location.read_dir()? {
+        let entry = entry?;
+        let entry_path: PathBuf = entry.path().try_into().expect(INVALID_UTF8_PATH);
+        let entry_name = entry_path.file_name().unwrap(); // guaranteed to exist
+
+        if entry_name == CENTRAL_METADATA {
+            continue;
+        }
+
+        let target = virtpy_location.join(entry_name);
+        // If entry is a symlink, get the filetype for what it's pointed at.
+        // I'm assuming that you need to create a directory symlink if you're
+        // creating a symlink to a symlink to a dir.
+        let filetype = fs_err::metadata(&entry_path)?.file_type();
+        let res = if filetype.is_dir() {
+            symlink_dir(&entry_path, &target)
+        } else if filetype.is_file() {
+            symlink_file(&entry_path, &target)
+        } else {
+            eyre::bail!(
+                "virtpy backing contains file that's neither directory nor file: {}",
+                entry_path
+            )
+        };
+        res.or_else(ignore_target_exists)?;
+    }
+    Ok(())
 }
 
 fn add_pip_shim(virtpy: &CheckedVirtpy) -> EResult<()> {
@@ -2254,9 +2271,10 @@ fn link_requirements_into_virtpy(
     options: Options,
     install_global_executable: Option<&str>,
 ) -> EResult<()> {
-    // FIXME: when new top-level directories are created in the central venv,
-    //        they should also be symlinked in the virtpy
-    let site_packages = virtpy.site_packages();
+    // Link files into the backing virtpy so that when new top-level directories are
+    // created, they are guaranteed to be on the same harddrive.
+    // Symlinks for the new dirs are generated after all the files have been liked in.
+    let site_packages = virtpy.virtpy_backing().site_packages();
 
     requirements.retain(|req| {
         req.marker
@@ -2309,6 +2327,8 @@ fn link_requirements_into_virtpy(
             &site_packages,
         )?;
     }
+
+    ensure_toplevel_symlinks_exist(&virtpy.backing, virtpy.location())?;
 
     Ok(())
 }
