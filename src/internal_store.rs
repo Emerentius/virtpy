@@ -131,7 +131,7 @@ pub(crate) fn print_stats(
     options: Options,
     human_readable: bool,
     use_binary_si_prefix: bool,
-) {
+) -> EResult<()> {
     let total_size: u64 = proj_dirs
         .package_files()
         .read_dir()
@@ -145,8 +145,20 @@ pub(crate) fn print_stats(
 
     let total_size_with_duplicates = distribution_dependents
         .iter()
-        .map(|(distr, dependents)| distribution_files[distr].1 * dependents.len() as u64)
-        .sum::<u64>();
+        .map(|(distr, dependents)| {
+            Ok(distribution_files
+                .get(&distr)
+                .ok_or_else(|| {
+                    eyre::eyre!(
+                        "no entry for distribution {},{:?}",
+                        distr.distribution.as_csv(),
+                        distr.installed_via
+                    )
+                })?
+                .1
+                * dependents.len() as u64)
+        })
+        .sum::<EResult<u64>>()?;
 
     let readable_size = |size| match human_readable {
         true => bytesize::to_string(size, use_binary_si_prefix),
@@ -184,6 +196,7 @@ pub(crate) fn print_stats(
             }
         }
     }
+    Ok(())
 }
 
 fn file_dependents<'a>(

@@ -1410,7 +1410,7 @@ fn main() -> EResult<()> {
             binary_prefix,
         }) => {
             let human_readable = !bytes;
-            internal_store::print_stats(&proj_dirs, options, human_readable, binary_prefix);
+            internal_store::print_stats(&proj_dirs, options, human_readable, binary_prefix)?;
         }
         Command::InternalStore(InternalStoreCmd::Verify) => {
             internal_store::print_verify_store(&proj_dirs);
