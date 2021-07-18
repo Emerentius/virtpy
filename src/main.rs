@@ -244,13 +244,10 @@ impl std::fmt::Display for DistributionHash {
 #[derive(Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize, Clone)]
 struct StoredDistribution {
     distribution: Distribution,
-    installed_via: StoredDistributionType,
 }
 
 #[derive(Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize, Clone)]
 enum StoredDistributionType {
-    // A distribution that was installed via pip into a directory, then moved into the repository.
-    FromPip,
     // A distribution that was added via its wheel file by our own unpacking code.
     // These contain fewer errors and allow for correctly dealing with the wheel's data directory,
     // in particular its scripts.
@@ -284,33 +281,22 @@ impl Eq for StoredDistributions {}
 
 impl StoredDistribution {
     fn dist_info_file(&self, proj_dirs: &ProjectDirs, file: &str) -> Option<PathBuf> {
-        match self.installed_via {
-            StoredDistributionType::FromPip => {
-                let file = proj_dirs
-                    .dist_infos()
-                    .join(self.distribution.as_csv())
-                    .join(file);
-                file.exists().then(|| file)
-            }
-            StoredDistributionType::FromWheel => {
-                let record_path = proj_dirs
-                    .records()
-                    .join(self.distribution.as_csv())
-                    .join("RECORD");
-                if file == "RECORD" {
-                    return Some(record_path);
-                }
-
-                // TODO: optimize. kinda wasteful to keep rereading this on every call
-                let path_in_record = PathBuf::from(self.distribution.dist_info_name()).join(file);
-                let record = WheelRecord::from_file(record_path).unwrap();
-                record
-                    .files
-                    .into_iter()
-                    .find(|entry| entry.path == path_in_record)
-                    .map(|entry| proj_dirs.package_file(&entry.hash))
-            }
+        let record_path = proj_dirs
+            .records()
+            .join(self.distribution.as_csv())
+            .join("RECORD");
+        if file == "RECORD" {
+            return Some(record_path);
         }
+
+        // TODO: optimize. kinda wasteful to keep rereading this on every call
+        let path_in_record = PathBuf::from(self.distribution.dist_info_name()).join(file);
+        let record = WheelRecord::from_file(record_path).unwrap();
+        record
+            .files
+            .into_iter()
+            .find(|entry| entry.path == path_in_record)
+            .map(|entry| proj_dirs.package_file(&entry.hash))
     }
 
     fn entrypoints(&self, proj_dirs: &ProjectDirs) -> Option<Vec<EntryPoint>> {
@@ -327,11 +313,7 @@ impl StoredDistribution {
     // that are not shared with other distributions.
     // It must also be removed from StoredDistributions.
     fn path(&self, project_dirs: &ProjectDirs) -> PathBuf {
-        let base = match self.installed_via {
-            StoredDistributionType::FromPip => project_dirs.dist_infos(),
-            StoredDistributionType::FromWheel => project_dirs.records(),
-        };
-        base.join(self.distribution.as_csv())
+        project_dirs.records().join(self.distribution.as_csv())
     }
 
     fn records(
@@ -339,12 +321,9 @@ impl StoredDistribution {
         project_dirs: &ProjectDirs,
     ) -> EResult<Box<dyn Iterator<Item = EResult<RecordEntry>>>> {
         let record = self.dist_info_file(project_dirs, "RECORD").unwrap();
-        Ok(match self.installed_via {
-            StoredDistributionType::FromPip => Box::new(records(&record)?.map(|rec| Ok(rec?))),
-            StoredDistributionType::FromWheel => {
-                Box::new(WheelRecord::from_file(&record)?.files.into_iter().map(Ok))
-            }
-        })
+        Ok(Box::new(
+            WheelRecord::from_file(&record)?.files.into_iter().map(Ok),
+        ))
     }
 
     // The executables of this distribution that can be added to the global install dir.
@@ -358,66 +337,35 @@ impl StoredDistribution {
             .map(|ep| ep.name)
             .collect::<HashSet<_>>();
         let mut exes = entrypoint_exes.clone();
-        if self.installed_via == StoredDistributionType::FromWheel {
-            let record = WheelRecord::from_file(self.dist_info_file(proj_dirs, "RECORD").unwrap())?;
-            let mut data_exes = record.files;
-            let script_path = PathBuf::from(self.distribution.data_dir_name()).join("scripts");
-            data_exes.retain(|entry| entry.path.starts_with(&script_path));
 
-            let data_exes = data_exes
-                .into_iter()
-                .map(|entry| entry.path.file_name().unwrap().to_owned())
-                .collect::<HashSet<_>>();
+        let record = WheelRecord::from_file(self.dist_info_file(proj_dirs, "RECORD").unwrap())?;
+        let mut data_exes = record.files;
+        let script_path = PathBuf::from(self.distribution.data_dir_name()).join("scripts");
+        data_exes.retain(|entry| entry.path.starts_with(&script_path));
 
-            let duplicates = entrypoint_exes
-                .intersection(&data_exes)
-                .cloned()
-                .collect::<Vec<_>>();
-            // TODO: actually, this could happen even within entrypoints only.
-            ensure!(
-                duplicates.is_empty(),
-                "distribution {} contains executables with duplicate names: {}",
-                self.distribution.name_and_version(),
-                duplicates.join(", ")
-            );
+        let data_exes = data_exes
+            .into_iter()
+            .map(|entry| entry.path.file_name().unwrap().to_owned())
+            .collect::<HashSet<_>>();
 
-            exes.extend(data_exes);
-        }
+        let duplicates = entrypoint_exes
+            .intersection(&data_exes)
+            .cloned()
+            .collect::<Vec<_>>();
+        // TODO: actually, this could happen even within entrypoints only.
+        ensure!(
+            duplicates.is_empty(),
+            "distribution {} contains executables with duplicate names: {}",
+            self.distribution.name_and_version(),
+            duplicates.join(", ")
+        );
+
+        exes.extend(data_exes);
         Ok(exes)
     }
 }
 
 impl StoredDistributions {
-    fn try_load_old(reader: impl std::io::Read) -> Option<_StoredDistributions> {
-        let stored_distribs = serde_json::from_reader::<
-            _,
-            HashMap<String, HashMap<DistributionHash, String>>,
-        >(reader)
-        .ok()?;
-
-        let mut new_format_stored_distribs =
-            HashMap::<String, HashMap<DistributionHash, StoredDistribution>>::new();
-
-        for (python_version, inner) in stored_distribs {
-            let entry = new_format_stored_distribs
-                .entry(python_version)
-                .or_default();
-            for (key_hash, name_and_version_and_hash) in inner {
-                let distribution = Distribution::from_store_name(&name_and_version_and_hash);
-                debug_assert_eq!(key_hash, distribution.sha);
-
-                entry.insert(
-                    key_hash,
-                    StoredDistribution {
-                        distribution,
-                        installed_via: StoredDistributionType::FromPip,
-                    },
-                );
-            }
-        }
-        Some(new_format_stored_distribs)
-    }
-
     fn load(proj_dirs: &ProjectDirs) -> EResult<Self> {
         Self::load_from(proj_dirs.installed_distributions_log())
     }
@@ -441,10 +389,6 @@ impl StoredDistributions {
             // if it's empty, then deserializing it doesn't work
             // TODO: check if deserializing into Option<T> will allow deserializing from empty
             return Ok(StoredDistributions(HashMap::new(), lock));
-        }
-
-        if let Some(stored_distribs) = Self::try_load_old(BufReader::new(&*lock)) {
-            return Ok(Self(stored_distribs, lock));
         }
 
         lock.seek(std::io::SeekFrom::Start(0))
@@ -502,10 +446,6 @@ impl std::ops::DerefMut for FileLockGuard {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.file
     }
-}
-
-fn is_path_of_executable(path: &Utf8Path) -> bool {
-    path.starts_with("bin") || path.starts_with("Scripts")
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -680,7 +620,6 @@ fn register_distribution_files_of_wheel(
 
     let stored_distrib = StoredDistribution {
         distribution: distribution.clone(),
-        installed_via: StoredDistributionType::FromWheel,
     };
     let dst_record_dir = proj_dirs
         .records()
@@ -987,18 +926,11 @@ impl ProjectDirs {
     }
 
     fn installed_distributions(&self) -> impl Iterator<Item = StoredDistribution> + '_ {
-        self.dist_infos()
+        self.records()
             .read_dir()
             .unwrap()
-            .map(|e| (e.unwrap(), StoredDistributionType::FromPip))
-            .chain(
-                self.records()
-                    .read_dir()
-                    .unwrap()
-                    .map(|e| (e.unwrap(), StoredDistributionType::FromWheel)),
-            )
-            .map(|(dist_info_entry, installed_via)| StoredDistribution {
-                installed_via,
+            .map(|e| e.unwrap())
+            .map(|dist_info_entry| StoredDistribution {
                 distribution: Distribution::from_store_name(
                     dist_info_entry
                         .path()
@@ -1958,119 +1890,47 @@ fn link_requirements_into_virtpy(
 fn link_single_requirement_into_virtpy(
     proj_dirs: &ProjectDirs,
     virtpy: &CheckedVirtpy,
-    options: Options,
+    _options: Options,
     distrib: &StoredDistribution,
     site_packages: &Path,
 ) -> EResult<()> {
-    match distrib.installed_via {
-        StoredDistributionType::FromPip => {
-            let dist_info_path = proj_dirs.dist_infos().join(distrib.distribution.as_csv());
+    let record_dir = proj_dirs.records().join(distrib.distribution.as_csv());
+    let record_path = record_dir.join("RECORD");
 
-            let dist_info_foldername = distrib.distribution.dist_info_name();
-            let target = site_packages.join(&dist_info_foldername);
-            if options.verbose >= 1 {
-                println!("symlinking dist info from {} to {}", dist_info_path, target);
-            }
+    let mut record = WheelRecord::from_file(record_path)?;
 
-            symlink_dir(&dist_info_path, &target)
-                .or_else(ignore_target_exists)
-                .unwrap();
+    link_files_from_record_into_virtpy_new(
+        &mut record,
+        virtpy,
+        &site_packages,
+        proj_dirs,
+        &distrib.distribution,
+    )?;
+    install_executables(distrib, virtpy, proj_dirs, Some(&mut record))?;
 
-            link_files_from_record_into_virtpy(
-                &dist_info_path,
-                virtpy,
-                &site_packages,
-                proj_dirs,
-                &distrib.distribution,
-            );
-            install_executables(distrib, virtpy, proj_dirs, None)?;
-        }
-        StoredDistributionType::FromWheel => {
-            let record_dir = proj_dirs.records().join(distrib.distribution.as_csv());
-            let record_path = record_dir.join("RECORD");
+    // ========== This code can be extracted into a fn for "add file with X content to Y path and record it"
+    // Add the hash of the installed wheel to the metadata so we can find out
+    // later what was installed.
+    let hash_path = site_packages
+        .join(distrib.distribution.dist_info_name())
+        .join(DIST_HASH_FILE);
+    let dist_hash = &distrib.distribution.sha.0;
+    fs_err::write(&hash_path, &dist_hash).wrap_err("failed to write distribution hash file")?;
+    record.files.push(RecordEntry {
+        path: hash_path,
+        hash: FileHash::from_reader(dist_hash.as_bytes()), // It's a hash of a hash => can't just copy it
+        filesize: dist_hash.len() as u64,
+    });
+    // ==========
 
-            let mut record = WheelRecord::from_file(record_path)?;
-
-            link_files_from_record_into_virtpy_new(
-                &mut record,
-                virtpy,
-                &site_packages,
-                proj_dirs,
-                &distrib.distribution,
-            )?;
-            install_executables(distrib, virtpy, proj_dirs, Some(&mut record))?;
-
-            // ========== This code can be extracted into a fn for "add file with X content to Y path and record it"
-            // Add the hash of the installed wheel to the metadata so we can find out
-            // later what was installed.
-            let hash_path = site_packages
-                .join(distrib.distribution.dist_info_name())
-                .join(DIST_HASH_FILE);
-            let dist_hash = &distrib.distribution.sha.0;
-            fs_err::write(&hash_path, &dist_hash)
-                .wrap_err("failed to write distribution hash file")?;
-            record.files.push(RecordEntry {
-                path: hash_path,
-                hash: FileHash::from_reader(dist_hash.as_bytes()), // It's a hash of a hash => can't just copy it
-                filesize: dist_hash.len() as u64,
-            });
-            // ==========
-
-            // The RECORD is not linked in, because it doesn't (can't) contain its own hash.
-            // Save the (possibly amended) record into the virtpy
-            record.save_to_file(
-                &site_packages
-                    .join(distrib.distribution.dist_info_name())
-                    .join("RECORD"),
-            )?;
-        }
-    }
+    // The RECORD is not linked in, because it doesn't (can't) contain its own hash.
+    // Save the (possibly amended) record into the virtpy
+    record.save_to_file(
+        &site_packages
+            .join(distrib.distribution.dist_info_name())
+            .join("RECORD"),
+    )?;
     Ok(())
-}
-
-fn link_files_from_record_into_virtpy(
-    dist_info_path: &PathBuf,
-    virtpy: &CheckedVirtpy,
-    site_packages: &Path,
-    proj_dirs: &ProjectDirs,
-    distribution: &Distribution,
-) {
-    for record in records(&dist_info_path.join("RECORD"))
-        .unwrap()
-        .map(Result::unwrap)
-    {
-        let dest = match remove_leading_parent_dirs(&record.path) {
-            Ok(path) => {
-                let toplevel_dirs = ["bin", "Scripts", "include", "lib", "lib64", "share"];
-                let starts_with_venv_dir = toplevel_dirs.iter().any(|dir| path.starts_with(dir));
-                if !starts_with_venv_dir {
-                    println!(
-                        "{}: attempted file placement outside virtpy, ignoring: {}",
-                        distribution.name, record.path
-                    );
-                    continue;
-                }
-
-                // executables need to be generated on demand
-                if is_path_of_executable(path) {
-                    continue;
-                }
-
-                let dest = virtpy.backing.join(path);
-                if path.starts_with("include") || path.starts_with("share") {
-                    fs_err::create_dir_all(dest.parent().unwrap()).unwrap();
-                }
-                dest
-            }
-            Err(path) => {
-                let dest = site_packages.join(path);
-                let dir = dest.parent().unwrap();
-                fs_err::create_dir_all(&dir).unwrap();
-                dest
-            }
-        };
-        link_file_into_virtpy(proj_dirs, &record, dest, distribution);
-    }
 }
 
 fn link_files_from_record_into_virtpy_new(
@@ -2228,19 +2088,6 @@ fn print_error_missing_file_in_record(distribution: &Distribution, missing_file:
         distribution.name_and_version(),
         missing_file
     )
-}
-
-fn remove_leading_parent_dirs(mut path: &Utf8Path) -> Result<&Utf8Path, &Utf8Path> {
-    let mut anything_removed = false;
-    while let Ok(stripped_path) = path.strip_prefix("..") {
-        path = stripped_path;
-        anything_removed = true;
-    }
-    if anything_removed {
-        Ok(path)
-    } else {
-        Err(path)
-    }
 }
 
 fn ignore_target_doesnt_exist(err: std::io::Error) -> std::io::Result<()> {
@@ -2420,19 +2267,6 @@ mod test {
                 },
             ]
         )
-    }
-
-    #[test]
-    fn can_load_old_stored_distribs() -> EResult<()> {
-        let old_file = fs_err::File::open("test_files/old_installed_distributions.json")?;
-        let old_stored_distribs = StoredDistributions::try_load_old(BufReader::new(old_file))
-            .ok_or_else(|| eyre!("failed to load old stored dstributions"))?;
-
-        let new_file = fs_err::read_to_string("test_files/new_installed_distributions.json")?;
-        let new_stored_distribs: _StoredDistributions =
-            serde_json::from_str(&new_file).wrap_err("failed to deserialize new file format")?;
-        assert_eq!(old_stored_distribs, new_stored_distribs);
-        Ok(())
     }
 
     #[test]
