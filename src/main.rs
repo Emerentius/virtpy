@@ -7,6 +7,7 @@ use python_wheel::{RecordEntry, WheelRecord};
 use rand::Rng;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
+use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::fmt::Write;
 use std::io::Seek;
@@ -1611,7 +1612,7 @@ enum InstalledStatus {
 
 fn install_executable_package(
     proj_dirs: &ProjectDirs,
-    options: Options,
+    _options: Options,
     package: &str,
     force: bool,
     allow_prereleases: bool,
@@ -1631,38 +1632,33 @@ fn install_executable_package(
 
     check_poetry_available()?;
 
-    let requirements = python_requirements::get_requirements(&package, allow_prereleases)?;
+    let tmp_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), &format!("install_{}", package))?;
+    let tmp_path = PathBuf::try_from(tmp_dir.path().to_owned())
+        .expect(INVALID_UTF8_PATH)
+        .join(".venv");
 
-    let virtpy = create_virtpy(&proj_dirs, &python_path, &package_folder, None, false)?;
+    let virtpy = create_virtpy(&proj_dirs, &python_path, &package_folder, None, true)?;
 
     // if anything goes wrong, try to delete the incomplete installation
     let virtpy = scopeguard::guard(virtpy, |virtpy| {
         let _ = virtpy.delete();
     });
 
-    let requirement_of_requested_package = requirements
-        .iter()
-        .find(|r| r.name == package)
-        .unwrap()
-        .clone();
+    symlink_dir(package_folder, tmp_path)?;
 
-    virtpy_add_dependencies(&proj_dirs, &virtpy, requirements, options)?;
+    init_temporary_poetry_project(tmp_dir.path())?;
 
-    // Lookup the StoredDistribution from the requirement.
-    // This needs to be loaded after the virtpy has been installed or the
-    // package may not be installed into the repository yet.
-    let distribs = StoredDistributions::load(proj_dirs)?;
-    let distrib = requirement_of_requested_package
-        .available_hashes
-        .into_iter()
-        .find_map(|sha| {
-            distribs
-                .0
-                .values()
-                .find_map(|sha_to_distrib| sha_to_distrib.get(&sha))
-        })
-        .unwrap()
-        .clone();
+    let mut cmd = std::process::Command::new("poetry");
+    cmd.arg("add").arg(package).current_dir(tmp_dir.path());
+    if allow_prereleases {
+        cmd.arg("--allow-prereleases");
+    }
+    check_output(&mut cmd).wrap_err("failed to install package into virtpy")?;
+
+    let distrib = virtpy
+        .dist_info(package)
+        .map(internal_store::stored_distribution_of_installed_dist)?;
+
     let executables = distrib.executable_names(proj_dirs)?;
     let exe_dir = virtpy.executables();
     let target_dir = proj_dirs.executables();
@@ -2038,6 +2034,17 @@ fn check_poetry_available() -> EResult<()> {
         .ok_or_else(|| eyre!("this command requires poetry to be installed and on the PATH. (https://github.com/python-poetry/poetry)"))
 }
 
+fn init_temporary_poetry_project(path: &StdPath) -> EResult<()> {
+    check_output(
+        std::process::Command::new("poetry")
+            .current_dir(&path)
+            .args(&["init", "-n"])
+            .stdout(std::process::Stdio::null()),
+    )
+    .wrap_err("failed to init poetry project")?;
+    Ok(())
+}
+
 struct CheckedVirtpy {
     link: PathBuf,
     backing: PathBuf,
@@ -2193,7 +2200,6 @@ impl CheckedVirtpy {
     fn global_python(&self) -> EResult<PathBuf> {
         #[cfg(unix)]
         {
-            use std::convert::TryFrom;
             let python = self.python();
             let python: &StdPath = python.as_ref();
             let python: PathBuf =

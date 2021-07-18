@@ -1,10 +1,9 @@
-use eyre::{eyre, WrapErr};
+use eyre::WrapErr;
 use pest::Parser;
-use std::convert::TryInto;
 use std::process::Command;
 
+use crate::Path;
 use crate::{DistributionHash, EResult};
-use crate::{Path, INVALID_UTF8_PATH};
 
 #[derive(pest_derive::Parser)]
 #[grammar = "requirements_txt.pest"] // relative to src
@@ -179,52 +178,6 @@ pub fn read_requirements_txt(data: &str) -> Vec<Requirement> {
         .into_inner()
         .map(Requirement::from_token)
         .collect()
-}
-
-// Meant for installation of single packages with executables
-// into a self-contained venv, like pipx does.
-pub fn get_requirements(package: &str, allow_prereleases: bool) -> EResult<Vec<Requirement>> {
-    fn init_temporary_poetry_project(
-        package: &str,
-        allow_prereleases: bool,
-    ) -> EResult<tempdir::TempDir> {
-        let tmp_dir = tempdir::TempDir::new("virtpy").unwrap();
-
-        crate::check_output(
-            Command::new("poetry")
-                .current_dir(&tmp_dir)
-                .args(&["init", "-n"])
-                .stdout(std::process::Stdio::null()),
-        )
-        .wrap_err("failed to init poetry project")?;
-
-        let toml_path = tmp_dir.as_ref().join("pyproject.toml");
-        let mut doc = fs_err::read_to_string(&toml_path)?
-            .parse::<toml_edit::Document>()
-            .wrap_err("failed to parse pyproject.toml")?;
-
-        let mut dep_table = toml_edit::Table::new();
-        dep_table["version"] = toml_edit::value("*");
-        if allow_prereleases {
-            dep_table["allow-prereleases"] = toml_edit::value(true);
-        }
-        doc["tool"]["poetry"]["dependencies"][package] = toml_edit::Item::Table(dep_table);
-        fs_err::write(&toml_path, doc.to_string())
-            .wrap_err_with(|| eyre!("failed to add {} to pyproject.toml", package))?;
-        Ok(tmp_dir)
-    }
-
-    let tmp_dir = init_temporary_poetry_project(package, allow_prereleases)
-        .wrap_err("failed to create temporary poetry project")?;
-
-    poetry_get_requirements(tmp_dir.path().try_into().expect(INVALID_UTF8_PATH), false)
-        .wrap_err_with(|| {
-            eyre!(
-                "failed to get requirements for {} from poetry (allow_prereleases = {})",
-                package,
-                allow_prereleases
-            )
-        })
 }
 
 pub fn poetry_get_requirements(
