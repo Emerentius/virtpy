@@ -72,7 +72,7 @@ pub(crate) fn collect_garbage(
                         python_specific_stored_distribs.remove(&hash);
                     }
                     stored_distribs
-                        .save(&proj_dirs)
+                        .save()
                         .wrap_err("failed to save stored distributions")?;
 
                     res.unwrap();

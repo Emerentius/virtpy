@@ -424,17 +424,17 @@ impl StoredDistributions {
         Ok(Self(distribs, lock))
     }
 
-    fn save(&self, proj_dirs: &ProjectDirs) -> EResult<()> {
-        let path = proj_dirs.installed_distributions_log();
-        File::create(&path)
-            .map_err(eyre::Report::new)
-            .and_then(|file| {
-                // NOTE: does this need a BufWriter?
-                let result = serde_json::to_writer_pretty(&file, &self.0)
-                    .wrap_err("failed to serialize stored distributions");
-                result
-            })
-            .wrap_err("failed to save stored distributions")
+    fn save(&self) -> EResult<()> {
+        self._save().wrap_err("failed to save stored distributions")
+    }
+
+    fn _save(&self) -> EResult<()> {
+        let mut file = &self.1.file;
+        // Truncate file, then write to it.
+        file.seek(std::io::SeekFrom::Start(0))?;
+        file.set_len(0)?;
+        serde_json::to_writer_pretty(file, &self.0)?;
+        Ok(())
     }
 }
 
@@ -1042,7 +1042,7 @@ fn register_new_distributions(
             )
         })?;
     }
-    all_stored_distributions.save(proj_dirs)?;
+    all_stored_distributions.save()?;
     Ok(())
 }
 
@@ -1079,7 +1079,7 @@ fn register_new_distribution(
             distrib.version
         )
     })?;
-    all_stored_distributions.save(proj_dirs)?;
+    all_stored_distributions.save()?;
     Ok(())
 }
 
