@@ -1,5 +1,5 @@
 use camino::{Utf8Path, Utf8PathBuf};
-use eyre::{bail, ensure, eyre, WrapErr};
+use eyre::{ensure, eyre, WrapErr};
 use fs_err::File;
 use itertools::Itertools;
 use python_requirements::Requirement;
@@ -354,6 +354,45 @@ impl StoredDistribution {
             }
         })
     }
+
+    // The executables of this distribution that can be added to the global install dir.
+    // For wheel installs this is both entrypoints and scripts from the data dir, but
+    // for the legacy pip installed distributions it is just the entrypoints.
+    fn executable_names(&self, proj_dirs: &ProjectDirs) -> eyre::Result<HashSet<String>> {
+        let entrypoint_exes = self
+            .entrypoints(proj_dirs)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|ep| ep.name)
+            .collect::<HashSet<_>>();
+        let mut exes = entrypoint_exes.clone();
+        if self.installed_via == StoredDistributionType::FromWheel {
+            let record = WheelRecord::from_file(self.dist_info_file(proj_dirs, "RECORD").unwrap())?;
+            let mut data_exes = record.files;
+            let script_path = PathBuf::from(self.distribution.data_dir_name()).join("scripts");
+            data_exes.retain(|entry| entry.path.starts_with(&script_path));
+
+            let data_exes = data_exes
+                .into_iter()
+                .map(|entry| entry.path.file_name().unwrap().to_owned())
+                .collect::<HashSet<_>>();
+
+            let duplicates = entrypoint_exes
+                .intersection(&data_exes)
+                .cloned()
+                .collect::<Vec<_>>();
+            // TODO: actually, this could happen even within entrypoints only.
+            ensure!(
+                duplicates.is_empty(),
+                "distribution {} contains executables with duplicate names: {}",
+                self.distribution.name_and_version(),
+                duplicates.join(", ")
+            );
+
+            exes.extend(data_exes);
+        }
+        Ok(exes)
+    }
 }
 
 impl StoredDistributions {
@@ -631,12 +670,6 @@ fn _generate_executable(
         hash: FileHash::from_reader(bytes),
         filesize: bytes.len() as u64,
     })
-}
-
-// TODO: remove every use with StoredDistribution::entrypoints
-fn entrypoints(dist_info: &Path) -> Option<Vec<EntryPoint>> {
-    let ini = dist_info.join("entry_points.txt");
-    _entrypoints(&ini)
 }
 
 fn _entrypoints(path: &Path) -> Option<Vec<EntryPoint>> {
@@ -1308,7 +1341,7 @@ fn main() -> EResult<()> {
                 let requirements = fs_err::read_to_string(requirements)?;
                 let requirements = python_requirements::read_requirements_txt(&requirements);
 
-                virtpy_add_dependencies(&proj_dirs, &virtpy, requirements, None, options)?;
+                virtpy_add_dependencies(&proj_dirs, &virtpy, requirements, options)?;
                 Ok(())
             }
 
@@ -1391,7 +1424,7 @@ fn main() -> EResult<()> {
                 };
                 let requirements =
                     python_requirements::poetry_get_requirements(Path::new("."), true)?;
-                virtpy_add_dependencies(&proj_dirs, &virtpy, requirements, None, options)?;
+                virtpy_add_dependencies(&proj_dirs, &virtpy, requirements, options)?;
                 Ok(())
             }
 
@@ -1607,7 +1640,38 @@ fn install_executable_package(
         let _ = virtpy.delete();
     });
 
-    virtpy_add_dependencies(&proj_dirs, &virtpy, requirements, Some(package), options)?;
+    let requirement_of_requested_package = requirements
+        .iter()
+        .find(|r| r.name == package)
+        .unwrap()
+        .clone();
+
+    virtpy_add_dependencies(&proj_dirs, &virtpy, requirements, options)?;
+
+    // Lookup the StoredDistribution from the requirement.
+    // This needs to be loaded after the virtpy has been installed or the
+    // package may not be installed into the repository yet.
+    let distribs = StoredDistributions::load(proj_dirs)?;
+    let distrib = requirement_of_requested_package
+        .available_hashes
+        .into_iter()
+        .find_map(|sha| {
+            distribs
+                .0
+                .values()
+                .find_map(|sha_to_distrib| sha_to_distrib.get(&sha))
+        })
+        .unwrap()
+        .clone();
+    let executables = distrib.executable_names(proj_dirs)?;
+    let exe_dir = virtpy.executables();
+    let target_dir = proj_dirs.executables();
+    for mut exe in executables {
+        if cfg!(windows) {
+            exe.push_str(".exe");
+        };
+        symlink_file(exe_dir.join(&exe), target_dir.join(&exe))?;
+    }
 
     // if everything succeeds, keep the venv
     std::mem::forget(virtpy);
@@ -1645,58 +1709,11 @@ fn _hash_of_reader_sha256(mut reader: impl std::io::Read) -> impl AsRef<[u8]> {
     hasher.finalize()
 }
 
-#[must_use]
-fn delete_global_package_executables(
-    proj_dirs: &ProjectDirs,
-    virtpy_dirs: &VirtpyBacking,
-    package: &str,
-) -> EResult<impl Iterator<Item = EResult<()>>> {
-    let dist_info = virtpy_dirs.dist_info(&package)?;
-
-    // FIXME: Install all executables from a package and then also delete them all.
-    let executables = entrypoints(&dist_info)
-        .expect("couldn't find entry_points.txt")
-        .into_iter()
-        .map(|ep| ep.name)
-        .collect::<Vec<_>>();
-    // let executables = records(&dist_info.join("RECORD"))
-    //     .unwrap()
-    //     .map(Result::unwrap)
-    //     .flat_map(|record| {
-    //         remove_leading_parent_dirs(&record.path)
-    //             .ok()
-    //             .map(ToOwned::to_owned)
-    //     })
-    //     .filter(|path| is_path_of_executable(path))
-    //     .map(|path| path.file_name().unwrap().to_owned())
-    //     .collect::<Vec<_>>();
-
-    let exe_dir = proj_dirs.executables();
-    Ok(executables
-        .into_iter()
-        .map(move |executable| {
-            let path = exe_dir.join(executable);
-            if cfg!(windows) {
-                path.with_extension("exe")
-            } else {
-                path
-            }
-        })
-        .map(|path| {
-            fs_err::remove_file(&path)
-                // Necessary when deleting from RECORD and when we're not installing all scripts
-                // as pip does (e.g. because we're leaving out package.data scripts)
-                .or_else(ignore_target_doesnt_exist)
-                .wrap_err_with(|| eyre!("failed to remove {}", path))
-        }))
-}
-
 fn virtpy_add_dependencies(
     proj_dirs: &ProjectDirs,
     virtpy: &CheckedVirtpy,
     requirements: Vec<Requirement>,
     //python_version: PythonVersion,
-    install_global_executable: Option<&str>,
     options: Options,
 ) -> EResult<()> {
     let new_deps = new_dependencies(&requirements, proj_dirs, virtpy.python_version)?;
@@ -1712,21 +1729,14 @@ fn virtpy_add_dependencies(
         options,
     )?;
 
-    link_requirements_into_virtpy(
-        proj_dirs,
-        virtpy,
-        requirements,
-        options,
-        install_global_executable,
-    )
-    .wrap_err("failed to add packages to virtpy")
+    link_requirements_into_virtpy(proj_dirs, virtpy, requirements, options)
+        .wrap_err("failed to add packages to virtpy")
 }
 
 fn virtpy_add_dependency_from_file(
     proj_dirs: &ProjectDirs,
     virtpy: &CheckedVirtpy,
     file: &Path,
-    //install_global_executable: Option<&str>,
     options: Options,
 ) -> EResult<()> {
     let file_hash = DistributionHash::from_file(file);
@@ -1743,7 +1753,7 @@ fn virtpy_add_dependency_from_file(
         )?;
     }
 
-    link_requirements_into_virtpy(proj_dirs, virtpy, vec![requirement], options, None)
+    link_requirements_into_virtpy(proj_dirs, virtpy, vec![requirement], options)
         .wrap_err("failed to add packages to virtpy")
 }
 
@@ -1754,10 +1764,20 @@ fn is_not_found(error: &std::io::Error) -> bool {
 fn delete_executable_virtpy(proj_dirs: &ProjectDirs, package: &str) -> EResult<()> {
     let virtpy_path = proj_dirs.package_folder(&package);
     let virtpy = CheckedVirtpy::new(&virtpy_path)?;
-    delete_global_package_executables(&proj_dirs, &virtpy.virtpy_backing(), &package)?
-        .for_each(Result::unwrap);
+    virtpy.delete()?;
 
-    virtpy.delete()
+    // delete_global_package_executables
+    // Executables in the binary directory are just symlinks.
+    // The virtpy deletion has broken some of them, just need to find and delete them.
+    for entry in proj_dirs.executables().read_dir()? {
+        let entry = entry?;
+        let target = fs_err::read_link(entry.path())?;
+        // TODO: switch to .try_exists() when stable
+        if !target.exists() {
+            fs_err::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 fn delete_virtpy_backing(backing_folder: &Path) -> std::io::Result<()> {
@@ -2053,6 +2073,7 @@ trait VirtpyPaths {
         python_path(self.location())
     }
 
+    #[allow(unused)]
     fn dist_info(&self, package: &str) -> EResult<PathBuf> {
         let package = &normalized_distribution_name_for_wheel(package);
         self.dist_infos()
@@ -2271,7 +2292,6 @@ fn link_requirements_into_virtpy(
     virtpy: &CheckedVirtpy,
     mut requirements: Vec<Requirement>,
     options: Options,
-    install_global_executable: Option<&str>,
 ) -> EResult<()> {
     // Link files into the backing virtpy so that when new top-level directories are
     // created, they are guaranteed to be on the same harddrive.
@@ -2324,7 +2344,6 @@ fn link_requirements_into_virtpy(
             proj_dirs,
             virtpy,
             options,
-            install_global_executable,
             &stored_distrib,
             &site_packages,
         )?;
@@ -2339,7 +2358,6 @@ fn link_single_requirement_into_virtpy(
     proj_dirs: &ProjectDirs,
     virtpy: &CheckedVirtpy,
     options: Options,
-    install_global_executable: Option<&str>,
     distrib: &StoredDistribution,
     site_packages: &Path,
 ) -> EResult<()> {
@@ -2364,7 +2382,7 @@ fn link_single_requirement_into_virtpy(
                 proj_dirs,
                 &distrib.distribution,
             );
-            install_executables(install_global_executable, distrib, virtpy, proj_dirs, None)?;
+            install_executables(distrib, virtpy, proj_dirs, None)?;
         }
         StoredDistributionType::FromWheel => {
             let record_dir = proj_dirs.records().join(distrib.distribution.as_csv());
@@ -2379,13 +2397,7 @@ fn link_single_requirement_into_virtpy(
                 proj_dirs,
                 &distrib.distribution,
             )?;
-            install_executables(
-                install_global_executable,
-                distrib,
-                virtpy,
-                proj_dirs,
-                Some(&mut record),
-            )?;
+            install_executables(distrib, virtpy, proj_dirs, Some(&mut record))?;
 
             // ========== This code can be extracted into a fn for "add file with X content to Y path and record it"
             // Add the hash of the installed wheel to the metadata so we can find out
@@ -2589,25 +2601,12 @@ fn link_file_into_virtpy(
 }
 
 fn install_executables(
-    install_global_executable: Option<&str>,
     stored_distrib: &StoredDistribution,
     virtpy: &CheckedVirtpy,
     proj_dirs: &ProjectDirs,
     mut wheel_record: Option<&mut WheelRecord>, // only record when unpacking wheels ourselves
 ) -> Result<(), color_eyre::Report> {
-    let install_global_executable =
-        install_global_executable == Some(&stored_distrib.distribution.name[..]);
-    let entrypoints = match (
-        stored_distrib.entrypoints(proj_dirs),
-        install_global_executable,
-    ) {
-        (Some(ep), _) => ep,
-        (None, true) => bail!(
-            "{} contains no executables",
-            stored_distrib.distribution.name
-        ),
-        (None, false) => vec![],
-    };
+    let entrypoints = stored_distrib.entrypoints(proj_dirs).unwrap_or(vec![]);
     for entrypoint in entrypoints {
         let executables_path = virtpy.executables();
         let err = || eyre!("failed to install executable {}", entrypoint.name);
@@ -2617,17 +2616,6 @@ fn install_executables(
             .wrap_err_with(err)?;
         if let Some(wheel_record) = &mut wheel_record {
             wheel_record.files.push(record_entry);
-        }
-
-        if install_global_executable {
-            // TODO: symlink these
-            let _ = entrypoint
-                .generate_executable(
-                    &proj_dirs.executables(),
-                    &python_path,
-                    &virtpy.site_packages(),
-                )
-                .wrap_err_with(err)?;
         }
     }
     Ok(())
@@ -2894,7 +2882,8 @@ mod test {
 
     #[test]
     fn read_entrypoints() {
-        let entrypoints = entrypoints("test_files/entrypoints.dist-info".as_ref()).unwrap();
+        let entrypoints =
+            _entrypoints("test_files/entrypoints.dist-info/entry_points.txt".as_ref()).unwrap();
         assert_eq!(
             entrypoints,
             &[
