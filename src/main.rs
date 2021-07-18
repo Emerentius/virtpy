@@ -2468,7 +2468,13 @@ fn link_files_from_record_into_virtpy_new(
     distribution: &Distribution,
 ) -> EResult<()> {
     let data_dir = distribution.data_dir_name();
-    let paths = virtpy.install_paths()?;
+    // The install paths are not automatically canonicalized.
+    // If they are determined through the python in the virtpy link,
+    // they will be rooted in the virtpy link.
+    // That may cause a hardlink attempt across harddrives, if the target dir
+    // doesn't already exist.
+    // => use backing
+    let paths = virtpy.virtpy_backing().install_paths()?;
 
     let ensure_dir_exists = |dest: &Path| {
         let dir = dest.parent().unwrap();
