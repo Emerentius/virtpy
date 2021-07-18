@@ -1,9 +1,5 @@
-use eyre::WrapErr;
-use pest::Parser;
-use std::process::Command;
-
-use crate::Path;
 use crate::{DistributionHash, EResult};
+use pest::Parser;
 
 #[derive(pest_derive::Parser)]
 #[grammar = "requirements_txt.pest"] // relative to src
@@ -178,60 +174,6 @@ pub fn read_requirements_txt(data: &str) -> Vec<Requirement> {
         .into_inner()
         .map(Requirement::from_token)
         .collect()
-}
-
-pub fn poetry_get_requirements(
-    poetry_proj: &Path,
-    include_dev_dependencies: bool,
-) -> EResult<Vec<Requirement>> {
-    poetry_deactivate_venv_creation(poetry_proj);
-
-    // Generating the poetry.lock file without actually installing anything.
-    //
-    // Alternatively, just calling `poetry export` will also create the lockfile without
-    // installing anything, but it also emits a message telling you so. That message
-    // can not be silenced and would have to be separated from the actual output.
-    crate::check_output(
-        Command::new("poetry")
-            .current_dir(poetry_proj)
-            .args(&["update", "--lock"])
-            .stdout(std::process::Stdio::null()),
-    )?;
-
-    debug_assert!(poetry_proj.join("poetry.lock").exists());
-
-    let mut command = Command::new("poetry");
-    command
-        .current_dir(poetry_proj)
-        .args(&["export", "-f", "requirements.txt"]);
-
-    if include_dev_dependencies {
-        command.arg("--dev");
-    }
-
-    let output = crate::check_output(&mut command).wrap_err("failed to get requirements.txt")?;
-
-    Ok(read_requirements_txt(&output))
-}
-
-/// Poetry creates venvs automatically which not only takes a lot of time, it may
-/// also create them in poetry's global directory.
-fn poetry_deactivate_venv_creation(poetry_proj: &Path) {
-    // Manually read the poetry.toml and set the appropriate setting.
-    // Could also be done with `poetry config virtualenvs.create false --local`
-    // but that's much slower, because poetry is a typical python project
-    // that imports EVERYTHING at startup.
-    let toml_path = poetry_proj.join("poetry.toml");
-    let mut doc = match fs_err::read_to_string(&toml_path) {
-        Ok(string) => string,
-        Err(err) if crate::is_not_found(&err) => "[virtualenvs]".to_owned(),
-        Err(err) => panic!("failed to read poetry.toml: {}", err),
-    }
-    .parse::<toml_edit::Document>()
-    .unwrap();
-
-    doc["virtualenvs"]["create"] = toml_edit::value(false);
-    fs_err::write(&toml_path, doc.to_string()).expect("failed to write poetry.toml");
 }
 
 #[cfg(test)]

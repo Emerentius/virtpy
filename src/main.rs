@@ -85,8 +85,6 @@ enum Command {
     Uninstall {
         package: Vec<String>,
     },
-    /// Install the dependencies in the local .virtpy according to the poetry config
-    PoetryInstall {},
     /// Print paths where various files are stored
     Path(PathCmd),
     InternalStore(InternalStoreCmd),
@@ -1403,36 +1401,6 @@ fn main() -> EResult<()> {
                 }
             }
         }
-        Command::PoetryInstall {} => {
-            fn poetry_install(proj_dirs: &ProjectDirs, options: Options) -> EResult<()> {
-                let virtpy_path: &Path = DEFAULT_VIRTPY_PATH.as_ref();
-                let python_path = python_detection::detect("3")?;
-                let virtpy = match virtpy_path.exists() {
-                    true => {
-                        let virtpy = CheckedVirtpy::new(virtpy_path)
-                            .wrap_err("found an existing virtpy but couldn't verify it")?;
-
-                        virtpy
-                            .reset(proj_dirs)
-                            .wrap_err("found an existing virtpy but failed when resetting it")?
-                    }
-                    false => {
-                        // It would be better to respect the python version setting in pyproject.toml
-                        // If this were meant for production, it should use the poetry project name for the prompt
-                        create_virtpy(&proj_dirs, &python_path, &virtpy_path, None, false)
-                            .wrap_err("no virtpy exists and failed to create one")?
-                    }
-                };
-                let requirements =
-                    python_requirements::poetry_get_requirements(Path::new("."), true)?;
-                virtpy_add_dependencies(&proj_dirs, &virtpy, requirements, options)?;
-                Ok(())
-            }
-
-            check_poetry_available()?;
-            poetry_install(&proj_dirs, options)
-                .wrap_err("failed to install dependencies from poetry project")?;
-        }
         Command::InternalStore(InternalStoreCmd::Gc { remove }) => {
             internal_store::collect_garbage(&proj_dirs, remove, options)?;
         }
@@ -1818,19 +1786,6 @@ fn create_virtpy(
     _create_virtpy(central_path, python_path, path, prompt, with_pip_shim)
 }
 
-fn create_virtpy_with_id(
-    project_dirs: &ProjectDirs,
-    python_path: &Path,
-    path: &Path,
-    prompt: &str,
-    id: &str,
-    with_pip_shim: bool,
-) -> EResult<CheckedVirtpy> {
-    let central_path = project_dirs.virtpys().join(id);
-    assert!(!central_path.exists());
-    _create_virtpy(central_path, python_path, path, prompt, with_pip_shim)
-}
-
 fn _create_virtpy(
     central_path: PathBuf,
     python_path: &Path,
@@ -2080,7 +2035,6 @@ trait VirtpyPaths {
         python_path(self.location())
     }
 
-    #[allow(unused)]
     fn dist_info(&self, package: &str) -> EResult<PathBuf> {
         let package = &normalized_distribution_name_for_wheel(package);
         self.dist_infos()
@@ -2220,52 +2174,10 @@ impl CheckedVirtpy {
         }
     }
 
-    fn id(&self) -> &str {
-        self.backing.file_name().unwrap()
-    }
-
-    // read prompt from pyenv.cfg, if it exists
-    // virtpys always have a custom prompt, but only python3.8+
-    // stores it in the pyvenv.cfg.
-    //
-    // could also do this at initialization and read the python version from there
-    // at the same time
-    fn prompt(&self) -> EResult<String> {
-        let ini = self.location().join("pyvenv.cfg");
-        let ini = ini::Ini::load_from_file(ini)?;
-
-        Ok(ini
-            .general_section()
-            .get("prompt")
-            .unwrap_or(DEFAULT_VIRTPY_PATH)
-            .to_owned())
-    }
-
     fn delete(self) -> EResult<()> {
         fs_err::remove_dir_all(self.location())?;
         delete_virtpy_backing(&self.backing)?;
         Ok(())
-    }
-
-    fn reset(self, proj_dirs: &ProjectDirs) -> EResult<Self> {
-        // Reset virtpy by deleting it.
-        // keep the id the same so currently activated environments stay valid.
-        let id = self.id().to_owned();
-        let python_path = self.global_python()?;
-        let virtpy_path = self.location().to_owned();
-        let prompt = self.prompt()?;
-        let has_pip_shim = self.has_pip_shim();
-        // delete the old virtpy so the id is freed.
-        // TODO: on failure, the old state should be kept
-        self.delete()?;
-        create_virtpy_with_id(
-            &proj_dirs,
-            &python_path,
-            &virtpy_path,
-            &prompt,
-            &id,
-            has_pip_shim,
-        )
     }
 
     fn virtpy_backing(&self) -> VirtpyBacking {
@@ -2283,6 +2195,7 @@ impl CheckedVirtpy {
         self.metadata_dir().join("has_pip_shim")
     }
 
+    #[allow(unused)]
     fn has_pip_shim(&self) -> bool {
         self._pip_shim_flag_file().exists()
     }

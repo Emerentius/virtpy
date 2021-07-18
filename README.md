@@ -30,9 +30,3 @@ This forms the core functionality of this tool.
 Run `virtpy path bin` to get the directory to add to your `PATH`.
 
 This is similar to [pipx](https://pypi.org/project/pipx/), but it uses virtpy for isolation insted of venv.
-
-# Create venv from poetry
-**LEGACY command**  
-When using the pip shim, you can use poetry directly with virtpy.
-
-`virtpy poetry-install` does the job that `poetry install` does, but uses `virtpy` instead of `venv`.
