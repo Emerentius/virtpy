@@ -1666,8 +1666,10 @@ fn install_executable_package(
     let executables = distrib.executable_names(proj_dirs)?;
     let exe_dir = virtpy.executables();
     let target_dir = proj_dirs.executables();
-    for exe in executables {
-        // TODO: for windows, we need to link to the .exe files
+    for mut exe in executables {
+        if cfg!(windows) {
+            exe.push_str(".exe");
+        };
         symlink_file(exe_dir.join(&exe), target_dir.join(&exe))?;
     }
 
