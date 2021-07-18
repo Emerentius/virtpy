@@ -277,7 +277,7 @@ fn distributions_used(virtpy_dirs: VirtpyBacking) -> impl Iterator<Item = Stored
             // poetry places a dist-info into the venv for the package
             // whose dependencies are managed by poetry
             fs_err::read_to_string(dist_info_path.join("INSTALLER"))
-                .map_or(false, |installer| installer.trim() != "poetry")
+                .map_or(true, |installer| installer.trim() != "poetry")
         })
         .map(|dist_info_path| {
             match dist_info_path
