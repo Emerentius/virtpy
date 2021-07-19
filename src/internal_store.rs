@@ -149,11 +149,7 @@ pub(crate) fn print_stats(
             Ok(distribution_files
                 .get(&distr)
                 .ok_or_else(|| {
-                    eyre::eyre!(
-                        "no entry for distribution {},{:?}",
-                        distr.distribution.as_csv(),
-                        distr.installed_via
-                    )
+                    eyre::eyre!("no entry for distribution {}", distr.distribution.as_csv(),)
                 })?
                 .1
                 * dependents.len() as u64)
@@ -302,35 +298,16 @@ pub(crate) fn stored_distribution_of_installed_dist(
 }
 
 fn _stored_distribution_of_installed_dist(dist_info_path: &Path) -> StoredDistribution {
-    match dist_info_path
-        .symlink_metadata()
-        .unwrap()
-        .file_type()
-        .is_symlink()
-    {
-        true => {
-            let dir_in_repo = dist_info_path.read_link().unwrap();
-            let dirname = dir_in_repo.file_name().unwrap().to_str().unwrap();
-            StoredDistribution {
-                distribution: Distribution::from_store_name(dirname),
-                installed_via: crate::StoredDistributionType::FromPip,
-            }
-        }
-        false => {
-            let hash_path = dist_info_path.join(crate::DIST_HASH_FILE);
-            let hash = fs_err::read_to_string(hash_path).unwrap();
-            let (name, version) =
-                package_info_from_dist_info_dirname(dist_info_path.file_name().unwrap());
+    let hash_path = dist_info_path.join(crate::DIST_HASH_FILE);
+    let hash = fs_err::read_to_string(hash_path).unwrap();
+    let (name, version) = package_info_from_dist_info_dirname(dist_info_path.file_name().unwrap());
 
-            StoredDistribution {
-                distribution: Distribution {
-                    name: name.into(),
-                    version: version.into(),
-                    sha: DistributionHash(hash),
-                },
-                installed_via: crate::StoredDistributionType::FromWheel,
-            }
-        }
+    StoredDistribution {
+        distribution: Distribution {
+            name: name.into(),
+            version: version.into(),
+            sha: DistributionHash(hash),
+        },
     }
 }
 
