@@ -2764,10 +2764,6 @@ mod test {
     fn test_install_uninstall() -> EResult<()> {
         let proj_dirs = test_proj_dirs();
 
-        let options = Options { verbose: 3 };
-        let force = true;
-        let python = "3";
-
         let packages = [
             ("tuna", false),
             ("black", true),
@@ -2777,16 +2773,31 @@ mod test {
             ("vulture", false),
         ];
 
+        // The pip shim calls back to virtpy and for that we need a compiled binary.
+        // cargo test doesn't automatically build the executable so we use escargot's CargoBuild
+        // to do so.
+        let cargo_run = escargot::CargoBuild::new().bin("virtpy").run().unwrap();
+
         for &(package, allow_prereleases) in &packages {
-            install_executable_package(
-                &proj_dirs,
-                options,
-                package,
-                force,
-                allow_prereleases,
-                python,
-            )?;
-            delete_executable_virtpy(&proj_dirs, &package)?;
+            let base_cmd = || -> EResult<_> {
+                let mut cmd = assert_cmd::Command::from_std(cargo_run.command());
+                cmd.arg("--project-dir").arg(proj_dirs.data()).arg("-vv");
+                Ok(cmd)
+            };
+
+            let mut install_cmd = base_cmd()?;
+            install_cmd.arg("install").arg(package);
+            if allow_prereleases {
+                install_cmd.arg("--allow-prereleases");
+            }
+
+            let mut uninstall_cmd = base_cmd()?;
+            uninstall_cmd.arg("uninstall").arg(package);
+
+            install_cmd.ok()?;
+            assert_ne!(proj_dirs.executables().read_dir().unwrap().count(), 0);
+
+            uninstall_cmd.ok()?;
             assert_eq!(proj_dirs.executables().read_dir().unwrap().count(), 0);
         }
         Ok(())

@@ -41,3 +41,7 @@ debug = true
 
 [profile.dev.package.backtrace]
 opt-level = 3
+
+[dev-dependencies]
+assert_cmd = "1.0.7"
+escargot = "0.5.2"
