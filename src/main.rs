@@ -2071,8 +2071,15 @@ fn init_temporary_poetry_project(path: &StdPath) -> EResult<()> {
             .args(&["init", "-n"])
             .stdout(std::process::Stdio::null()),
     )
-    .wrap_err("failed to init poetry project")?;
-    Ok(())
+    .and_then(|_|
+        // By default, poetry creates venvs in a global directory.
+        // We need it to use our venvs.
+        // Could also be done with `poetry config virtualenvs.create false --local`
+        // but that's much slower, because poetry is a typical python project
+        // that imports EVERYTHING at startup.
+        fs_err::write(path.join("poetry.toml"), "[virtualenvs]\nin-project = true")
+        .wrap_err("failed to activate in-project venv creation for tmp poetry project"))
+    .wrap_err("failed to init poetry project")
 }
 
 struct CheckedVirtpy {
