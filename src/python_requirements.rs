@@ -151,9 +151,8 @@ impl Requirement {
 
     pub fn from_filename(filename: &str, hash: DistributionHash) -> EResult<Self> {
         // TODO: use a better parser
-        let (_, name, version, _, _) =
-            lazy_regex::regex_captures!(r"^([\w\d]+)-(\d+(\.\d+)*)(\.tar\.gz|.*\.whl)", filename)
-                .unwrap();
+        let (_, name, version, _) =
+            lazy_regex::regex_captures!(r"^([^-]+)-([^-]+)(\.tar\.gz|-.*\.whl)", filename).unwrap();
 
         Ok(Requirement {
             name: name.to_owned(),
@@ -287,5 +286,21 @@ mod test {
             assert_eq!(req.name, distrib_name);
             assert_eq!(req.version, version);
         }
+    }
+
+    #[test]
+    fn read_prerelease_version_correctly() -> EResult<()> {
+        let hash = DistributionHash("sha256=foobar".to_string());
+        let req = Requirement::from_filename("black-21.7b0-py3-none-any.whl", hash.clone())?;
+        assert_eq!(
+            req,
+            Requirement {
+                name: "black".to_string(),
+                version: "21.7b0".to_string(),
+                marker: None,
+                available_hashes: vec![hash]
+            }
+        );
+        Ok(())
     }
 }
