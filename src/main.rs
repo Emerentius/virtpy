@@ -1602,7 +1602,7 @@ enum InstalledStatus {
 
 fn install_executable_package(
     proj_dirs: &ProjectDirs,
-    _options: Options,
+    options: Options,
     package: &str,
     force: bool,
     allow_prereleases: bool,
@@ -1643,6 +1643,18 @@ fn install_executable_package(
     if allow_prereleases {
         cmd.arg("--allow-prereleases");
     }
+    match options.verbose {
+        // poetry uses -v for normal output
+        // -vv for verbose
+        // -vvv for debug
+        0 => (),
+        1 => {
+            cmd.arg("-vv");
+        }
+        _ => {
+            cmd.arg("-vvv");
+        }
+    };
     check_output(&mut cmd).wrap_err("failed to install package into virtpy")?;
 
     let distrib = virtpy
