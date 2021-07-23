@@ -1313,6 +1313,10 @@ impl VirtpyPaths for VirtpyBacking {
     fn python_version(&self) -> PythonVersion {
         self.python_version
     }
+
+    fn metadata_dir(&self) -> PathBuf {
+        self.location().join(CENTRAL_METADATA)
+    }
 }
 
 impl VirtpyBacking {
@@ -2060,6 +2064,7 @@ fn dist_info_matches_package(dist_info: &Path, package: &str) -> bool {
 trait VirtpyPaths {
     fn location(&self) -> &Path;
     fn python_version(&self) -> PythonVersion;
+    fn metadata_dir(&self) -> PathBuf;
 
     fn executables(&self) -> PathBuf {
         executables_path(self.location())
@@ -2104,6 +2109,23 @@ trait VirtpyPaths {
 
     fn install_paths(&self) -> EResult<InstallPaths> {
         InstallPaths::detect(self.python())
+    }
+
+    fn set_metadata(&self, name: &str, value: &str) -> EResult<()> {
+        fs_err::write(self.metadata_dir().join(name), value)?;
+        Ok(())
+    }
+
+    fn get_metadata(&self, name: &str) -> EResult<Option<String>> {
+        fs_err::read_to_string(self.metadata_dir().join(name))
+            .map(Some)
+            .or_else(|err| {
+                if is_not_found(&err) {
+                    Ok(None)
+                } else {
+                    Err(err.into())
+                }
+            })
     }
 }
 
@@ -2157,6 +2179,10 @@ impl VirtpyPaths for CheckedVirtpy {
 
     fn python_version(&self) -> PythonVersion {
         self.python_version
+    }
+
+    fn metadata_dir(&self) -> PathBuf {
+        self.location().join(LINK_METADATA)
     }
 }
 
