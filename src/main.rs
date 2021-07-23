@@ -1,4 +1,5 @@
 use camino::{Utf8Path, Utf8PathBuf};
+use eyre::bail;
 use eyre::{ensure, eyre, WrapErr};
 use fs_err::File;
 use itertools::Itertools;
@@ -44,6 +45,8 @@ struct Opt {
     cmd: Command,
     #[structopt(short, parse(from_occurrences))]
     verbose: u8,
+    #[structopt(long, hidden = true)]
+    project_dir: Option<PathBuf>,
 }
 
 #[derive(StructOpt)]
@@ -1177,14 +1180,30 @@ impl ProjectDirs {
         })
     }
 
-    #[cfg(test)]
     fn from_path(data_dir: PathBuf) -> Self {
         Self { data_dir }
     }
 
+    fn from_existing_path(data_dir: PathBuf) -> EResult<Self> {
+        let proj_dirs = Self::from_path(data_dir.clone());
+        for necessary_subdir in proj_dirs._paths() {
+            if !data_dir.join(&necessary_subdir).exists() {
+                bail!("missing directory {}", necessary_subdir);
+            }
+        }
+        Ok(proj_dirs)
+    }
+
     fn create_dirs(&self) -> std::io::Result<()> {
         fs_err::create_dir_all(self.data())?;
-        for path in &[
+        for path in self._paths() {
+            fs_err::create_dir(path).or_else(ignore_target_exists)?;
+        }
+        Ok(())
+    }
+
+    fn _paths(&self) -> impl IntoIterator<Item = PathBuf> {
+        [
             self.installations(),
             self.dist_infos(),
             self.package_files(),
@@ -1192,10 +1211,7 @@ impl ProjectDirs {
             self.virtpys(),
             self.tmp(),
             self.records(),
-        ] {
-            fs_err::create_dir(path).or_else(ignore_target_exists)?;
-        }
-        Ok(())
+        ]
     }
 
     fn data(&self) -> &Path {
@@ -1322,8 +1338,14 @@ fn main() -> EResult<()> {
         verbose: opt.verbose,
     };
 
-    let proj_dirs = ProjectDirs::new().unwrap();
-    proj_dirs.create_dirs()?;
+    let proj_dirs = match opt.project_dir {
+        Some(dir) => ProjectDirs::from_existing_path(dir)?,
+        None => {
+            let proj_dirs = ProjectDirs::new().ok_or_else(|| eyre!("failed to get proj dirs"))?;
+            proj_dirs.create_dirs()?;
+            proj_dirs
+        }
+    };
 
     match opt.cmd {
         Command::Add {
