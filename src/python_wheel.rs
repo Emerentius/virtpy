@@ -244,12 +244,16 @@ impl WheelRecord {
     // }
 
     pub fn from_file(record: impl AsRef<Path>) -> EResult<Self> {
+        Self::_from_file(record.as_ref())
+            .wrap_err_with(|| eyre!("failed to read record from {:?}", record.as_ref()))
+    }
+
+    fn _from_file(record: &Path) -> EResult<Self> {
         let reader = csv::ReaderBuilder::new()
             .has_headers(false)
-            .from_path(record.as_ref())?;
+            .from_path(record)?;
 
         Self::_from_csv_reader(reader)
-            .wrap_err_with(|| eyre!("failed to read record from {:?}", record.as_ref()))
     }
 
     pub fn save_to_file(&self, dest: impl AsRef<Path>) -> EResult<()> {
