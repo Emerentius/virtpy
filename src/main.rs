@@ -1334,6 +1334,15 @@ fn path_to_virtpy(path_override: &Option<PathBuf>) -> &Path {
         .unwrap_or_else(|| DEFAULT_VIRTPY_PATH.as_ref())
 }
 
+fn shim_info(proj_dirs: &ProjectDirs) -> EResult<ShimInfo> {
+    Ok(ShimInfo {
+        proj_dirs,
+        virtpy_exe: PathBuf::try_from(
+            std::env::current_exe().wrap_err("failed to find the running executable's path")?,
+        )?,
+    })
+}
+
 fn main() -> EResult<()> {
     color_eyre::install()?;
 
@@ -1387,9 +1396,13 @@ fn main() -> EResult<()> {
             ..
         } => {
             let path = path.unwrap_or_else(|| PathBuf::from(DEFAULT_VIRTPY_PATH));
+
+            let shim_info = (!without_pip_shim)
+                .then(|| shim_info(&proj_dirs))
+                .transpose()?;
             python_detection::detect(&python)
                 .and_then(|python_path| {
-                    create_virtpy(&proj_dirs, &python_path, &path, None, !without_pip_shim)
+                    create_virtpy(&proj_dirs, &python_path, &path, None, shim_info)
                 })
                 .wrap_err("failed to create virtpy")?;
         }
@@ -1631,7 +1644,13 @@ fn install_executable_package(
         .expect(INVALID_UTF8_PATH)
         .join(".venv");
 
-    let virtpy = create_virtpy(&proj_dirs, &python_path, &package_folder, None, true)?;
+    let virtpy = create_virtpy(
+        &proj_dirs,
+        &python_path,
+        &package_folder,
+        None,
+        Some(shim_info(proj_dirs)?),
+    )?;
 
     // if anything goes wrong, try to delete the incomplete installation
     let virtpy = scopeguard::guard(virtpy, |virtpy| {
@@ -1792,7 +1811,7 @@ fn create_virtpy(
     python_path: &Path,
     path: &Path,
     prompt: Option<String>,
-    with_pip_shim: bool,
+    with_pip_shim: Option<ShimInfo>,
 ) -> EResult<CheckedVirtpy> {
     let mut rng = rand::thread_rng();
 
@@ -1824,12 +1843,23 @@ fn create_virtpy(
     _create_virtpy(central_path, python_path, path, prompt, with_pip_shim)
 }
 
+struct ShimInfo<'a> {
+    proj_dirs: &'a ProjectDirs,
+    // TODO: make this part optional
+    //       Having a backreference to the virtpy that created the venv is necessary
+    //       for the unit tests to stay isolated, but it also means
+    //       that you can't take the virtpy executable in a regular installation
+    //       and move it to a different location without all venvs it created breaking.
+    //       Regular venvs should try to find virtpy on the PATH.
+    virtpy_exe: PathBuf,
+}
+
 fn _create_virtpy(
     central_path: PathBuf,
     python_path: &Path,
     path: &Path,
     prompt: &str,
-    with_pip_shim: bool,
+    with_pip_shim: Option<ShimInfo>,
 ) -> EResult<CheckedVirtpy> {
     _create_bare_venv(python_path, &central_path, prompt)?;
 
@@ -1869,8 +1899,8 @@ fn _create_virtpy(
         // to a full CheckedVirtpy on demand.
         python_version: python_version(python_path)?,
     };
-    if with_pip_shim {
-        add_pip_shim(&checked_virtpy).wrap_err("failed to add pip shim")?;
+    if let Some(shim_info) = with_pip_shim {
+        add_pip_shim(&checked_virtpy, shim_info).wrap_err("failed to add pip shim")?;
     }
 
     Ok(checked_virtpy)
@@ -1910,7 +1940,7 @@ fn ensure_toplevel_symlinks_exist(backing_location: &Path, virtpy_location: &Pat
     Ok(())
 }
 
-fn add_pip_shim(virtpy: &CheckedVirtpy) -> EResult<()> {
+fn add_pip_shim(virtpy: &CheckedVirtpy, shim_info: ShimInfo<'_>) -> EResult<()> {
     let target_path = virtpy.site_packages().join("pip");
     let shim_zip = include_bytes!("../pip_shim/pip_shim.zip");
     let mut archive = zip::read::ZipArchive::new(std::io::Cursor::new(shim_zip))
@@ -1928,6 +1958,8 @@ fn add_pip_shim(virtpy: &CheckedVirtpy) -> EResult<()> {
         &virtpy.site_packages(),
     )?;
     virtpy.set_has_pip_shim();
+    virtpy.set_metadata("virtpy_exe", shim_info.virtpy_exe.as_str())?;
+    virtpy.set_metadata("proj_dir", shim_info.proj_dirs.data().as_str())?;
 
     Ok(())
 }
@@ -2921,7 +2953,7 @@ mod test {
         let proj_dirs = test_proj_dirs();
         let tmp_dir = tempdir::TempDir::new("virtpy_test")?;
         let virtpy_path: Utf8PathBuf = tmp_dir.path().join("install_paths_test").try_into()?;
-        let virtpy = create_virtpy(&proj_dirs, &detect("3")?, &virtpy_path, None, true)?;
+        let virtpy = create_virtpy(&proj_dirs, &detect("3")?, &virtpy_path, None, None)?;
         let install_paths = virtpy.install_paths()?;
         let required_keys = ["purelib", "platlib", "headers", "scripts", "data"]
             .iter()

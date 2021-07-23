@@ -3,7 +3,7 @@
 # instead of pip and will translate and forward commands to virtpy.
 #
 # This allows transparent usage of virtpy by tools that are not aware of it
-# (which is just, like, every single one of them)
+# (which is just like every single one of them)
 #
 # EXTREMELY incomplete and brittle.
 
@@ -12,7 +12,7 @@ import pathlib
 import os.path
 import itertools
 import subprocess
-from typing import Optional
+from typing import List, Optional
 
 
 def virtpy_path() -> Optional[pathlib.Path]:
@@ -55,7 +55,7 @@ def main() -> None:
         uninstall_package()
 
 
-def install_package():
+def install_package() -> None:
     package_path = sys.argv[3]
     prefix = "file://"
     if package_path.startswith(prefix):
@@ -68,12 +68,12 @@ def install_package():
     assert virtpy is not None
 
     subprocess.run(
-        ["virtpy", "internal-use-only", "add-from-file", virtpy, package_path],
+        [*virtpy_cmd(virtpy), "internal-use-only", "add-from-file", virtpy, package_path],
         check=True,
     )
 
 
-def uninstall_package():
+def uninstall_package() -> None:
     package_name = sys.argv[2]
     assert not package_name.startswith("-")
 
@@ -81,5 +81,11 @@ def uninstall_package():
     assert virtpy is not None
 
     subprocess.run(
-        ["virtpy", "remove", "--virtpy-path", virtpy, package_name], check=True
+        [*virtpy_cmd(virtpy), "internal-use-only", "remove", virtpy, package_name], check=True
     )
+
+def virtpy_cmd(venv_path: str) -> List[str]:
+    metadata = os.path.join(venv_path, "virtpy_link_metadata")
+    virtpy_exe = open(os.path.join(metadata , "virtpy_exe")).read()
+    proj_dir = open(os.path.join(metadata, "proj_dir")).read()
+    return [virtpy_exe, "--project-dir", proj_dir]
