@@ -1343,7 +1343,7 @@ fn main() -> EResult<()> {
     };
 
     let proj_dirs = match opt.project_dir {
-        Some(dir) => ProjectDirs::from_existing_path(dir)?,
+        Some(dir) => ProjectDirs::from_existing_path(canonicalize(&dir)?)?,
         None => {
             let proj_dirs = ProjectDirs::new().ok_or_else(|| eyre!("failed to get proj dirs"))?;
             proj_dirs.create_dirs()?;
@@ -1834,7 +1834,8 @@ fn _create_virtpy(
     _create_bare_venv(python_path, &central_path, prompt)?;
 
     fs_err::create_dir(path)?;
-    ensure_toplevel_symlinks_exist(&central_path, path)?;
+    let path = canonicalize(path)?;
+    ensure_toplevel_symlinks_exist(&central_path, &path)?;
 
     let path_: &StdPath = path.as_ref();
     let abs_path: PathBuf = path_
@@ -1873,6 +1874,10 @@ fn _create_virtpy(
     }
 
     Ok(checked_virtpy)
+}
+
+fn canonicalize(path: &Path) -> EResult<PathBuf> {
+    Ok(PathBuf::try_from(path.canonicalize()?)?)
 }
 
 fn ensure_toplevel_symlinks_exist(backing_location: &Path, virtpy_location: &Path) -> EResult<()> {
@@ -2196,7 +2201,7 @@ impl CheckedVirtpy {
                 Err(eyre!("backing storage for virtpy not found: {}", target))
             }
             VirtpyLinkStatus::Ok { matching_virtpy } => Ok(CheckedVirtpy {
-                link: virtpy_link.to_owned(),
+                link: canonicalize(virtpy_link)?,
                 backing: matching_virtpy,
                 python_version: python_version(&python_path(virtpy_link))?,
             }),
