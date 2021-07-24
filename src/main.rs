@@ -148,15 +148,21 @@ const INVALID_UTF8_PATH: &str = "path is not valid utf8";
 const DIST_HASH_FILE: &str = "DISTRIBUTION_HASH";
 
 fn check_output(cmd: &mut std::process::Command) -> EResult<String> {
+    String::from_utf8(_check_output(cmd)?)
+        .wrap_err_with(|| eyre!("output isn't valid utf8 for {:?}", cmd))
+}
+
+fn check_status(cmd: &mut std::process::Command) -> EResult<()> {
+    _check_output(cmd).map(drop)
+}
+
+fn _check_output(cmd: &mut std::process::Command) -> EResult<Vec<u8>> {
     let output = cmd.output()?;
     ensure!(output.status.success(), {
         let error = String::from_utf8_lossy(&output.stderr);
         eyre!("command failed\n    {:?}:\n{}", cmd, error)
     });
-    // TODO: check out what kind error message FromUtf8Error converts into
-    //       and whether it's sufficient
-    String::from_utf8(output.stdout)
-        .wrap_err_with(|| eyre!("output isn't valid utf8 for {:?}", cmd))
+    Ok(output.stdout)
 }
 
 // probably missing prereleases and such
@@ -952,7 +958,7 @@ fn _convert_to_wheel(
 ) -> EResult<(PathBuf, tempdir::TempDir)> {
     let output_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), "convert_to_wheel")?;
 
-    check_output(
+    check_status(
         std::process::Command::new(python)
             .args(&["-m", "pip", "wheel", "--no-cache-dir", "--wheel-dir"])
             .arg(output_dir.path())
@@ -1678,7 +1684,7 @@ fn install_executable_package(
             cmd.arg("-vvv");
         }
     };
-    check_output(&mut cmd).wrap_err("failed to install package into virtpy")?;
+    check_status(&mut cmd).wrap_err("failed to install package into virtpy")?;
 
     let distrib = virtpy
         .dist_info(package)
@@ -2048,7 +2054,7 @@ fn virtpy_status(virtpy_path: &Path) -> EResult<VirtpyStatus> {
 }
 
 fn _create_bare_venv(python_path: &Path, path: &Path, prompt: &str) -> EResult<()> {
-    check_output(
+    check_status(
         std::process::Command::new(python_path)
             .args(&["-m", "venv", "--without-pip", "--prompt", prompt])
             .arg(&path)
@@ -2065,7 +2071,7 @@ fn check_poetry_available() -> EResult<()> {
 }
 
 fn init_temporary_poetry_project(path: &StdPath) -> EResult<()> {
-    check_output(
+    check_status(
         std::process::Command::new("poetry")
             .current_dir(&path)
             .args(&["init", "-n"])
