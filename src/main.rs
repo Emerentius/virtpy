@@ -2155,7 +2155,7 @@ trait VirtpyPaths {
                 self.python_version().as_string_without_patch()
             ))
         } else {
-            self.location().join("Lib/site-packages")
+            self.location().join("Lib").join("site-packages")
         }
     }
 
