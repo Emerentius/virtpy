@@ -57,7 +57,7 @@ def main() -> None:
 
 def install_package() -> None:
     package_path = sys.argv[3]
-    prefix = "file://"
+    prefix = "file:///" if os.name == "nt" else "file://"
     if package_path.startswith(prefix):
         package_path = package_path[len(prefix) :]
 
