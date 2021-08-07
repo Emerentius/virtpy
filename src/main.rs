@@ -2958,7 +2958,12 @@ mod test {
         )
     }
 
+    // This test accesses the same file as the test `loading_old_and_new_stored_distribs_identical`
+    // and the function StoredDistributions::load_from() will lock that file.
+    // That causes a failure if both tests run concurrently.
+    // That's why they are forced to run in series.
     #[test]
+    #[serial_test::serial(installed_distribs)]
     fn can_load_old_stored_distribs() -> EResult<()> {
         let old_file = fs_err::File::open("test_files/old_installed_distributions.json")?;
         let old_stored_distribs = StoredDistributions::try_load_old(BufReader::new(old_file))
@@ -2972,6 +2977,7 @@ mod test {
     }
 
     #[test]
+    #[serial_test::serial(installed_distribs)]
     fn loading_old_and_new_stored_distribs_identical() -> EResult<()> {
         let old = StoredDistributions::load_from("test_files/old_installed_distributions.json")?;
         let new = StoredDistributions::load_from("test_files/new_installed_distributions.json")?;

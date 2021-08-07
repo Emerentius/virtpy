@@ -45,3 +45,4 @@ opt-level = 3
 [dev-dependencies]
 assert_cmd = "1.0.7"
 escargot = "0.5.2"
+serial_test = "0.5.1"
