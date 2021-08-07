@@ -27,7 +27,9 @@ pub fn unpack_wheel(wheel: &Path, dest: &StdPath) -> EResult<()> {
     let metadata = parse_wheel_metadata(wheel_name, &mut archive)?;
     check_version_support(wheel_name, metadata)?;
 
-    archive.extract(dest)?;
+    archive
+        .extract(dest)
+        .wrap_err_with(|| eyre!("failed to extract wheel to {:?}", dest))?;
     Ok(())
 }
 

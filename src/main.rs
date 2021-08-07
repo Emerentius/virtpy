@@ -1357,8 +1357,13 @@ fn main() -> EResult<()> {
         verbose: opt.verbose,
     };
 
+    // There's currently a bug with zip archive extraction on Windows where it will fail if the
+    // destination uses extended length syntax. canonicalize() will always return such paths.
+    // As a workaround, we use current_dir().join(dir) to get the absolute path.
+    let current_dir =
+        PathBuf::try_from(std::env::current_dir().wrap_err("can't get current dir")?)?;
     let proj_dirs = match opt.project_dir {
-        Some(dir) => ProjectDirs::from_existing_path(canonicalize(&dir)?)?,
+        Some(dir) => ProjectDirs::from_existing_path(current_dir.join(&dir))?,
         None => {
             let proj_dirs = ProjectDirs::new().ok_or_else(|| eyre!("failed to get proj dirs"))?;
             proj_dirs.create_dirs()?;
