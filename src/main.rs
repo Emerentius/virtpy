@@ -1732,6 +1732,8 @@ fn hash_of_reader_sha256_base64(reader: impl std::io::Read) -> String {
 
 fn _hash_of_file_sha256(path: &Path) -> impl AsRef<[u8]> {
     let file = fs_err::File::open(path).unwrap();
+    // significant speed improvement, but not huge
+    let file = std::io::BufReader::new(file);
     _hash_of_reader_sha256(file)
 }
 
