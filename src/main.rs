@@ -2823,10 +2823,20 @@ mod test {
             uninstall_cmd.arg("uninstall").arg(package);
 
             install_cmd.ok()?;
-            assert_ne!(proj_dirs._executables_list(), Vec::<String>::new());
+            assert_ne!(
+                proj_dirs._executables_list(),
+                Vec::<String>::new(),
+                "{}",
+                package
+            );
 
             uninstall_cmd.ok()?;
-            assert_eq!(proj_dirs._executables_list(), Vec::<String>::new());
+            assert_eq!(
+                proj_dirs._executables_list(),
+                Vec::<String>::new(),
+                "{}",
+                package
+            );
         }
         Ok(())
     }
