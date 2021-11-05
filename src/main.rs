@@ -2791,7 +2791,6 @@ mod test {
         check_poetry_available()
     }
 
-    // TODO: add test on same mount point as tmp dir and on different one.
     #[test]
     fn test_install_uninstall() -> EResult<()> {
         let proj_dirs = test_proj_dirs();
