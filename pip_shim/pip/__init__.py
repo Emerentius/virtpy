@@ -11,6 +11,7 @@ import sys
 import pathlib
 import os.path
 import itertools
+import time
 import subprocess
 from typing import List, Optional
 
@@ -29,15 +30,29 @@ def virtpy_path() -> Optional[pathlib.Path]:
     return path
 
 
-def record_args() -> None:
+def record_time(operation) -> None:
     virtpy = virtpy_path()
     if virtpy is None:
         print("pip_shim: failed to detect virtpy path")
         return
 
     log_file = virtpy.joinpath("virtpy_link_metadata", "pip_shim.log")
-    with open(log_file, "a") as f:
-        print(" ".join(sys.argv[1:]), file=f)
+
+    def _record_time(time_taken: float, success: bool):
+        args = " ".join(sys.argv[1:])
+        status = "✅" if success else "❌"
+        with open(log_file, "a") as f:
+            print(f"{status} {time_taken:4.3}: {args}", file=f)
+
+    start = time.time()
+    try:
+        operation()
+        time_taken = time.time() - start
+        _record_time(time_taken, True)
+    except:
+        time_taken = time.time() - start
+        _record_time(time_taken, False)
+        raise
 
 
 # TODO: add real argument parser.
@@ -46,13 +61,11 @@ def record_args() -> None:
 #       breaks the logic below.
 #       It can currently only be called via `pip $ARGS...`
 def main() -> None:
-    record_args()
-
     if sys.argv[1:3] == ["install", "--no-deps"] and len(sys.argv) == 4:
-        install_package()
+        record_time(lambda: install_package())
 
     if sys.argv[1] == "uninstall" and sys.argv[3] == "-y" and len(sys.argv) == 4:
-        uninstall_package()
+        record_time(lambda: uninstall_package())
 
 
 def install_package() -> None:
@@ -68,7 +81,13 @@ def install_package() -> None:
     assert virtpy is not None
 
     subprocess.run(
-        [*virtpy_cmd(virtpy), "internal-use-only", "add-from-file", virtpy, package_path],
+        [
+            *virtpy_cmd(virtpy),
+            "internal-use-only",
+            "add-from-file",
+            virtpy,
+            package_path,
+        ],
         check=True,
     )
 
@@ -81,11 +100,13 @@ def uninstall_package() -> None:
     assert virtpy is not None
 
     subprocess.run(
-        [*virtpy_cmd(virtpy), "internal-use-only", "remove", virtpy, package_name], check=True
+        [*virtpy_cmd(virtpy), "internal-use-only", "remove", virtpy, package_name],
+        check=True,
     )
+
 
 def virtpy_cmd(venv_path: str) -> List[str]:
     metadata = os.path.join(venv_path, "virtpy_link_metadata")
-    virtpy_exe = open(os.path.join(metadata , "virtpy_exe")).read()
+    virtpy_exe = open(os.path.join(metadata, "virtpy_exe")).read()
     proj_dir = open(os.path.join(metadata, "proj_dir")).read()
     return [virtpy_exe, "--project-dir", proj_dir]
