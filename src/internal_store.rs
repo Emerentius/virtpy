@@ -272,7 +272,7 @@ fn files_of_distribution(
                 .map(Result::unwrap)
                 .filter(|record| {
                     // FIXME: files with ../../
-                    proj_dirs.package_files().join(&record.hash).exists()
+                    proj_dirs.package_file(&record.hash).exists()
                 })
                 .collect::<Vec<_>>();
 

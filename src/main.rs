@@ -774,7 +774,7 @@ fn register_distribution_files(
         debug_assert_ne!(file.hash, FileHash("".to_owned()));
 
         let src = install_folder.join(path);
-        let dest = proj_dirs.package_files().join(file.hash.0);
+        let dest = proj_dirs.package_file(&file.hash);
         if options.verbose >= 2 {
             println!("    copying {} to {}", src, dest);
         }
@@ -835,7 +835,7 @@ fn register_distribution_files_of_wheel(
     for file in &records.files {
         let src = install_folder.join(&file.path);
         assert!(src.starts_with(&install_folder));
-        let dest = proj_dirs.package_files().join(&file.hash.0);
+        let dest = proj_dirs.package_file(&file.hash);
         if options.verbose >= 2 {
             println!("    moving {} to {}", src, dest);
         }
@@ -1247,7 +1247,6 @@ impl ProjectDirs {
         self.data().join("package_files")
     }
 
-    // TODO: use everywhere possible
     fn package_file(&self, hash: &FileHash) -> PathBuf {
         self.package_files().join(&hash.0)
     }
