@@ -455,7 +455,6 @@ impl StoredDistributions {
         let mut lock = lock_file(file)?;
         if lock.metadata().unwrap().len() == 0 {
             // if it's empty, then deserializing it doesn't work
-            // TODO: check if deserializing into Option<T> will allow deserializing from empty
             return Ok(StoredDistributions(HashMap::new(), lock));
         }
 
@@ -2730,7 +2729,6 @@ impl Distribution {
 
     fn name_and_version(&self) -> String {
         // used for the dist-info directory and some error reports
-        // TODO: implement Display?
         format!("{}-{}", self.name, self.version)
     }
 
