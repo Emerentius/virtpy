@@ -1256,6 +1256,16 @@ impl ProjectDirs {
         self.data().join("bin")
     }
 
+    // for unit tests
+    fn _executables_list(&self) -> Vec<String> {
+        self.executables()
+            .read_dir()
+            .unwrap()
+            .map(|entry| entry.unwrap())
+            .map(|entry| entry.file_name().to_str().unwrap().to_owned())
+            .collect()
+    }
+
     fn installed_distributions_log(&self) -> PathBuf {
         self.data().join(INSTALLED_DISTRIBUTIONS)
     }
@@ -2817,10 +2827,10 @@ mod test {
             uninstall_cmd.arg("uninstall").arg(package);
 
             install_cmd.ok()?;
-            assert_ne!(proj_dirs.executables().read_dir().unwrap().count(), 0);
+            assert_ne!(proj_dirs._executables_list(), Vec::<String>::new());
 
             uninstall_cmd.ok()?;
-            assert_eq!(proj_dirs.executables().read_dir().unwrap().count(), 0);
+            assert_eq!(proj_dirs._executables_list(), Vec::<String>::new());
         }
         Ok(())
     }
