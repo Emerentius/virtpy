@@ -2789,6 +2789,7 @@ mod test {
     }
 
     #[test]
+    #[ignore]
     fn test_install_uninstall() -> EResult<()> {
         let proj_dirs = test_proj_dirs();
 
