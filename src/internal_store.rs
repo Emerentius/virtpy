@@ -243,7 +243,7 @@ fn distributions_dependents(proj_dirs: &ProjectDirs) -> HashMap<StoredDistributi
         .map(Result::unwrap)
         .map(|entry| PathBuf::try_from(entry.path()).expect(INVALID_UTF8_PATH))
     {
-        let virtpy_dirs = VirtpyBacking::from_path(virtpy_path.clone());
+        let virtpy_dirs = VirtpyBacking::from_existing(virtpy_path.clone());
         for distr in distributions_used(virtpy_dirs) {
             // if the data directory is in a consistent state, the keys are guaranteed to exist already
             debug_assert!(distributions_dependents.contains_key(&distr));

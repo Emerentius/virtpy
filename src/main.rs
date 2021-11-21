@@ -17,7 +17,7 @@ mod python_requirements;
 mod python_wheel;
 mod venv;
 
-pub use venv::{CheckedVirtpy, VirtpyBacking, VirtpyPaths};
+pub use venv::{Virtpy, VirtpyBacking, VirtpyPaths};
 
 use fs_err::PathExt;
 
@@ -30,8 +30,6 @@ pub use fs_err::os::windows::fs::symlink_dir;
 pub use fs_err::os::unix::fs::symlink as symlink_file;
 #[cfg(windows)]
 pub use fs_err::os::windows::fs::symlink_file;
-
-use crate::venv::create_virtpy;
 
 // defining it as an alias allows rust-analyzer to suggest importing it
 // unlike a `use foo as bar` import.
@@ -1315,7 +1313,7 @@ fn main() -> EResult<()> {
                 options: Options,
                 requirements: PathBuf,
             ) -> EResult<()> {
-                let virtpy = CheckedVirtpy::new(path_to_virtpy(&virtpy_path))?;
+                let virtpy = Virtpy::from_existing(path_to_virtpy(&virtpy_path))?;
                 let requirements = fs_err::read_to_string(requirements)?;
                 let requirements = python_requirements::read_requirements_txt(&requirements);
 
@@ -1330,7 +1328,7 @@ fn main() -> EResult<()> {
             distributions,
             virtpy_path,
         } => {
-            CheckedVirtpy::new(path_to_virtpy(&virtpy_path))?
+            Virtpy::from_existing(path_to_virtpy(&virtpy_path))?
                 .remove_dependencies(distributions.into_iter().collect())?;
         }
         Command::New {
@@ -1346,7 +1344,7 @@ fn main() -> EResult<()> {
                 .transpose()?;
             python_detection::detect(&python)
                 .and_then(|python_path| {
-                    create_virtpy(&proj_dirs, &python_path, &path, None, shim_info)
+                    Virtpy::create(&proj_dirs, &python_path, &path, None, shim_info)
                 })
                 .wrap_err("failed to create virtpy")?;
         }
@@ -1401,7 +1399,7 @@ fn main() -> EResult<()> {
             internal_store::print_verify_store(&proj_dirs);
         }
         Command::InternalUseOnly(InternalUseOnly::AddFromFile { virtpy, file }) => {
-            CheckedVirtpy::new(&virtpy)?.add_dependency_from_file(&proj_dirs, &file, options)?;
+            Virtpy::from_existing(&virtpy)?.add_dependency_from_file(&proj_dirs, &file, options)?;
         }
     }
 
@@ -1462,7 +1460,7 @@ fn install_executable_package(
         .expect(INVALID_UTF8_PATH)
         .join(".venv");
 
-    let virtpy = create_virtpy(
+    let virtpy = Virtpy::create(
         &proj_dirs,
         &python_path,
         &package_folder,
@@ -1556,7 +1554,7 @@ fn is_not_found(error: &std::io::Error) -> bool {
 
 fn delete_executable_virtpy(proj_dirs: &ProjectDirs, package: &str) -> EResult<()> {
     let virtpy_path = proj_dirs.package_folder(&package);
-    let virtpy = CheckedVirtpy::new(&virtpy_path)?;
+    let virtpy = Virtpy::from_existing(&virtpy_path)?;
     virtpy.delete()?;
 
     // delete_global_package_executables

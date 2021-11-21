@@ -33,8 +33,11 @@ pub struct VirtpyBacking {
     python_version: PythonVersion,
 }
 
-/// A venv anywhere in the filesystem that links to the backing venv
-pub struct CheckedVirtpy {
+/// A venv anywhere in the filesystem that links to the backing venv.
+/// This struct is only constructed if the virtpy is known to be valid at construction time.
+/// This doesn't guarantee that it will remain valid for the lifetime of the struct (as other processes can modify the filesystem)
+/// but it guarantees that we atleast checked once.
+pub struct Virtpy {
     link: PathBuf,
     backing: PathBuf,
     python_version: PythonVersion,
@@ -118,7 +121,7 @@ impl VirtpyPaths for VirtpyBacking {
     }
 }
 
-impl VirtpyPaths for CheckedVirtpy {
+impl VirtpyPaths for Virtpy {
     fn location(&self) -> &Path {
         &self.link
     }
@@ -139,10 +142,10 @@ trait VirtpyPathsPrivate: VirtpyPaths {
 }
 
 impl VirtpyPathsPrivate for VirtpyBacking {}
-impl VirtpyPathsPrivate for CheckedVirtpy {}
+impl VirtpyPathsPrivate for Virtpy {}
 
 impl VirtpyBacking {
-    pub fn from_path(location: PathBuf) -> Self {
+    pub fn from_existing(location: PathBuf) -> Self {
         Self {
             python_version: python_version(&python_path(&location)).unwrap(),
             location,
@@ -150,8 +153,45 @@ impl VirtpyBacking {
     }
 }
 
-impl CheckedVirtpy {
-    pub fn new(virtpy_link: &Path) -> EResult<Self> {
+impl Virtpy {
+    pub fn create(
+        project_dirs: &ProjectDirs,
+        python_path: &Path,
+        path: &Path,
+        prompt: Option<String>,
+        with_pip_shim: Option<ShimInfo>,
+    ) -> EResult<Virtpy> {
+        let mut rng = rand::thread_rng();
+
+        // Generate a random id for the virtpy.
+        // This should only take 1 attempt, but it's theoretically possible
+        // for the id to collide with a previous one, so check and retry if that's the case, but not forever.
+        let n_max_attempts = 10;
+        let random_path_gen = std::iter::repeat_with(|| {
+            let id = std::iter::repeat_with(|| rng.sample(rand::distributions::Alphanumeric))
+                .take(12)
+                .collect::<String>();
+            project_dirs.virtpys().join(id)
+        });
+
+        let central_path = random_path_gen
+            .take(n_max_attempts)
+            .find(|path| !path.exists())
+            .ok_or_else(|| {
+                eyre!(
+                    "failed to generate an unused virtpy path in {} attempts",
+                    n_max_attempts
+                )
+            })?;
+
+        let prompt = prompt
+            .as_deref()
+            .or(path.file_name())
+            .unwrap_or(DEFAULT_VIRTPY_PATH);
+        _create_virtpy(central_path, python_path, path, prompt, with_pip_shim)
+    }
+
+    pub fn from_existing(virtpy_link: &Path) -> EResult<Self> {
         match virtpy_link_status(virtpy_link).wrap_err("failed to verify virtpy")? {
             VirtpyLinkStatus::WrongLocation { should, .. } => {
                 Err(eyre!("virtpy copied or moved from {}", should))
@@ -159,7 +199,7 @@ impl CheckedVirtpy {
             VirtpyLinkStatus::Dangling { target } => {
                 Err(eyre!("backing storage for virtpy not found: {}", target))
             }
-            VirtpyLinkStatus::Ok { matching_virtpy } => Ok(CheckedVirtpy {
+            VirtpyLinkStatus::Ok { matching_virtpy } => Ok(Virtpy {
                 link: canonicalize(virtpy_link)?,
                 backing: matching_virtpy,
                 python_version: python_version(&python_path(virtpy_link))?,
@@ -432,7 +472,7 @@ fn virtpy_link_status(virtpy_link_path: &Path) -> EResult<VirtpyLinkStatus> {
 
 fn link_requirements_into_virtpy(
     proj_dirs: &ProjectDirs,
-    virtpy: &CheckedVirtpy,
+    virtpy: &Virtpy,
     mut requirements: Vec<Requirement>,
     options: Options,
 ) -> EResult<()> {
@@ -499,7 +539,7 @@ fn link_requirements_into_virtpy(
 
 fn link_single_requirement_into_virtpy(
     proj_dirs: &ProjectDirs,
-    virtpy: &CheckedVirtpy,
+    virtpy: &Virtpy,
     options: Options,
     distrib: &StoredDistribution,
     site_packages: &Path,
@@ -572,7 +612,7 @@ fn link_single_requirement_into_virtpy(
 
 fn link_files_from_record_into_virtpy(
     dist_info_path: &PathBuf,
-    virtpy: &CheckedVirtpy,
+    virtpy: &Virtpy,
     site_packages: &Path,
     proj_dirs: &ProjectDirs,
     distribution: &Distribution,
@@ -634,7 +674,7 @@ fn link_file_into_virtpy(
 
 fn link_files_from_record_into_virtpy_new(
     record: &mut WheelRecord,
-    virtpy: &CheckedVirtpy,
+    virtpy: &Virtpy,
     site_packages: &Path,
     proj_dirs: &ProjectDirs,
     distribution: &Distribution,
@@ -740,7 +780,7 @@ fn _create_virtpy(
     path: &Path,
     prompt: &str,
     with_pip_shim: Option<ShimInfo>,
-) -> EResult<CheckedVirtpy> {
+) -> EResult<Virtpy> {
     _create_bare_venv(python_path, &central_path, prompt)?;
 
     fs_err::create_dir(path)?;
@@ -770,13 +810,13 @@ fn _create_virtpy(
         )?;
     }
 
-    let checked_virtpy = CheckedVirtpy {
+    let checked_virtpy = Virtpy {
         link: path.to_owned(),
         backing: central_path,
         // Not all users of this function may need the python version, but it's
         // cheap to get and simpler to just always query.
         // Could be easily replaced with a token-struct that could be converted
-        // to a full CheckedVirtpy on demand.
+        // to a full Virtpy on demand.
         python_version: python_version(python_path)?,
     };
     if let Some(shim_info) = with_pip_shim {
@@ -784,43 +824,6 @@ fn _create_virtpy(
     }
 
     Ok(checked_virtpy)
-}
-
-pub fn create_virtpy(
-    project_dirs: &ProjectDirs,
-    python_path: &Path,
-    path: &Path,
-    prompt: Option<String>,
-    with_pip_shim: Option<ShimInfo>,
-) -> EResult<CheckedVirtpy> {
-    let mut rng = rand::thread_rng();
-
-    // Generate a random id for the virtpy.
-    // This should only take 1 attempt, but it's theoretically possible
-    // for the id to collide with a previous one, so check and retry if that's the case, but not forever.
-    let n_max_attempts = 10;
-    let random_path_gen = std::iter::repeat_with(|| {
-        let id = std::iter::repeat_with(|| rng.sample(rand::distributions::Alphanumeric))
-            .take(12)
-            .collect::<String>();
-        project_dirs.virtpys().join(id)
-    });
-
-    let central_path = random_path_gen
-        .take(n_max_attempts)
-        .find(|path| !path.exists())
-        .ok_or_else(|| {
-            eyre!(
-                "failed to generate an unused virtpy path in {} attempts",
-                n_max_attempts
-            )
-        })?;
-
-    let prompt = prompt
-        .as_deref()
-        .or(path.file_name())
-        .unwrap_or(DEFAULT_VIRTPY_PATH);
-    _create_virtpy(central_path, python_path, path, prompt, with_pip_shim)
 }
 
 fn _create_bare_venv(python_path: &Path, path: &Path, prompt: &str) -> EResult<()> {
@@ -836,7 +839,7 @@ fn _create_bare_venv(python_path: &Path, path: &Path, prompt: &str) -> EResult<(
 
 fn install_executables(
     stored_distrib: &StoredDistribution,
-    virtpy: &CheckedVirtpy,
+    virtpy: &Virtpy,
     proj_dirs: &ProjectDirs,
     mut wheel_record: Option<&mut WheelRecord>, // only record when unpacking wheels ourselves
 ) -> Result<(), color_eyre::Report> {
@@ -855,7 +858,7 @@ fn install_executables(
     Ok(())
 }
 
-fn add_pip_shim(virtpy: &CheckedVirtpy, shim_info: ShimInfo<'_>) -> EResult<()> {
+fn add_pip_shim(virtpy: &Virtpy, shim_info: ShimInfo<'_>) -> EResult<()> {
     let target_path = virtpy.site_packages().join("pip");
     let shim_zip = include_bytes!("../pip_shim/pip_shim.zip");
     let mut archive = zip::read::ZipArchive::new(std::io::Cursor::new(shim_zip))
@@ -1012,7 +1015,7 @@ mod test {
         let proj_dirs = test_proj_dirs();
         let tmp_dir = tempdir::TempDir::new("virtpy_test")?;
         let virtpy_path: Utf8PathBuf = tmp_dir.path().join("install_paths_test").try_into()?;
-        let virtpy = create_virtpy(&proj_dirs, &detect("3")?, &virtpy_path, None, None)?;
+        let virtpy = Virtpy::create(&proj_dirs, &detect("3")?, &virtpy_path, None, None)?;
         let install_paths = virtpy.install_paths()?;
         let required_keys = ["purelib", "platlib", "headers", "scripts", "data"]
             .iter()
