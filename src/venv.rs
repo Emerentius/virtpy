@@ -88,10 +88,6 @@ pub trait VirtpyPaths {
         }
     }
 
-    fn install_paths(&self) -> EResult<InstallPaths> {
-        InstallPaths::detect(self.python())
-    }
-
     fn set_metadata(&self, name: &str, value: &str) -> EResult<()> {
         fs_err::write(self.metadata_dir().join(name), value)?;
         Ok(())
@@ -137,6 +133,15 @@ impl VirtpyPaths for CheckedVirtpy {
         self.location().join(LINK_METADATA)
     }
 }
+
+trait VirtpyPathsPrivate: VirtpyPaths {
+    fn install_paths(&self) -> EResult<InstallPaths> {
+        InstallPaths::detect(self.python())
+    }
+}
+
+impl VirtpyPathsPrivate for VirtpyBacking {}
+impl VirtpyPathsPrivate for CheckedVirtpy {}
 
 impl VirtpyBacking {
     pub fn from_path(location: PathBuf) -> Self {
@@ -888,8 +893,7 @@ fn add_pip_shim(virtpy: &CheckedVirtpy, shim_info: ShimInfo<'_>) -> EResult<()> 
 // Is this correct? Who knows with "standards" like in the python world.
 //
 // This is a mapping like `{ "headers": "some/path/to/place/headers", "purelib": "other/path" }`.
-// TODO: remove method returning this struct from VirtpyPaths trait & make this private
-pub struct InstallPaths(HashMap<String, PathBuf>);
+struct InstallPaths(HashMap<String, PathBuf>);
 
 impl InstallPaths {
     fn detect(python_path: impl AsRef<Path>) -> EResult<Self> {
