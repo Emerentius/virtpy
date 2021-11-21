@@ -173,6 +173,175 @@ impl CheckedVirtpy {
         })
     }
 
+    pub(crate) fn add_dependencies(
+        &self,
+        proj_dirs: &ProjectDirs,
+        requirements: Vec<Requirement>,
+        options: Options,
+    ) -> EResult<()> {
+        let new_deps = new_dependencies(&requirements, proj_dirs, self.python_version)?;
+
+        // The virtpy doesn't contain pip so get the appropriate global python
+        let python_path = self.global_python()?;
+
+        install_and_register_distributions(
+            &python_path,
+            proj_dirs,
+            &new_deps,
+            self.python_version,
+            options,
+        )?;
+
+        link_requirements_into_virtpy(proj_dirs, self, requirements, options)
+            .wrap_err("failed to add packages to virtpy")
+    }
+
+    pub(crate) fn add_dependency_from_file(
+        &self,
+        proj_dirs: &ProjectDirs,
+        file: &Path,
+        options: Options,
+    ) -> EResult<()> {
+        let file_hash = DistributionHash::from_file(file);
+        let requirement =
+            Requirement::from_filename(file.file_name().unwrap(), file_hash.clone()).unwrap();
+
+        if !wheel_is_already_registered(file_hash.clone(), proj_dirs, self.python_version)? {
+            install_and_register_distribution_from_file(
+                proj_dirs,
+                file,
+                requirement.clone(),
+                self.python_version,
+                options,
+            )?;
+        }
+
+        link_requirements_into_virtpy(proj_dirs, self, vec![requirement], options)
+            .wrap_err("failed to add packages to virtpy")
+    }
+
+    // TODO: refactor
+    pub fn remove_dependencies(&self, dists_to_remove: HashSet<String>) -> EResult<()> {
+        let dists_to_remove = dists_to_remove
+            .into_iter()
+            .map(|name| normalized_distribution_name_for_wheel(&name))
+            .collect::<HashSet<_>>();
+
+        let site_packages = self.site_packages();
+
+        let mut dist_infos = vec![];
+
+        let site_packages_std: &StdPath = site_packages.as_ref();
+
+        // TODO: detect distributions that aren't installed
+        for dir_entry in site_packages_std.fs_err_read_dir()? {
+            let dir_entry = dir_entry?;
+            // use fs_err::metadata instead of DirEntry::metadata so it traverses symlinks
+            // as dist-info dirs are currently symlinked in.
+            let filetype = fs_err::metadata(dir_entry.path())?.file_type();
+            if !filetype.is_dir() {
+                continue;
+            }
+            let dirname = dir_entry
+                .file_name()
+                .into_string()
+                .expect(INVALID_UTF8_PATH);
+
+            if dirname.ends_with(".dist-info") {
+                dist_infos.push(dirname);
+            }
+        }
+
+        dist_infos.retain(|name| {
+            let dist = name.split("-").next().unwrap();
+            dists_to_remove.contains(dist)
+        });
+
+        let mut files_to_remove = vec![];
+        // TODO: remove executables (entrypoints)
+        for info in dist_infos {
+            let dist_infos = site_packages.join(&info);
+            let record_file = dist_infos.join("RECORD");
+            for file in records(&record_file)? {
+                let file = file?;
+
+                let path = site_packages.join(file.path);
+                // NO ESCAPE
+                if !path.starts_with(self.location()) {
+                    continue;
+                }
+
+                if path.extension() == Some("py".as_ref()) {
+                    files_to_remove.push(path.with_extension("pyc"));
+                }
+                files_to_remove.push(path);
+            }
+
+            // NOTE: when dist-infos will not be symlinked in, this will cause an error
+            //       when file deletion is attempted.
+            files_to_remove.push(dist_infos);
+        }
+
+        // Collect the directories so they can be deleted, if empty.
+        // Sorted so the contained directories are deleted before the containing directories.
+        //
+        // NOTE: It seems this doesn't quite catch everything.
+        //       When deleting mypy for example, there may be some empty directories left
+        //       (output of `tree`):
+        //
+        //       .venv/lib/python3.8/site-packages/mypy
+        //       └── typeshed
+        //       ├── stdlib
+        //       └── third_party
+        //
+        //       3 directories, 0 files
+        //
+        //       maybe we need to take into account *.dist-info/top_level.txt for this.
+        let directories = files_to_remove
+            .iter()
+            // parent() should never return None,
+            // but it's gonna return an error anyway when deletion is attempted.
+            .filter_map(|path| path.parent())
+            .collect::<HashSet<_>>();
+        let directories = directories
+            .into_iter()
+            .sorted_by_key(|path| std::cmp::Reverse(path.iter().count()))
+            .collect::<Vec<_>>();
+
+        // TODO: if an error occured, don't delete the dist-info, especially not the RECORD
+        //       so deletion can retry.
+        for path in &files_to_remove {
+            assert!(path.starts_with(&site_packages));
+
+            if false {
+                if path.extension() != Some("pyc".as_ref()) {
+                    println!("deleting {}", path);
+                }
+            } else {
+                // not using fs_err here, because we're not bubbling the error up
+                if let Err(e) = std::fs::remove_file(&path).or_else(ignore_target_doesnt_exist) {
+                    eprintln!("failed to delete {}: {}", path, e);
+                }
+            }
+        }
+
+        for dir in directories {
+            assert!(dir.starts_with(&site_packages));
+            if dir == site_packages {
+                continue;
+            }
+
+            // It'd be nice if we could ignore errors for directory not existing and dir not being empty
+            // and report all others, but there is no ErrorKind for directory not existing, so it gets
+            // lumped in under `Other`.
+            // I don't know if the error message is consistent across OS's or is guaranteed not to change,
+            // so I can't distinguish between real errors or false positives.
+            let _ = fs_err::remove_dir(dir);
+        }
+
+        Ok(())
+    }
+
     // Returns the path of the python installation on which this
     // this virtpy builds
     fn global_python(&self) -> EResult<PathBuf> {
@@ -259,54 +428,6 @@ fn virtpy_link_status(virtpy_link_path: &Path) -> EResult<VirtpyLinkStatus> {
     Ok(VirtpyLinkStatus::Ok {
         matching_virtpy: target,
     })
-}
-
-pub(crate) fn virtpy_add_dependencies(
-    proj_dirs: &ProjectDirs,
-    virtpy: &CheckedVirtpy,
-    requirements: Vec<Requirement>,
-    //python_version: PythonVersion,
-    options: Options,
-) -> EResult<()> {
-    let new_deps = new_dependencies(&requirements, proj_dirs, virtpy.python_version)?;
-
-    // The virtpy doesn't contain pip so get the appropriate global python
-    let python_path = virtpy.global_python()?;
-
-    install_and_register_distributions(
-        &python_path,
-        proj_dirs,
-        &new_deps,
-        virtpy.python_version,
-        options,
-    )?;
-
-    link_requirements_into_virtpy(proj_dirs, virtpy, requirements, options)
-        .wrap_err("failed to add packages to virtpy")
-}
-
-pub(crate) fn virtpy_add_dependency_from_file(
-    proj_dirs: &ProjectDirs,
-    virtpy: &CheckedVirtpy,
-    file: &Path,
-    options: Options,
-) -> EResult<()> {
-    let file_hash = DistributionHash::from_file(file);
-    let requirement =
-        Requirement::from_filename(file.file_name().unwrap(), file_hash.clone()).unwrap();
-
-    if !wheel_is_already_registered(file_hash.clone(), proj_dirs, virtpy.python_version)? {
-        install_and_register_distribution_from_file(
-            proj_dirs,
-            file,
-            requirement.clone(),
-            virtpy.python_version,
-            options,
-        )?;
-    }
-
-    link_requirements_into_virtpy(proj_dirs, virtpy, vec![requirement], options)
-        .wrap_err("failed to add packages to virtpy")
 }
 
 fn link_requirements_into_virtpy(
@@ -731,131 +852,6 @@ fn install_executables(
             wheel_record.files.push(record_entry);
         }
     }
-    Ok(())
-}
-
-// TODO: refactor
-pub fn virtpy_remove_dependencies(
-    virtpy: &CheckedVirtpy,
-    dists_to_remove: HashSet<String>,
-) -> EResult<()> {
-    let dists_to_remove = dists_to_remove
-        .into_iter()
-        .map(|name| normalized_distribution_name_for_wheel(&name))
-        .collect::<HashSet<_>>();
-
-    let site_packages = virtpy.site_packages();
-
-    let mut dist_infos = vec![];
-
-    let site_packages_std: &StdPath = site_packages.as_ref();
-
-    // TODO: detect distributions that aren't installed
-    for dir_entry in site_packages_std.fs_err_read_dir()? {
-        let dir_entry = dir_entry?;
-        // use fs_err::metadata instead of DirEntry::metadata so it traverses symlinks
-        // as dist-info dirs are currently symlinked in.
-        let filetype = fs_err::metadata(dir_entry.path())?.file_type();
-        if !filetype.is_dir() {
-            continue;
-        }
-        let dirname = dir_entry
-            .file_name()
-            .into_string()
-            .expect(INVALID_UTF8_PATH);
-
-        if dirname.ends_with(".dist-info") {
-            dist_infos.push(dirname);
-        }
-    }
-
-    dist_infos.retain(|name| {
-        let dist = name.split("-").next().unwrap();
-        dists_to_remove.contains(dist)
-    });
-
-    let mut files_to_remove = vec![];
-    // TODO: remove executables (entrypoints)
-    for info in dist_infos {
-        let dist_infos = site_packages.join(&info);
-        let record_file = dist_infos.join("RECORD");
-        for file in records(&record_file)? {
-            let file = file?;
-
-            let path = site_packages.join(file.path);
-            // NO ESCAPE
-            if !path.starts_with(virtpy.location()) {
-                continue;
-            }
-
-            if path.extension() == Some("py".as_ref()) {
-                files_to_remove.push(path.with_extension("pyc"));
-            }
-            files_to_remove.push(path);
-        }
-
-        // NOTE: when dist-infos will not be symlinked in, this will cause an error
-        //       when file deletion is attempted.
-        files_to_remove.push(dist_infos);
-    }
-
-    // Collect the directories so they can be deleted, if empty.
-    // Sorted so the contained directories are deleted before the containing directories.
-    //
-    // NOTE: It seems this doesn't quite catch everything.
-    //       When deleting mypy for example, there may be some empty directories left
-    //       (output of `tree`):
-    //
-    //       .venv/lib/python3.8/site-packages/mypy
-    //       └── typeshed
-    //       ├── stdlib
-    //       └── third_party
-    //
-    //       3 directories, 0 files
-    //
-    //       maybe we need to take into account *.dist-info/top_level.txt for this.
-    let directories = files_to_remove
-        .iter()
-        // parent() should never return None,
-        // but it's gonna return an error anyway when deletion is attempted.
-        .filter_map(|path| path.parent())
-        .collect::<HashSet<_>>();
-    let directories = directories
-        .into_iter()
-        .sorted_by_key(|path| std::cmp::Reverse(path.iter().count()))
-        .collect::<Vec<_>>();
-
-    // TODO: if an error occured, don't delete the dist-info, especially not the RECORD
-    //       so deletion can retry.
-    for path in &files_to_remove {
-        assert!(path.starts_with(&site_packages));
-
-        if false {
-            if path.extension() != Some("pyc".as_ref()) {
-                println!("deleting {}", path);
-            }
-        } else {
-            // not using fs_err here, because we're not bubbling the error up
-            if let Err(e) = std::fs::remove_file(&path).or_else(ignore_target_doesnt_exist) {
-                eprintln!("failed to delete {}: {}", path, e);
-            }
-        }
-    }
-
-    for dir in directories {
-        assert!(dir.starts_with(&site_packages));
-        if dir == site_packages {
-            continue;
-        }
-
-        // It'd be nice if we could ignore errors for directory not existing and dir not being empty
-        // and report all others, but there is no ErrorKind for directory not existing, so it gets
-        // lumped in under `Other`.
-        // I don't know if the error message is consistent across OS's or is guaranteed not to change,
-        // so I can't distinguish between real errors or false positives.
-        let _ = fs_err::remove_dir(dir);
-    }
-
     Ok(())
 }
 

@@ -1319,7 +1319,7 @@ fn main() -> EResult<()> {
                 let requirements = fs_err::read_to_string(requirements)?;
                 let requirements = python_requirements::read_requirements_txt(&requirements);
 
-                venv::virtpy_add_dependencies(&proj_dirs, &virtpy, requirements, options)?;
+                virtpy.add_dependencies(proj_dirs, requirements, options)?;
                 Ok(())
             }
 
@@ -1330,8 +1330,8 @@ fn main() -> EResult<()> {
             distributions,
             virtpy_path,
         } => {
-            let virtpy = CheckedVirtpy::new(path_to_virtpy(&virtpy_path))?;
-            venv::virtpy_remove_dependencies(&virtpy, distributions.into_iter().collect())?;
+            CheckedVirtpy::new(path_to_virtpy(&virtpy_path))?
+                .remove_dependencies(distributions.into_iter().collect())?;
         }
         Command::New {
             path,
@@ -1401,8 +1401,7 @@ fn main() -> EResult<()> {
             internal_store::print_verify_store(&proj_dirs);
         }
         Command::InternalUseOnly(InternalUseOnly::AddFromFile { virtpy, file }) => {
-            let virtpy = CheckedVirtpy::new(&virtpy)?;
-            venv::virtpy_add_dependency_from_file(&proj_dirs, &virtpy, &file, options)?;
+            CheckedVirtpy::new(&virtpy)?.add_dependency_from_file(&proj_dirs, &file, options)?;
         }
     }
 
