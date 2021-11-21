@@ -6,8 +6,6 @@ use python_requirements::Requirement;
 use python_wheel::{RecordEntry, WheelRecord};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
-use std::convert::TryFrom;
-use std::convert::TryInto;
 use std::fmt::Write;
 use std::io::Seek;
 use std::{collections::HashMap, io::BufReader, path::Path as StdPath};

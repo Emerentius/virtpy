@@ -25,8 +25,6 @@ use fs_err::PathExt;
 use itertools::Itertools;
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
-use std::convert::TryFrom;
-use std::convert::TryInto;
 use std::path::Path as StdPath;
 
 /// A venv in the central store

@@ -1,5 +1,4 @@
 use eyre::WrapErr;
-use std::convert::TryFrom;
 
 use crate::{
     delete_virtpy_backing, hash_of_file_sha256_base64, package_info_from_dist_info_dirname,
@@ -8,7 +7,7 @@ use crate::{
     StoredDistribution, StoredDistributions, VirtpyBacking, VirtpyPaths, VirtpyStatus,
     INVALID_UTF8_PATH,
 };
-use std::{collections::HashMap, convert::TryInto};
+use std::collections::HashMap;
 
 pub(crate) fn collect_garbage(
     proj_dirs: &ProjectDirs,
