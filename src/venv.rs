@@ -405,7 +405,7 @@ impl Virtpy {
         #[cfg(windows)]
         {
             let version = python_version(&self.python())?;
-            python::detection::detect(&version.as_string_without_patch())
+            crate::python::detection::detect(&version.as_string_without_patch())
         }
     }
 
