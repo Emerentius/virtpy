@@ -1097,7 +1097,9 @@ fn install_and_register_distribution_from_file(
 }
 
 fn canonicalize(path: &Path) -> EResult<PathBuf> {
-    Ok(PathBuf::try_from(path.canonicalize()?)?)
+    Ok(PathBuf::try_from(
+        path.as_std_path().fs_err_canonicalize()?,
+    )?)
 }
 
 fn paths_match(virtpy: &StdPath, link_target: &StdPath) -> EResult<bool> {
