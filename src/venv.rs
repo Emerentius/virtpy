@@ -274,10 +274,8 @@ impl Virtpy {
 
         let mut dist_infos = vec![];
 
-        let site_packages_std: &StdPath = site_packages.as_ref();
-
         // TODO: detect distributions that aren't installed
-        for dir_entry in site_packages_std.fs_err_read_dir()? {
+        for dir_entry in site_packages.as_std_path().fs_err_read_dir()? {
             let dir_entry = dir_entry?;
             // use fs_err::metadata instead of DirEntry::metadata so it traverses symlinks
             // as dist-info dirs are currently symlinked in.
@@ -391,14 +389,15 @@ impl Virtpy {
         #[cfg(unix)]
         {
             let python = self.python();
-            let python: &StdPath = python.as_ref();
             let python: PathBuf =
-                PathBuf::try_from(python.fs_err_canonicalize().wrap_err_with(|| {
-                    eyre!(
-                        "failed to find path of the global python used by virtpy at {}",
-                        self.link
-                    )
-                })?)
+                PathBuf::try_from(python.as_std_path().fs_err_canonicalize().wrap_err_with(
+                    || {
+                        eyre!(
+                            "failed to find path of the global python used by virtpy at {}",
+                            self.link
+                        )
+                    },
+                )?)
                 .expect(INVALID_UTF8_PATH);
             Ok(python)
         }
@@ -793,8 +792,8 @@ fn _create_virtpy(
     let path = canonicalize(path)?;
     ensure_toplevel_symlinks_exist(&central_path, &path)?;
 
-    let path_: &StdPath = path.as_ref();
-    let abs_path: PathBuf = path_
+    let abs_path: PathBuf = path
+        .as_std_path()
         .fs_err_canonicalize()?
         .try_into()
         .expect(INVALID_UTF8_PATH);
