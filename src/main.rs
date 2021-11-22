@@ -2,13 +2,12 @@ use camino::{Utf8Path, Utf8PathBuf};
 use eyre::bail;
 use eyre::{ensure, eyre, WrapErr};
 use internal_store::{StoredDistribution, StoredDistributionType};
-use python::requirements::Requirement;
 use std::path::Path as StdPath;
 use structopt::StructOpt;
 
 mod internal_store;
 mod python;
-mod venv;
+pub(crate) mod venv;
 
 use venv::{Virtpy, VirtpyPaths};
 
@@ -155,102 +154,6 @@ fn _check_output(cmd: &mut std::process::Command) -> EResult<Vec<u8>> {
         eyre!("command failed\n    {:?}:\n{}", cmd, error)
     });
     Ok(output.stdout)
-}
-
-// fn can_move_files(src: &Path, dst: &Path) -> EResult<bool> {
-//     let filename = ".deleteme_rename_test";
-//     let src = src.join(filename);
-//     let dst = dst.join(filename);
-//     fs_err::write(&src, "")?;
-//     let can_move = fs_err::rename(src, &dst).is_ok();
-//     let _ = fs_err::remove_file(dst);
-//     Ok(can_move)
-// }
-
-fn install_and_register_distribution_from_file(
-    proj_dirs: &ProjectDirs,
-    distrib_path: &Path,
-    requirement: Requirement,
-    python_version: python::PythonVersion,
-    options: Options,
-) -> EResult<()> {
-    let tmp_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), "virtpy_wheel")?;
-    let (distrib_path, _wheel_tmp_dir) = match distrib_path.extension().unwrap() {
-        "whl" => (distrib_path.to_owned(), None),
-        _ => {
-            let python = python::detection::detect_from_version(python_version)?;
-            let (wheel_path, tmp_dir) = convert_to_wheel(&python, proj_dirs, distrib_path)?;
-            (wheel_path, Some(tmp_dir))
-        }
-    };
-    assert!(distrib_path.extension().unwrap() == "whl");
-    python::wheel::unpack_wheel(&distrib_path, tmp_dir.path())?;
-
-    let distrib = python::Distribution {
-        name: requirement.name,
-        version: requirement.version,
-        sha: requirement.available_hashes.into_iter().next().unwrap(),
-    };
-
-    internal_store::register_new_distribution(
-        options,
-        distrib,
-        proj_dirs,
-        python_version,
-        tmp_dir,
-    )?;
-
-    Ok(())
-}
-
-// Converts a non-wheel distribution of some type into a wheel.
-// This can be a egg, a tarball (typically gzipped, but other compression algorithms are possible as well as uncompressed),
-// or a zip file.
-//
-// Returns the path to the wheel and the TempDir that contains the wheel file.
-// The TempDir needs to be preserved until the wheel has been used or copied elsewhere as it'll be
-// deleted with the TempDir.
-fn convert_to_wheel(
-    python: &Path,
-    proj_dirs: &ProjectDirs,
-    distrib_path: impl AsRef<Path>,
-) -> EResult<(PathBuf, tempdir::TempDir)> {
-    let path = distrib_path.as_ref();
-    _convert_to_wheel(python, proj_dirs, path)
-        .wrap_err_with(|| eyre!("failed to convert file to wheel: {}", path))
-}
-
-fn _convert_to_wheel(
-    python: &Path,
-    proj_dirs: &ProjectDirs,
-    distrib_path: &Path,
-) -> EResult<(PathBuf, tempdir::TempDir)> {
-    let output_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), "convert_to_wheel")?;
-
-    check_status(
-        std::process::Command::new(python)
-            .args(&["-m", "pip", "wheel", "--no-cache-dir", "--wheel-dir"])
-            .arg(output_dir.path())
-            .arg(distrib_path),
-    )?;
-
-    let output_files = output_dir
-        .path()
-        .read_dir()?
-        .collect::<Result<Vec<_>, _>>()?;
-    match output_files.len() {
-        1 => {
-            let wheel_path = output_files
-                .into_iter()
-                .next()
-                .unwrap()
-                .path()
-                .try_into()
-                .expect(INVALID_UTF8_PATH);
-            Ok((wheel_path, output_dir))
-        }
-        _ => Err(eyre!("wheel generation created more than one file")),
-    }
 }
 
 // toplevel options

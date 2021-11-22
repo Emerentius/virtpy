@@ -17,11 +17,10 @@ use crate::python::{
 };
 use crate::{
     canonicalize, check_status, delete_virtpy_backing, dist_info_matches_package, executables_path,
-    ignore_target_exists, install_and_register_distribution_from_file, is_not_found, paths_match,
-    python::requirements::Requirement, python_path, relative_path, remove_leading_parent_dirs,
-    symlink_dir, symlink_file, EResult, Options, Path, PathBuf, ProjectDirs, ShimInfo,
-    StoredDistribution, StoredDistributionType, CENTRAL_METADATA, DIST_HASH_FILE,
-    INVALID_UTF8_PATH, LINK_METADATA,
+    ignore_target_exists, is_not_found, paths_match, python::requirements::Requirement,
+    python_path, relative_path, remove_leading_parent_dirs, symlink_dir, symlink_file, EResult,
+    Options, Path, PathBuf, ProjectDirs, ShimInfo, StoredDistribution, StoredDistributionType,
+    CENTRAL_METADATA, DIST_HASH_FILE, INVALID_UTF8_PATH, LINK_METADATA,
 };
 use crate::{check_output, ignore_target_doesnt_exist, DEFAULT_VIRTPY_PATH};
 use eyre::{eyre, Context};
@@ -1058,6 +1057,43 @@ fn newly_installed_distributions(pip_log: &str) -> Vec<Distribution> {
     }
 
     installed_distribs
+}
+
+fn install_and_register_distribution_from_file(
+    proj_dirs: &ProjectDirs,
+    distrib_path: &Path,
+    requirement: Requirement,
+    python_version: crate::python::PythonVersion,
+    options: Options,
+) -> EResult<()> {
+    let tmp_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), "virtpy_wheel")?;
+    let (distrib_path, _wheel_tmp_dir) = match distrib_path.extension().unwrap() {
+        "whl" => (distrib_path.to_owned(), None),
+        _ => {
+            let python = crate::python::detection::detect_from_version(python_version)?;
+            let (wheel_path, tmp_dir) =
+                crate::python::convert_to_wheel(&python, proj_dirs, distrib_path)?;
+            (wheel_path, Some(tmp_dir))
+        }
+    };
+    assert!(distrib_path.extension().unwrap() == "whl");
+    crate::python::wheel::unpack_wheel(&distrib_path, tmp_dir.path())?;
+
+    let distrib = crate::python::Distribution {
+        name: requirement.name,
+        version: requirement.version,
+        sha: requirement.available_hashes.into_iter().next().unwrap(),
+    };
+
+    crate::internal_store::register_new_distribution(
+        options,
+        distrib,
+        proj_dirs,
+        python_version,
+        tmp_dir,
+    )?;
+
+    Ok(())
 }
 
 #[cfg(test)]
