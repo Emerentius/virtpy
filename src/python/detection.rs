@@ -5,7 +5,7 @@ use std::path::PathBuf as StdPathBuf;
 use crate::{executables_path, EResult, INVALID_UTF8_PATH};
 use crate::{Path, PathBuf};
 
-pub(crate)fn detect(python: &str) -> EResult<PathBuf> {
+pub(crate) fn detect(python: &str) -> EResult<PathBuf> {
     let path = Path::new(&python);
 
     // If `python` is definitely a path, use it, if it exists.
@@ -29,7 +29,7 @@ pub(crate)fn detect(python: &str) -> EResult<PathBuf> {
     find_executable_in_path(python)
 }
 
-pub(crate)fn detect_from_version(python_version: crate::PythonVersion) -> EResult<PathBuf> {
+pub(crate) fn detect_from_version(python_version: crate::PythonVersion) -> EResult<PathBuf> {
     find_python_by_version(
         python_version.major.try_into().unwrap(),
         Some(python_version.minor.try_into().unwrap()),
@@ -112,12 +112,7 @@ fn _find_executable_in_custom_path(
     path: Option<std::ffi::OsString>,
 ) -> Option<StdPathBuf> {
     let path_ext = std::env::var_os("PATHEXT");
-    pathsearch::PathSearcher::new(
-        executable,
-        path.as_deref(),
-        path_ext.as_deref(),
-    )
-    .next()
+    pathsearch::PathSearcher::new(executable, path.as_deref(), path_ext.as_deref()).next()
 }
 
 #[cfg(test)]

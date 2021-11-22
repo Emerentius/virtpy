@@ -205,7 +205,7 @@ mod test {
 
     #[test]
     fn test_parse_requirements() {
-        let data = include_str!("../test_files/requirements.txt");
+        let data = include_str!("../../test_files/requirements.txt");
         let requirements = read_requirements_txt(data);
 
         assert_eq!(

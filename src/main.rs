@@ -2,17 +2,15 @@ use camino::{Utf8Path, Utf8PathBuf};
 use eyre::bail;
 use eyre::{ensure, eyre, WrapErr};
 use internal_store::{StoredDistribution, StoredDistributionType};
-use python_requirements::Requirement;
-use python_wheel::RecordEntry;
+use python::requirements::Requirement;
+use python::wheel::RecordEntry;
 use sha2::{Digest, Sha256};
 use std::fmt::Write;
 use std::path::Path as StdPath;
 use structopt::StructOpt;
 
 mod internal_store;
-mod python_detection;
-mod python_requirements;
-mod python_wheel;
+mod python;
 mod venv;
 
 use venv::{Virtpy, VirtpyPaths};
@@ -461,13 +459,13 @@ fn install_and_register_distribution_from_file(
     let (distrib_path, _wheel_tmp_dir) = match distrib_path.extension().unwrap() {
         "whl" => (distrib_path.to_owned(), None),
         _ => {
-            let python = python_detection::detect_from_version(python_version)?;
+            let python = python::detection::detect_from_version(python_version)?;
             let (wheel_path, tmp_dir) = convert_to_wheel(&python, proj_dirs, distrib_path)?;
             (wheel_path, Some(tmp_dir))
         }
     };
     assert!(distrib_path.extension().unwrap() == "whl");
-    python_wheel::unpack_wheel(&distrib_path, tmp_dir.path())?;
+    python::wheel::unpack_wheel(&distrib_path, tmp_dir.path())?;
 
     let distrib = Distribution {
         name: requirement.name,
@@ -736,7 +734,7 @@ fn main() -> EResult<()> {
             ) -> EResult<()> {
                 let virtpy = Virtpy::from_existing(path_to_virtpy(&virtpy_path))?;
                 let requirements = fs_err::read_to_string(requirements)?;
-                let requirements = python_requirements::read_requirements_txt(&requirements);
+                let requirements = python::requirements::read_requirements_txt(&requirements);
 
                 virtpy.add_dependencies(proj_dirs, requirements, options)?;
                 Ok(())
@@ -763,7 +761,7 @@ fn main() -> EResult<()> {
             let shim_info = (!without_pip_shim)
                 .then(|| shim_info(&proj_dirs))
                 .transpose()?;
-            python_detection::detect(&python)
+            python::detection::detect(&python)
                 .and_then(|python_path| {
                     Virtpy::create(&proj_dirs, &python_path, &path, None, shim_info)
                 })
@@ -842,7 +840,7 @@ fn install_executable_package(
 ) -> EResult<InstalledStatus> {
     let package_folder = proj_dirs.package_folder(package);
 
-    let python_path = python_detection::detect(python)?;
+    let python_path = python::detection::detect(python)?;
 
     if package_folder.exists() {
         if force {

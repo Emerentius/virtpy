@@ -4,6 +4,7 @@
 .vscode
 test_cache/
 pip_shim/pip_shim.zip
+.mypy_cache
 
 # for the time being
 Cargo.lock

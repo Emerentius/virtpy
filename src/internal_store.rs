@@ -1,7 +1,7 @@
 use eyre::{ensure, eyre, WrapErr};
 use fs_err::File;
 
-use crate::python_wheel::is_path_of_executable;
+use crate::python::wheel::is_path_of_executable;
 use crate::venv::{
     virtpy_link_location, virtpy_link_target, virtpy_status, VirtpyBacking, VirtpyBackingStatus,
     VirtpyPaths,
@@ -9,8 +9,8 @@ use crate::venv::{
 use crate::{
     delete_virtpy_backing, hash_of_file_sha256_base64, is_not_found, move_file,
     package_info_from_dist_info_dirname, print_error_missing_file_in_record,
-    python_requirements::Requirement,
-    python_wheel::{RecordEntry, WheelRecord},
+    python::requirements::Requirement,
+    python::wheel::{RecordEntry, WheelRecord},
     records, remove_leading_parent_dirs, Distribution, DistributionHash, EResult, EntryPoint,
     FileHash, Options, Path, PathBuf, ProjectDirs, PythonVersion, INVALID_UTF8_PATH,
 };
@@ -472,7 +472,7 @@ fn register_distribution_files_of_wheel(
         );
     }
 
-    let records = crate::python_wheel::WheelRecord::from_file(&src_dist_info.join("RECORD"))
+    let records = crate::python::wheel::WheelRecord::from_file(&src_dist_info.join("RECORD"))
         .wrap_err("couldn't get dist-info/RECORD")?;
     for file in &records.files {
         let src = install_folder.join(&file.path);
