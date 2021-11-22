@@ -29,7 +29,7 @@ pub(crate) fn detect(python: &str) -> EResult<PathBuf> {
     find_executable_in_path(python)
 }
 
-pub(crate) fn detect_from_version(python_version: crate::PythonVersion) -> EResult<PathBuf> {
+pub(crate) fn detect_from_version(python_version: super::PythonVersion) -> EResult<PathBuf> {
     find_python_by_version(
         python_version.major.try_into().unwrap(),
         Some(python_version.minor.try_into().unwrap()),

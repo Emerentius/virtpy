@@ -10,13 +10,14 @@ use crate::internal_store::{
 use crate::python::wheel::{
     is_path_of_executable, normalized_distribution_name_for_wheel, RecordEntry, WheelRecord,
 };
+use crate::python::{python_version, PythonVersion};
 use crate::{
     canonicalize, check_status, delete_virtpy_backing, dist_info_matches_package, executables_path,
     generate_executable, ignore_target_exists, install_and_register_distribution_from_file,
     is_not_found, paths_match, print_error_missing_file_in_record,
-    python::requirements::Requirement, python_path, python_version, records, relative_path,
+    python::requirements::Requirement, python_path, records, relative_path,
     remove_leading_parent_dirs, symlink_dir, symlink_file, Distribution, DistributionHash, EResult,
-    FileHash, Options, Path, PathBuf, ProjectDirs, PythonVersion, ShimInfo, StoredDistribution,
+    FileHash, Options, Path, PathBuf, ProjectDirs, ShimInfo, StoredDistribution,
     StoredDistributionType, CENTRAL_METADATA, DIST_HASH_FILE, INVALID_UTF8_PATH, LINK_METADATA,
 };
 use crate::{

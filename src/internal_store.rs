@@ -2,6 +2,7 @@ use eyre::{ensure, eyre, WrapErr};
 use fs_err::File;
 
 use crate::python::wheel::is_path_of_executable;
+use crate::python::PythonVersion;
 use crate::venv::{
     virtpy_link_location, virtpy_link_target, virtpy_status, VirtpyBacking, VirtpyBackingStatus,
     VirtpyPaths,
@@ -12,7 +13,7 @@ use crate::{
     python::requirements::Requirement,
     python::wheel::{RecordEntry, WheelRecord},
     records, remove_leading_parent_dirs, Distribution, DistributionHash, EResult, EntryPoint,
-    FileHash, Options, Path, PathBuf, ProjectDirs, PythonVersion, INVALID_UTF8_PATH,
+    FileHash, Options, Path, PathBuf, ProjectDirs, INVALID_UTF8_PATH,
 };
 use std::path::Path as StdPath;
 use std::{
