@@ -1,6 +1,6 @@
 # virtpy
 
-virtpy creates Python [venv](https://docs.python.org/3/library/venv.html)s where all the dependencies are symlinked in from a central store. This makes each individual virtpy environment very lightweight.
+virtpy creates Python [venv](https://docs.python.org/3/library/venv.html)s where all the dependencies are symlinked in from a central store. Dependencies that are used in multiple venvs are only stored once on disk. This makes each individual virtpy environment very lightweight.
 
 The name stands for <b>virt</b>ual <b>py</b>thon and is subject to change. The entire project is an early prototype. Expect bugs and crashes.
 
