@@ -11,7 +11,7 @@ use crate::venv::{
     VirtpyPaths,
 };
 use crate::{
-    delete_virtpy_backing, is_not_found, move_file, package_info_from_dist_info_dirname,
+    delete_virtpy_backing, is_not_found, package_info_from_dist_info_dirname,
     python::requirements::Requirement,
     python::wheel::{RecordEntry, WheelRecord},
     remove_leading_parent_dirs, EResult, Options, Path, PathBuf, ProjectDirs, INVALID_UTF8_PATH,
@@ -919,6 +919,26 @@ fn _copy_directory(from: &StdPath, to: &StdPath, use_move: bool) {
         } else {
             move_file(path, &target_path, use_move).unwrap();
         }
+    }
+}
+
+// fn dist_info_dirname(name: &str, version: &str, hash: &DistributionHash) -> String {
+//     format!("{},{},{}", name, version, hash)
+// }
+
+fn move_file(
+    src: impl AsRef<StdPath>,
+    dst: impl AsRef<StdPath>,
+    use_move: bool,
+) -> std::io::Result<()> {
+    _move_file(src.as_ref(), dst.as_ref(), use_move)
+}
+
+fn _move_file(src: &StdPath, dst: &StdPath, use_move: bool) -> std::io::Result<()> {
+    if use_move {
+        fs_err::rename(src, dst)
+    } else {
+        fs_err::copy(src, dst).map(drop)
     }
 }
 

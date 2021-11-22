@@ -157,26 +157,6 @@ fn _check_output(cmd: &mut std::process::Command) -> EResult<Vec<u8>> {
     Ok(output.stdout)
 }
 
-// fn dist_info_dirname(name: &str, version: &str, hash: &DistributionHash) -> String {
-//     format!("{},{},{}", name, version, hash)
-// }
-
-fn move_file(
-    src: impl AsRef<StdPath>,
-    dst: impl AsRef<StdPath>,
-    use_move: bool,
-) -> std::io::Result<()> {
-    _move_file(src.as_ref(), dst.as_ref(), use_move)
-}
-
-fn _move_file(src: &StdPath, dst: &StdPath, use_move: bool) -> std::io::Result<()> {
-    if use_move {
-        fs_err::rename(src, dst)
-    } else {
-        fs_err::copy(src, dst).map(drop)
-    }
-}
-
 // fn can_move_files(src: &Path, dst: &Path) -> EResult<bool> {
 //     let filename = ".deleteme_rename_test";
 //     let src = src.join(filename);
