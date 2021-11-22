@@ -15,7 +15,7 @@ mod python_requirements;
 mod python_wheel;
 mod venv;
 
-pub(crate) use venv::{Virtpy, VirtpyBacking, VirtpyPaths};
+use venv::{Virtpy, VirtpyPaths};
 
 use fs_err::PathExt;
 
