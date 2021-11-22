@@ -323,7 +323,7 @@ pub(crate) fn entrypoints(path: &Path) -> Option<Vec<EntryPoint>> {
     let ini = ini::Ini::load_from_file(path);
 
     match ini {
-        Err(ini::ini::Error::Io(err)) if is_not_found(&err) => return None,
+        Err(ini::Error::Io(err)) if is_not_found(&err) => return None,
         _ => (),
     };
     let ini = ini.unwrap();
