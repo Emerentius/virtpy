@@ -173,6 +173,7 @@ impl Virtpy {
         let random_path_gen = std::iter::repeat_with(|| {
             let id = std::iter::repeat_with(|| rng.sample(rand::distributions::Alphanumeric))
                 .take(12)
+                .map(|byte| byte as char)
                 .collect::<String>();
             project_dirs.virtpys().join(id)
         });
