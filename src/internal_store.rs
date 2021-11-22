@@ -1,7 +1,7 @@
 use eyre::{ensure, eyre, WrapErr};
 use fs_err::File;
 
-use crate::venv::{virtpy_link_location, virtpy_link_target, virtpy_status, VirtpyStatus};
+use crate::venv::{virtpy_link_location, virtpy_link_target, virtpy_status, VirtpyBackingStatus};
 use crate::{
     copy_directory, delete_virtpy_backing, hash_of_file_sha256_base64, is_not_found,
     is_path_of_executable, move_file, package_info_from_dist_info_dirname,
@@ -29,8 +29,8 @@ pub(crate) fn collect_garbage(
         let path: PathBuf = virtpy.path().try_into().expect(INVALID_UTF8_PATH);
 
         match virtpy_status(&path) {
-            Ok(VirtpyStatus::Ok { .. }) => (),
-            Ok(VirtpyStatus::Orphaned { link }) => danglers.push((path, link)),
+            Ok(VirtpyBackingStatus::Ok { .. }) => (),
+            Ok(VirtpyBackingStatus::Orphaned { link }) => danglers.push((path, link)),
             Err(err) => println!("failed to check {}: {}", path, err),
         };
     }

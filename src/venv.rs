@@ -194,13 +194,13 @@ impl Virtpy {
 
     pub(crate) fn from_existing(virtpy_link: &Path) -> EResult<Self> {
         match virtpy_link_status(virtpy_link).wrap_err("failed to verify virtpy")? {
-            VirtpyLinkStatus::WrongLocation { should, .. } => {
+            VirtpyStatus::WrongLocation { should, .. } => {
                 Err(eyre!("virtpy copied or moved from {}", should))
             }
-            VirtpyLinkStatus::Dangling { target } => {
+            VirtpyStatus::Dangling { target } => {
                 Err(eyre!("backing storage for virtpy not found: {}", target))
             }
-            VirtpyLinkStatus::Ok { matching_virtpy } => Ok(Virtpy {
+            VirtpyStatus::Ok { matching_virtpy } => Ok(Virtpy {
                 link: canonicalize(virtpy_link)?,
                 backing: matching_virtpy,
                 python_version: python_version(&python_path(virtpy_link))?,
@@ -443,7 +443,7 @@ impl Virtpy {
 /// Both the backing venv and the venv link contain references to the path
 /// of the other. Either one could be deleted without the other one
 /// and the link could also be moved
-pub(crate) enum VirtpyLinkStatus {
+pub(crate) enum VirtpyStatus {
     Ok {
         matching_virtpy: PathBuf,
     },
@@ -457,11 +457,11 @@ pub(crate) enum VirtpyLinkStatus {
     },
 }
 
-fn virtpy_link_status(virtpy_link_path: &Path) -> EResult<VirtpyLinkStatus> {
+fn virtpy_link_status(virtpy_link_path: &Path) -> EResult<VirtpyStatus> {
     let supposed_location = virtpy_link_supposed_location(virtpy_link_path)
         .wrap_err("failed to read original location of virtpy")?;
     if !paths_match(virtpy_link_path.as_ref(), supposed_location.as_ref()).unwrap() {
-        return Ok(VirtpyLinkStatus::WrongLocation {
+        return Ok(VirtpyStatus::WrongLocation {
             should: supposed_location,
             actual: virtpy_link_path.to_owned(),
         });
@@ -469,10 +469,10 @@ fn virtpy_link_status(virtpy_link_path: &Path) -> EResult<VirtpyLinkStatus> {
 
     let target = virtpy_link_target(virtpy_link_path).wrap_err("failed to find virtpy backing")?;
     if !target.exists() {
-        return Ok(VirtpyLinkStatus::Dangling { target });
+        return Ok(VirtpyStatus::Dangling { target });
     }
 
-    Ok(VirtpyLinkStatus::Ok {
+    Ok(VirtpyStatus::Ok {
         matching_virtpy: target,
     })
 }
@@ -904,12 +904,12 @@ fn virtpy_link_supposed_location(virtpy_link: &Path) -> std::io::Result<PathBuf>
 }
 
 #[derive(Debug)]
-pub(crate) enum VirtpyStatus {
+pub(crate) enum VirtpyBackingStatus {
     Ok { matching_link: PathBuf },
     Orphaned { link: PathBuf },
 }
 
-pub(crate) fn virtpy_status(virtpy_path: &Path) -> EResult<VirtpyStatus> {
+pub(crate) fn virtpy_status(virtpy_path: &Path) -> EResult<VirtpyBackingStatus> {
     let link_location = virtpy_link_location(virtpy_path)
         .wrap_err("failed to read location of corresponding virtpy")?;
 
@@ -917,7 +917,7 @@ pub(crate) fn virtpy_status(virtpy_path: &Path) -> EResult<VirtpyStatus> {
 
     if let Err(err) = &link_target {
         if is_not_found(err) {
-            return Ok(VirtpyStatus::Orphaned {
+            return Ok(VirtpyBackingStatus::Orphaned {
                 link: link_location,
             });
         }
@@ -928,12 +928,12 @@ pub(crate) fn virtpy_status(virtpy_path: &Path) -> EResult<VirtpyStatus> {
         .wrap_err("failed to read virtpy link target through backlink")?;
 
     if !paths_match(virtpy_path.as_ref(), link_target.as_ref()).unwrap() {
-        return Ok(VirtpyStatus::Orphaned {
+        return Ok(VirtpyBackingStatus::Orphaned {
             link: link_location,
         });
     }
 
-    Ok(VirtpyStatus::Ok {
+    Ok(VirtpyBackingStatus::Ok {
         matching_link: link_location,
     })
 }
