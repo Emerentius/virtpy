@@ -165,7 +165,7 @@ fn _check_output(cmd: &mut std::process::Command) -> EResult<Vec<u8>> {
 // probably missing prereleases and such
 // TODO: check official scheme
 #[derive(Copy, Clone)]
-pub struct PythonVersion {
+pub(crate) struct PythonVersion {
     // TODO: make these u32
     major: i32,
     minor: i32,
@@ -204,7 +204,7 @@ fn python_version(python_path: &Path) -> EResult<PythonVersion> {
 #[derive(
     Clone, Hash, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
-pub struct DistributionHash(String);
+pub(crate) struct DistributionHash(String);
 
 // The base64 encoded hash of a file in a wheel.
 // has the form "sha256=${base64_encoded_string}"
@@ -213,7 +213,7 @@ pub struct DistributionHash(String);
     Clone, Hash, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
 #[must_use]
-pub struct FileHash(String);
+pub(crate) struct FileHash(String);
 
 impl AsRef<Path> for FileHash {
     fn as_ref(&self) -> &Path {
@@ -325,7 +325,7 @@ fn is_path_of_executable(path: &Utf8Path) -> bool {
 }
 
 #[derive(PartialEq, Eq, Debug)]
-struct EntryPoint {
+pub(crate) struct EntryPoint {
     name: String,
     module: String,
     qualname: Option<String>,
@@ -565,11 +565,11 @@ fn _convert_to_wheel(
 
 // toplevel options
 #[derive(Copy, Clone)]
-struct Options {
+pub(crate) struct Options {
     verbose: u8,
 }
 
-pub struct ProjectDirs {
+pub(crate) struct ProjectDirs {
     data_dir: PathBuf,
 }
 
@@ -1024,7 +1024,7 @@ fn delete_virtpy_backing(backing_folder: &Path) -> std::io::Result<()> {
     fs_err::remove_dir_all(backing_folder)
 }
 
-pub struct ShimInfo<'a> {
+pub(crate) struct ShimInfo<'a> {
     proj_dirs: &'a ProjectDirs,
     // TODO: make this part optional
     //       Having a backreference to the virtpy that created the venv is necessary
@@ -1211,7 +1211,7 @@ fn ignore_target_exists(err: std::io::Error) -> std::io::Result<()> {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, serde::Serialize, serde::Deserialize)]
-struct Distribution {
+pub(crate) struct Distribution {
     name: String,
     version: String,
     sha: DistributionHash,
@@ -1248,9 +1248,10 @@ impl Distribution {
 }
 #[cfg(test)]
 mod test {
+
     use super::*;
 
-    pub fn test_proj_dirs() -> ProjectDirs {
+    pub(crate) fn test_proj_dirs() -> ProjectDirs {
         let target = Path::new(env!("CARGO_MANIFEST_DIR"));
         let test_proj_dir = target.join("test_cache");
         let proj_dirs = ProjectDirs::from_path(test_proj_dir);

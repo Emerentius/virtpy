@@ -30,7 +30,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path as StdPath;
 
 /// A venv in the central store
-pub struct VirtpyBacking {
+pub(crate) struct VirtpyBacking {
     location: PathBuf,
     python_version: PythonVersion,
 }
@@ -39,13 +39,13 @@ pub struct VirtpyBacking {
 /// This struct is only constructed if the virtpy is known to be valid at construction time.
 /// This doesn't guarantee that it will remain valid for the lifetime of the struct (as other processes can modify the filesystem)
 /// but it guarantees that we atleast checked once.
-pub struct Virtpy {
+pub(crate) struct Virtpy {
     link: PathBuf,
     backing: PathBuf,
     python_version: PythonVersion,
 }
 
-pub trait VirtpyPaths {
+pub(crate) trait VirtpyPaths {
     fn location(&self) -> &Path;
     fn python_version(&self) -> PythonVersion;
     fn metadata_dir(&self) -> PathBuf;
@@ -147,7 +147,7 @@ impl VirtpyPathsPrivate for VirtpyBacking {}
 impl VirtpyPathsPrivate for Virtpy {}
 
 impl VirtpyBacking {
-    pub fn from_existing(location: PathBuf) -> Self {
+    pub(crate) fn from_existing(location: PathBuf) -> Self {
         Self {
             python_version: python_version(&python_path(&location)).unwrap(),
             location,
@@ -156,7 +156,7 @@ impl VirtpyBacking {
 }
 
 impl Virtpy {
-    pub fn create(
+    pub(crate) fn create(
         project_dirs: &ProjectDirs,
         python_path: &Path,
         path: &Path,
@@ -193,7 +193,7 @@ impl Virtpy {
         _create_virtpy(central_path, python_path, path, prompt, with_pip_shim)
     }
 
-    pub fn from_existing(virtpy_link: &Path) -> EResult<Self> {
+    pub(crate) fn from_existing(virtpy_link: &Path) -> EResult<Self> {
         match virtpy_link_status(virtpy_link).wrap_err("failed to verify virtpy")? {
             VirtpyLinkStatus::WrongLocation { should, .. } => {
                 Err(eyre!("virtpy copied or moved from {}", should))
@@ -263,7 +263,7 @@ impl Virtpy {
     }
 
     // TODO: refactor
-    pub fn remove_dependencies(&self, dists_to_remove: HashSet<String>) -> EResult<()> {
+    pub(crate) fn remove_dependencies(&self, dists_to_remove: HashSet<String>) -> EResult<()> {
         let dists_to_remove = dists_to_remove
             .into_iter()
             .map(|name| normalized_distribution_name_for_wheel(&name))
@@ -409,7 +409,7 @@ impl Virtpy {
         }
     }
 
-    pub fn delete(self) -> EResult<()> {
+    pub(crate) fn delete(self) -> EResult<()> {
         fs_err::remove_dir_all(self.location())?;
         delete_virtpy_backing(&self.backing)?;
         Ok(())
@@ -444,7 +444,7 @@ impl Virtpy {
 /// Both the backing venv and the venv link contain references to the path
 /// of the other. Either one could be deleted without the other one
 /// and the link could also be moved
-pub enum VirtpyLinkStatus {
+pub(crate) enum VirtpyLinkStatus {
     Ok { matching_virtpy: PathBuf },
     WrongLocation { should: PathBuf, actual: PathBuf },
     Dangling { target: PathBuf },

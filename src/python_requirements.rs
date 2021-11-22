@@ -6,21 +6,21 @@ use pest::Parser;
 struct RequirementsTxtParser;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Requirement {
-    pub name: String,
-    pub version: String,
-    pub marker: Option<Marker>,
-    pub available_hashes: Vec<crate::DistributionHash>,
+pub(crate) struct Requirement {
+    pub(crate) name: String,
+    pub(crate) version: String,
+    pub(crate) marker: Option<Marker>,
+    pub(crate) available_hashes: Vec<crate::DistributionHash>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Marker {
+pub(crate) enum Marker {
     SystemCondition(SystemCondition),
     Unknown(String),
 }
 
 impl Marker {
-    pub fn matches_system(&self) -> bool {
+    pub(crate) fn matches_system(&self) -> bool {
         match self {
             Marker::SystemCondition(cond) => cond.matches_system(),
             Marker::Unknown(_) => true, // let pip sort it out
@@ -66,14 +66,14 @@ fn sys_platform() -> String {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SystemCondition {
+pub(crate) struct SystemCondition {
     // "must equal" or "must not equal"
     must_equal: bool,
     system_name: String,
 }
 
 impl SystemCondition {
-    pub fn matches_system(&self) -> bool {
+    pub(crate) fn matches_system(&self) -> bool {
         if self.must_equal {
             self.system_name == sys_platform()
         } else {
@@ -149,7 +149,7 @@ impl Requirement {
         }
     }
 
-    pub fn from_filename(filename: &str, hash: DistributionHash) -> EResult<Self> {
+    pub(crate) fn from_filename(filename: &str, hash: DistributionHash) -> EResult<Self> {
         // TODO: use a better parser
         let (_, name, version, _) =
             lazy_regex::regex_captures!(r"^([^-]+)-([^-]+)(\.tar\.gz|-.*\.whl)", filename).unwrap();
@@ -164,7 +164,7 @@ impl Requirement {
     }
 }
 
-pub fn read_requirements_txt(data: &str) -> Vec<Requirement> {
+pub(crate) fn read_requirements_txt(data: &str) -> Vec<Requirement> {
     let mut tokens = RequirementsTxtParser::parse(Rule::requirements, data)
         .unwrap_or_else(|err| panic!("{}", err));
     let requirements = tokens.next().unwrap();

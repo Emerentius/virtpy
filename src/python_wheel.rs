@@ -18,7 +18,7 @@ use crate::{Path, PathBuf};
 // linked above.
 // https://www.python.org/dev/peps/pep-0491/#pep-deferral
 
-pub fn unpack_wheel(wheel: &Path, dest: &StdPath) -> EResult<()> {
+pub(crate) fn unpack_wheel(wheel: &Path, dest: &StdPath) -> EResult<()> {
     let mut archive = zip::ZipArchive::new(fs_err::File::open(wheel)?)?;
 
     let wheel_name = wheel
@@ -194,13 +194,13 @@ impl WheelMetadata {
 }
 
 #[derive(PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
-pub struct WheelRecord {
+pub(crate) struct WheelRecord {
     // stored separately just so we can easily recreate the line for the RECORD itself
     // without making paths and filesizes optional for all other files.
     // If `None`, don't write a RECORD line.
-    pub record_path: PathBuf,
+    pub(crate) record_path: PathBuf,
     // All files in the record except for the record itself.
-    pub files: Vec<RecordEntry>,
+    pub(crate) files: Vec<RecordEntry>,
 }
 
 // On the distinction between RecordEntry and MaybeRecordEntry:
@@ -223,10 +223,10 @@ pub struct WheelRecord {
     Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Clone,
 )]
 #[must_use]
-pub struct RecordEntry {
-    pub path: PathBuf,
-    pub hash: FileHash,
-    pub filesize: u64,
+pub(crate) struct RecordEntry {
+    pub(crate) path: PathBuf,
+    pub(crate) hash: FileHash,
+    pub(crate) filesize: u64,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash, Clone)]
@@ -245,7 +245,7 @@ impl WheelRecord {
     //     Self::_from_csv_reader(reader)
     // }
 
-    pub fn from_file(record: impl AsRef<Path>) -> EResult<Self> {
+    pub(crate) fn from_file(record: impl AsRef<Path>) -> EResult<Self> {
         Self::_from_file(record.as_ref())
             .wrap_err_with(|| eyre!("failed to read record from {:?}", record.as_ref()))
     }
@@ -258,7 +258,7 @@ impl WheelRecord {
         Self::_from_csv_reader(reader)
     }
 
-    pub fn save_to_file(&self, dest: impl AsRef<Path>) -> EResult<()> {
+    pub(crate) fn save_to_file(&self, dest: impl AsRef<Path>) -> EResult<()> {
         let dest = dest.as_ref();
         self._save_to_file(dest)
             .wrap_err_with(|| eyre!("failed to save record to {:?}", dest))
