@@ -1,17 +1,18 @@
 use eyre::{ensure, eyre, WrapErr};
 use fs_err::File;
 
+use crate::python_wheel::is_path_of_executable;
 use crate::venv::{virtpy_link_location, virtpy_link_target, virtpy_status, VirtpyBackingStatus};
 use crate::{
-    copy_directory, delete_virtpy_backing, hash_of_file_sha256_base64, is_not_found,
-    is_path_of_executable, move_file, package_info_from_dist_info_dirname,
-    print_error_missing_file_in_record,
+    delete_virtpy_backing, hash_of_file_sha256_base64, is_not_found, move_file,
+    package_info_from_dist_info_dirname, print_error_missing_file_in_record,
     python_requirements::Requirement,
     python_wheel::{RecordEntry, WheelRecord},
     records, remove_leading_parent_dirs, Distribution, DistributionHash, EResult, EntryPoint,
     FileHash, Options, Path, PathBuf, ProjectDirs, PythonVersion, VirtpyBacking, VirtpyPaths,
     INVALID_UTF8_PATH,
 };
+use std::path::Path as StdPath;
 use std::{
     collections::{HashMap, HashSet},
     io::{BufReader, Seek},
@@ -917,6 +918,24 @@ pub(crate) fn wheel_is_already_registered(
         .0
         .get(&python_version.as_string_without_patch())
         .map_or(false, |deps| deps.contains_key(&wheel_hash)))
+}
+
+fn copy_directory(from: impl AsRef<StdPath>, to: impl AsRef<StdPath>, use_move: bool) {
+    _copy_directory(from.as_ref(), to.as_ref(), use_move)
+}
+
+fn _copy_directory(from: &StdPath, to: &StdPath, use_move: bool) {
+    for dir_entry in walkdir::WalkDir::new(from) {
+        let dir_entry = dir_entry.unwrap();
+        let path = dir_entry.path();
+        let subpath = path.strip_prefix(from).unwrap();
+        let target_path = to.join(&subpath);
+        if dir_entry.file_type().is_dir() {
+            fs_err::create_dir(target_path).unwrap();
+        } else {
+            move_file(path, &target_path, use_move).unwrap();
+        }
+    }
 }
 
 #[cfg(test)]

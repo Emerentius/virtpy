@@ -302,28 +302,6 @@ fn serialize_requirements_txt(reqs: &[Requirement]) -> String {
     output
 }
 
-fn copy_directory(from: impl AsRef<StdPath>, to: impl AsRef<StdPath>, use_move: bool) {
-    _copy_directory(from.as_ref(), to.as_ref(), use_move)
-}
-
-fn _copy_directory(from: &StdPath, to: &StdPath, use_move: bool) {
-    for dir_entry in walkdir::WalkDir::new(from) {
-        let dir_entry = dir_entry.unwrap();
-        let path = dir_entry.path();
-        let subpath = path.strip_prefix(from).unwrap();
-        let target_path = to.join(&subpath);
-        if dir_entry.file_type().is_dir() {
-            fs_err::create_dir(target_path).unwrap();
-        } else {
-            move_file(path, &target_path, use_move).unwrap();
-        }
-    }
-}
-
-fn is_path_of_executable(path: &Utf8Path) -> bool {
-    path.starts_with("bin") || path.starts_with("Scripts")
-}
-
 #[derive(PartialEq, Eq, Debug)]
 pub(crate) struct EntryPoint {
     name: String,

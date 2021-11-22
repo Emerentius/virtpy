@@ -1,3 +1,4 @@
+use camino::Utf8Path;
 use eyre::{bail, eyre, WrapErr};
 use std::{
     collections::HashMap,
@@ -215,6 +216,9 @@ fn _escape(string: &str, replace_with: &str) -> String {
     pattern.replace_all(string, replace_with).to_lowercase()
 }
 
+pub(crate) fn is_path_of_executable(path: &Utf8Path) -> bool {
+    path.starts_with("bin") || path.starts_with("Scripts")
+}
 #[derive(PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub(crate) struct WheelRecord {
     // stored separately just so we can easily recreate the line for the RECORD itself
