@@ -19,7 +19,7 @@ pub(crate)fn detect(python: &str) -> EResult<PathBuf> {
     }
 
     let version_pattern = lazy_regex::regex!(r"^(\d)(\.(\d+))?$");
-    if let Some(captures) = version_pattern.captures(&python) {
+    if let Some(captures) = version_pattern.captures(python) {
         let major = captures[1].parse().unwrap();
         let minor = captures.get(3).map(|n| n.as_str().parse().unwrap());
 
@@ -114,8 +114,8 @@ fn _find_executable_in_custom_path(
     let path_ext = std::env::var_os("PATHEXT");
     pathsearch::PathSearcher::new(
         executable,
-        path.as_ref().map(std::ffi::OsString::as_os_str),
-        path_ext.as_ref().map(std::ffi::OsString::as_os_str),
+        path.as_deref(),
+        path_ext.as_deref(),
     )
     .next()
 }

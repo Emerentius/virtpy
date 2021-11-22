@@ -166,7 +166,7 @@ impl WheelMetadata {
         let get_unique_optional = |key| match key_values.get(key) {
             Some(x) if x.len() == 1 => Ok(Some(x[0].to_owned())),
             Some(_) => Err(eyre!("multiple key-value pairs for key {}", key)),
-            None => return Ok(None),
+            None => Ok(None),
         };
 
         let get_unique = |key| {
@@ -300,7 +300,7 @@ impl WheelRecord {
             .into_iter()
             .filter(|entry| entry.filesize.is_some())
             .map(|entry| RecordEntry {
-                path: entry.path.into(),
+                path: entry.path,
                 hash: FileHash(entry.hash),
                 filesize: entry.filesize.unwrap(),
             })

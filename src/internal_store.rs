@@ -34,7 +34,7 @@ pub(crate) fn collect_garbage(
         };
     }
 
-    if danglers.len() != 0 {
+    if !danglers.is_empty() {
         println!("found {} missing virtpys.", danglers.len());
 
         if remove {
@@ -54,15 +54,15 @@ pub(crate) fn collect_garbage(
     }
 
     {
-        let unused_dists = unused_distributions(&proj_dirs).collect::<Vec<_>>();
+        let unused_dists = unused_distributions(proj_dirs).collect::<Vec<_>>();
         if !unused_dists.is_empty() {
             println!("found {} modules without users.", unused_dists.len());
 
             if remove {
-                let mut stored_distribs = StoredDistributions::load(&proj_dirs)?;
+                let mut stored_distribs = StoredDistributions::load(proj_dirs)?;
 
                 for dist in unused_dists {
-                    let path = dist.path(&proj_dirs);
+                    let path = dist.path(proj_dirs);
                     assert!(path.starts_with(&proj_dirs.data()));
 
                     let Distribution { name, version, sha } = &dist.distribution;
@@ -88,7 +88,7 @@ pub(crate) fn collect_garbage(
     }
 
     {
-        let unused_package_files = unused_package_files(&proj_dirs).collect::<Vec<_>>();
+        let unused_package_files = unused_package_files(proj_dirs).collect::<Vec<_>>();
         if !unused_package_files.is_empty() {
             println!(
                 "found {} package files without distribution dependents.",
@@ -153,7 +153,7 @@ pub(crate) fn print_stats(
         .iter()
         .map(|(distr, dependents)| {
             Ok(distribution_files
-                .get(&distr)
+                .get(distr)
                 .ok_or_else(|| {
                     eyre::eyre!(
                         "no entry for distribution {},{:?}",
@@ -420,7 +420,7 @@ fn register_distribution_files(
         let res = move_file(&src, &dest, use_move);
         match &res {
             Err(err) if is_not_found(err) => {
-                print_error_missing_file_in_record(&distribution, file.path.as_ref())
+                print_error_missing_file_in_record(distribution, file.path.as_ref())
             }
             _ => {
                 res.unwrap();
@@ -483,7 +483,7 @@ fn register_distribution_files_of_wheel(
             // TODO: Add check of RECORD during wheel installation before registration.
             //       It must be complete and correct so we should never run into this.
             Err(err) if is_not_found(err) => {
-                print_error_missing_file_in_record(&distribution, file.path.as_ref())
+                print_error_missing_file_in_record(distribution, file.path.as_ref())
             }
             _ => {
                 res.unwrap();
@@ -796,18 +796,16 @@ pub(crate) fn register_new_distributions(
     python_version: PythonVersion,
     tmp_dir: tempdir::TempDir,
 ) -> EResult<()> {
-    if options.verbose >= 1 {
-        if new_distribs.len() != n_distribs_requested {
-            // either an error or a sign that the filters in new_dependencies()
-            // need to be improved
-            println!(
-                "Only found {} of {} distributions",
-                new_distribs.len(),
-                n_distribs_requested
-            );
+    if options.verbose >= 1 && new_distribs.len() != n_distribs_requested {
+        // either an error or a sign that the filters in new_dependencies()
+        // need to be improved
+        println!(
+            "Only found {} of {} distributions",
+            new_distribs.len(),
+            n_distribs_requested
+        );
 
-            let _ = fs_err::write(proj_dirs.data().join("pip.log"), pip_log);
-        }
+        let _ = fs_err::write(proj_dirs.data().join("pip.log"), pip_log);
     }
     if options.verbose >= 2 {
         for distrib in new_distribs.iter() {

@@ -388,7 +388,7 @@ fn generate_executable(
     #[cfg(unix)]
     {
         _generate_executable(
-            &dest,
+            dest,
             format!("{}\n{}", shebang, code).as_bytes(),
             site_packages,
         )
@@ -889,13 +889,13 @@ fn install_executable_package(
     allow_prereleases: bool,
     python: &str,
 ) -> EResult<InstalledStatus> {
-    let package_folder = proj_dirs.package_folder(&package);
+    let package_folder = proj_dirs.package_folder(package);
 
-    let python_path = python_detection::detect(&python)?;
+    let python_path = python_detection::detect(python)?;
 
     if package_folder.exists() {
         if force {
-            delete_executable_virtpy(&proj_dirs, &package)?;
+            delete_executable_virtpy(proj_dirs, package)?;
         } else {
             return Ok(InstalledStatus::AlreadyInstalled);
         }
@@ -909,7 +909,7 @@ fn install_executable_package(
         .join(".venv");
 
     let virtpy = Virtpy::create(
-        &proj_dirs,
+        proj_dirs,
         &python_path,
         &package_folder,
         None,
@@ -1001,7 +1001,7 @@ fn is_not_found(error: &std::io::Error) -> bool {
 }
 
 fn delete_executable_virtpy(proj_dirs: &ProjectDirs, package: &str) -> EResult<()> {
-    let virtpy_path = proj_dirs.package_folder(&package);
+    let virtpy_path = proj_dirs.package_folder(package);
     let virtpy = Virtpy::from_existing(&virtpy_path)?;
     virtpy.delete()?;
 

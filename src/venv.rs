@@ -248,7 +248,7 @@ impl Virtpy {
         let requirement =
             Requirement::from_filename(file.file_name().unwrap(), file_hash.clone()).unwrap();
 
-        if !wheel_is_already_registered(file_hash.clone(), proj_dirs, self.python_version)? {
+        if !wheel_is_already_registered(file_hash, proj_dirs, self.python_version)? {
             install_and_register_distribution_from_file(
                 proj_dirs,
                 file,
@@ -295,7 +295,7 @@ impl Virtpy {
         }
 
         dist_infos.retain(|name| {
-            let dist = name.split("-").next().unwrap();
+            let dist = name.split('-').next().unwrap();
             dists_to_remove.contains(dist)
         });
 
@@ -313,7 +313,7 @@ impl Virtpy {
                     continue;
                 }
 
-                if path.extension() == Some("py".as_ref()) {
+                if path.extension() == Some("py") {
                     files_to_remove.push(path.with_extension("pyc"));
                 }
                 files_to_remove.push(path);
@@ -356,7 +356,7 @@ impl Virtpy {
             assert!(path.starts_with(&site_packages));
 
             if false {
-                if path.extension() != Some("pyc".as_ref()) {
+                if path.extension() != Some("pyc") {
                     println!("deleting {}", path);
                 }
             } else {
@@ -463,7 +463,7 @@ fn virtpy_link_status(virtpy_link_path: &Path) -> EResult<VirtpyLinkStatus> {
     let target = virtpy_link_target(virtpy_link_path).wrap_err("failed to find virtpy backing")?;
     if !target.exists() {
         return Ok(VirtpyLinkStatus::Dangling {
-            target: target.clone(),
+            target,
         });
     }
 
@@ -501,7 +501,7 @@ fn link_requirements_into_virtpy(
         let stored_distrib = match distribution
             .available_hashes
             .iter()
-            .find_map(|hash| existing_deps.get(&hash))
+            .find_map(|hash| existing_deps.get(hash))
         {
             Some(stored_distrib) => stored_distrib,
             None => {
@@ -529,7 +529,7 @@ fn link_requirements_into_virtpy(
             proj_dirs,
             virtpy,
             options,
-            &stored_distrib,
+            stored_distrib,
             &site_packages,
         )?;
     }
@@ -563,7 +563,7 @@ fn link_single_requirement_into_virtpy(
             link_files_from_record_into_virtpy(
                 &dist_info_path,
                 virtpy,
-                &site_packages,
+                site_packages,
                 proj_dirs,
                 &distrib.distribution,
             );
@@ -578,7 +578,7 @@ fn link_single_requirement_into_virtpy(
             link_files_from_record_into_virtpy_new(
                 &mut record,
                 virtpy,
-                &site_packages,
+                site_packages,
                 proj_dirs,
                 &distrib.distribution,
             )?;
@@ -669,7 +669,7 @@ fn link_file_into_virtpy(
         // TODO: can this error exist? Docs don't say anything about this being a failure
         //       condition
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => (),
-        Err(err) if is_not_found(&err) => print_error_missing_file_in_record(&distribution, &src),
+        Err(err) if is_not_found(&err) => print_error_missing_file_in_record(distribution, &src),
         Err(err) => panic!("failed to hardlink file from {} to {}: {}", src, dest, err),
     };
 }
@@ -712,7 +712,7 @@ fn link_files_from_record_into_virtpy_new(
                     .expect(INVALID_UTF8_PATH);
 
                 if !is_executable {
-                    link_file_into_virtpy(proj_dirs, &record, dest, distribution);
+                    link_file_into_virtpy(proj_dirs, record, dest, distribution);
                 } else {
                     let src = proj_dirs.package_file(&record.hash);
                     let script = fs_err::read_to_string(src)?;
@@ -727,11 +727,11 @@ fn link_files_from_record_into_virtpy_new(
                         *record = generate_executable(
                             &dest,
                             &virtpy.python(),
-                            &code,
+                            code,
                             &virtpy.site_packages(),
                         )?;
                     } else {
-                        link_file_into_virtpy(proj_dirs, &record, dest, distribution);
+                        link_file_into_virtpy(proj_dirs, record, dest, distribution);
                     }
                 }
             }
@@ -845,7 +845,7 @@ fn install_executables(
     proj_dirs: &ProjectDirs,
     mut wheel_record: Option<&mut WheelRecord>, // only record when unpacking wheels ourselves
 ) -> Result<(), color_eyre::Report> {
-    let entrypoints = stored_distrib.entrypoints(proj_dirs).unwrap_or(vec![]);
+    let entrypoints = stored_distrib.entrypoints(proj_dirs).unwrap_or_default();
     for entrypoint in entrypoints {
         let executables_path = virtpy.executables();
         let err = || eyre!("failed to install executable {}", entrypoint.name);
