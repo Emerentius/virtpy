@@ -1,4 +1,5 @@
-use crate::{DistributionHash, EResult};
+use super::DistributionHash;
+use crate::EResult;
 use pest::Parser;
 
 #[derive(pest_derive::Parser)]
@@ -10,7 +11,7 @@ pub(crate) struct Requirement {
     pub(crate) name: String,
     pub(crate) version: String,
     pub(crate) marker: Option<Marker>,
-    pub(crate) available_hashes: Vec<crate::DistributionHash>,
+    pub(crate) available_hashes: Vec<DistributionHash>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,7 +138,7 @@ impl Requirement {
                 debug_assert_eq!(hash_token.as_rule(), Rule::hash);
 
                 // TODO: split hash type and hash into separate values
-                crate::DistributionHash(hash_token.into_inner().as_str().replace(":", "="))
+                DistributionHash(hash_token.into_inner().as_str().replace(":", "="))
             })
             .collect();
 
@@ -218,11 +219,11 @@ mod test {
                         system_name: "darwin".into()
                     })),
                     available_hashes: vec![
-                    crate::DistributionHash(
+                    DistributionHash(
                         "sha256=5b26757dc6f79a3b7dc9fab95359328d5747fcb2409d331ea66d0272b90ab2a0"
                             .into()
                     ),
-                    crate::DistributionHash(
+                    DistributionHash(
                         "sha256=8b995ffe925347a2138d7ac0fe77155e4311a0ea6d6da4f5128fe4b3cbe5ed71"
                             .into()
                     )
@@ -233,11 +234,11 @@ mod test {
                     name: "backcall".into(),
                     marker: None,
                     available_hashes: vec![
-                    crate::DistributionHash(
+                    DistributionHash(
                         "sha256=fbbce6a29f263178a1f7915c1940bde0ec2b2a967566fe1c65c1dfb7422bd255"
                             .into()
                     ),
-                    crate::DistributionHash(
+                    DistributionHash(
                         "sha256=5cbdbf27be5e7cfadb448baf0aa95508f91f2bbc6c6437cd9cd06e2a4c215e1e"
                             .into()
                     )

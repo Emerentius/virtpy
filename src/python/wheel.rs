@@ -7,7 +7,8 @@ use std::{
     path::Path as StdPath,
 };
 
-use crate::{EResult, FileHash};
+use super::FileHash;
+use crate::EResult;
 use crate::{Path, PathBuf};
 
 // This implements a wheel installer following the specification here:

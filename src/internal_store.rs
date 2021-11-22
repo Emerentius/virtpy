@@ -2,18 +2,20 @@ use eyre::{ensure, eyre, WrapErr};
 use fs_err::File;
 
 use crate::python::wheel::is_path_of_executable;
-use crate::python::PythonVersion;
+use crate::python::{
+    print_error_missing_file_in_record, records, Distribution, DistributionHash, EntryPoint,
+    FileHash, PythonVersion,
+};
 use crate::venv::{
     virtpy_link_location, virtpy_link_target, virtpy_status, VirtpyBacking, VirtpyBackingStatus,
     VirtpyPaths,
 };
 use crate::{
     delete_virtpy_backing, hash_of_file_sha256_base64, is_not_found, move_file,
-    package_info_from_dist_info_dirname, print_error_missing_file_in_record,
+    package_info_from_dist_info_dirname,
     python::requirements::Requirement,
     python::wheel::{RecordEntry, WheelRecord},
-    records, remove_leading_parent_dirs, Distribution, DistributionHash, EResult, EntryPoint,
-    FileHash, Options, Path, PathBuf, ProjectDirs, INVALID_UTF8_PATH,
+    remove_leading_parent_dirs, EResult, Options, Path, PathBuf, ProjectDirs, INVALID_UTF8_PATH,
 };
 use std::path::Path as StdPath;
 use std::{
@@ -580,7 +582,7 @@ impl StoredDistribution {
     }
 
     pub(crate) fn entrypoints(&self, proj_dirs: &ProjectDirs) -> Option<Vec<EntryPoint>> {
-        _entrypoints(&self.dist_info_file(proj_dirs, "entry_points.txt")?)
+        crate::python::entrypoints(&self.dist_info_file(proj_dirs, "entry_points.txt")?)
     }
 
     // Returns the directory where the RECORD of this distribution is stored.
@@ -654,26 +656,6 @@ impl StoredDistribution {
         }
         Ok(exes)
     }
-}
-
-fn _entrypoints(path: &Path) -> Option<Vec<EntryPoint>> {
-    let ini = ini::Ini::load_from_file(path);
-
-    match ini {
-        Err(ini::ini::Error::Io(err)) if is_not_found(&err) => return None,
-        _ => (),
-    };
-    let ini = ini.unwrap();
-
-    let entrypoints = ini
-        .section(Some("console_scripts"))
-        .map_or(vec![], |console_scripts| {
-            console_scripts
-                .iter()
-                .map(|(key, val)| EntryPoint::new(key, val))
-                .collect()
-        });
-    Some(entrypoints)
 }
 
 impl StoredDistributions {
@@ -951,37 +933,6 @@ mod test {
             .unwrap()
             .map(Result::unwrap)
             .for_each(drop);
-    }
-
-    #[test]
-    fn read_entrypoints() {
-        let entrypoints =
-            _entrypoints("test_files/entrypoints.dist-info/entry_points.txt".as_ref()).unwrap();
-        assert_eq!(
-            entrypoints,
-            &[
-                EntryPoint {
-                    name: "dmypy".into(),
-                    module: "mypy.dmypy.client".into(),
-                    qualname: Some("console_entry".into())
-                },
-                EntryPoint {
-                    name: "mypy".into(),
-                    module: "mypy.__main__".into(),
-                    qualname: Some("console_entry".into())
-                },
-                EntryPoint {
-                    name: "stubgen".into(),
-                    module: "mypy.stubgen".into(),
-                    qualname: Some("main".into())
-                },
-                EntryPoint {
-                    name: "stubtest".into(),
-                    module: "mypy.stubtest".into(),
-                    qualname: Some("main".into())
-                },
-            ]
-        )
     }
 
     // This test accesses the same file as the test `loading_old_and_new_stored_distribs_identical`
