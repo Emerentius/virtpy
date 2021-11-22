@@ -1,8 +1,4 @@
-use crate::{
-    check_output, hash_of_file_sha256_base16, hash_of_file_sha256_base64, is_not_found, EResult,
-    Path,
-};
-use crate::{hash_of_reader_sha256_base64, relative_path};
+use crate::{check_output, is_not_found, relative_path, EResult, Path};
 use eyre::eyre;
 use eyre::Context;
 use std::fmt::Write;
@@ -66,6 +62,12 @@ pub(crate) struct DistributionHash(pub(crate) String);
 #[must_use]
 pub(crate) struct FileHash(pub(crate) String);
 
+impl std::fmt::Display for FileHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 impl AsRef<Path> for FileHash {
     fn as_ref(&self) -> &Path {
         self.0.as_ref()
@@ -81,7 +83,7 @@ impl DistributionHash {
 impl FileHash {
     // TODO: use when checking file hashes in RECORD to be correct
     #[allow(unused)]
-    fn from_file(path: &Path) -> Self {
+    pub(crate) fn from_file(path: &Path) -> Self {
         Self::from_hash(hash_of_file_sha256_base64(path))
     }
 
@@ -334,6 +336,40 @@ pub(crate) fn entrypoints(path: &Path) -> Option<Vec<EntryPoint>> {
                 .collect()
         });
     Some(entrypoints)
+}
+
+fn hash_of_file_sha256_base64(path: &Path) -> String {
+    let hash = _hash_of_file_sha256(path);
+    base64::encode_config(hash.as_ref(), base64::URL_SAFE_NO_PAD)
+}
+
+fn hash_of_file_sha256_base16(path: &Path) -> String {
+    let hash = _hash_of_file_sha256(path);
+    base16::encode_lower(hash.as_ref())
+}
+
+// fn hash_of_reader_sha256_base16(reader: impl std::io::Read) -> String {
+//     let hash = _hash_of_reader_sha256(reader);
+//     base16::encode_lower(hash.as_ref())
+// }
+
+fn hash_of_reader_sha256_base64(reader: impl std::io::Read) -> String {
+    let hash = _hash_of_reader_sha256(reader);
+    base64::encode_config(hash.as_ref(), base64::URL_SAFE_NO_PAD)
+}
+
+fn _hash_of_file_sha256(path: &Path) -> impl AsRef<[u8]> {
+    let file = fs_err::File::open(path).unwrap();
+    // significant speed improvement, but not huge
+    let file = std::io::BufReader::new(file);
+    _hash_of_reader_sha256(file)
+}
+
+fn _hash_of_reader_sha256(mut reader: impl std::io::Read) -> impl AsRef<[u8]> {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    std::io::copy(&mut reader, &mut hasher).unwrap();
+    hasher.finalize()
 }
 
 #[cfg(test)]

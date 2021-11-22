@@ -11,8 +11,7 @@ use crate::venv::{
     VirtpyPaths,
 };
 use crate::{
-    delete_virtpy_backing, hash_of_file_sha256_base64, is_not_found, move_file,
-    package_info_from_dist_info_dirname,
+    delete_virtpy_backing, is_not_found, move_file, package_info_from_dist_info_dirname,
     python::requirements::Requirement,
     python::wheel::{RecordEntry, WheelRecord},
     remove_leading_parent_dirs, EResult, Options, Path, PathBuf, ProjectDirs, INVALID_UTF8_PATH,
@@ -128,8 +127,8 @@ pub(crate) fn print_verify_store(proj_dirs: &ProjectDirs) {
     {
         // the path is also the hash
         let path: PathBuf = file.path().try_into().expect(INVALID_UTF8_PATH);
-        let base64_hash = hash_of_file_sha256_base64(&path);
-        if base64_hash != path.file_name().unwrap().strip_prefix("sha256=").unwrap() {
+        let base64_hash = FileHash::from_file(&path);
+        if base64_hash != FileHash::from_filename(&path) {
             println!("doesn't match hash: {}, hash = {}", path, base64_hash);
             any_error = true;
         }

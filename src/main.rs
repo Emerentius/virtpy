@@ -3,7 +3,6 @@ use eyre::bail;
 use eyre::{ensure, eyre, WrapErr};
 use internal_store::{StoredDistribution, StoredDistributionType};
 use python::requirements::Requirement;
-use sha2::{Digest, Sha256};
 use std::path::Path as StdPath;
 use structopt::StructOpt;
 
@@ -650,39 +649,6 @@ fn install_executable_package(
     // if everything succeeds, keep the venv
     std::mem::forget(virtpy);
     Ok(InstalledStatus::NewlyInstalled)
-}
-
-fn hash_of_file_sha256_base64(path: &Path) -> String {
-    let hash = _hash_of_file_sha256(path);
-    base64::encode_config(hash.as_ref(), base64::URL_SAFE_NO_PAD)
-}
-
-fn hash_of_file_sha256_base16(path: &Path) -> String {
-    let hash = _hash_of_file_sha256(path);
-    base16::encode_lower(hash.as_ref())
-}
-
-// fn hash_of_reader_sha256_base16(reader: impl std::io::Read) -> String {
-//     let hash = _hash_of_reader_sha256(reader);
-//     base16::encode_lower(hash.as_ref())
-// }
-
-fn hash_of_reader_sha256_base64(reader: impl std::io::Read) -> String {
-    let hash = _hash_of_reader_sha256(reader);
-    base64::encode_config(hash.as_ref(), base64::URL_SAFE_NO_PAD)
-}
-
-fn _hash_of_file_sha256(path: &Path) -> impl AsRef<[u8]> {
-    let file = fs_err::File::open(path).unwrap();
-    // significant speed improvement, but not huge
-    let file = std::io::BufReader::new(file);
-    _hash_of_reader_sha256(file)
-}
-
-fn _hash_of_reader_sha256(mut reader: impl std::io::Read) -> impl AsRef<[u8]> {
-    let mut hasher = Sha256::new();
-    std::io::copy(&mut reader, &mut hasher).unwrap();
-    hasher.finalize()
 }
 
 fn is_not_found(error: &std::io::Error) -> bool {
