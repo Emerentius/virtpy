@@ -849,28 +849,6 @@ fn main() -> EResult<()> {
     Ok(())
 }
 
-// // Related: https://www.python.org/dev/peps/pep-0625/  -- File name of a Source Distribution
-// //          Contains a link to a few other PEPs.
-// //          PEP 503 defines the concept of a normalized distribution name.
-// //          https://www.python.org/dev/peps/pep-0503/#normalized-names
-// fn normalized_distribution_name(name: &str) -> String {
-//     _escape(name, "-")
-// }
-
-// Following https://packaging.python.org/specifications/binary-distribution-format/#escaping-and-unicode
-// This is important because the wheel name components may contain "-" characters,
-// but those are separators in a wheel name.
-// We need this because the dist-info and data directory contain the normalized distrib name.
-// We may have to add version normalization, if we ever get unnormalized ones.
-fn normalized_distribution_name_for_wheel(distrib_name: &str) -> String {
-    _escape(distrib_name, "_")
-}
-
-fn _escape(string: &str, replace_with: &str) -> String {
-    let pattern = lazy_regex::regex!(r"[-_.]+");
-    pattern.replace_all(string, replace_with).to_lowercase()
-}
-
 enum InstalledStatus {
     NewlyInstalled,
     AlreadyInstalled,
@@ -1036,56 +1014,6 @@ fn canonicalize(path: &Path) -> EResult<PathBuf> {
 
 fn paths_match(virtpy: &StdPath, link_target: &StdPath) -> EResult<bool> {
     Ok(virtpy.fs_err_canonicalize()? == link_target.fs_err_canonicalize()?)
-}
-
-fn virtpy_link_location(virtpy: &Path) -> std::io::Result<PathBuf> {
-    let backlink = virtpy.join(CENTRAL_METADATA).join("link_location");
-    fs_err::read_to_string(backlink).map(PathBuf::from)
-}
-
-fn virtpy_link_target(virtpy_link: &Path) -> std::io::Result<PathBuf> {
-    let link = virtpy_link.join(LINK_METADATA).join("central_location");
-    fs_err::read_to_string(link).map(PathBuf::from)
-}
-
-fn virtpy_link_supposed_location(virtpy_link: &Path) -> std::io::Result<PathBuf> {
-    let link = virtpy_link.join(LINK_METADATA).join("link_location");
-    fs_err::read_to_string(link).map(PathBuf::from)
-}
-
-#[derive(Debug)]
-enum VirtpyStatus {
-    Ok { matching_link: PathBuf },
-    Orphaned { link: PathBuf },
-}
-
-fn virtpy_status(virtpy_path: &Path) -> EResult<VirtpyStatus> {
-    let link_location = virtpy_link_location(virtpy_path)
-        .wrap_err("failed to read location of corresponding virtpy")?;
-
-    let link_target = virtpy_link_target(&link_location);
-
-    if let Err(err) = &link_target {
-        if is_not_found(err) {
-            return Ok(VirtpyStatus::Orphaned {
-                link: link_location,
-            });
-        }
-    }
-
-    let link_target = link_target
-        .map(PathBuf::from)
-        .wrap_err("failed to read virtpy link target through backlink")?;
-
-    if !paths_match(virtpy_path.as_ref(), link_target.as_ref()).unwrap() {
-        return Ok(VirtpyStatus::Orphaned {
-            link: link_location,
-        });
-    }
-
-    Ok(VirtpyStatus::Ok {
-        matching_link: link_location,
-    })
 }
 
 fn check_poetry_available() -> EResult<()> {

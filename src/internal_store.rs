@@ -1,15 +1,16 @@
 use eyre::{ensure, eyre, WrapErr};
 use fs_err::File;
 
+use crate::venv::{virtpy_link_location, virtpy_link_target, virtpy_status, VirtpyStatus};
 use crate::{
     copy_directory, delete_virtpy_backing, hash_of_file_sha256_base64, is_not_found,
     is_path_of_executable, move_file, package_info_from_dist_info_dirname,
     print_error_missing_file_in_record,
     python_requirements::Requirement,
     python_wheel::{RecordEntry, WheelRecord},
-    records, remove_leading_parent_dirs, virtpy_link_location, virtpy_link_target, virtpy_status,
-    Distribution, DistributionHash, EResult, EntryPoint, FileHash, Options, Path, PathBuf,
-    ProjectDirs, PythonVersion, VirtpyBacking, VirtpyPaths, VirtpyStatus, INVALID_UTF8_PATH,
+    records, remove_leading_parent_dirs, Distribution, DistributionHash, EResult, EntryPoint,
+    FileHash, Options, Path, PathBuf, ProjectDirs, PythonVersion, VirtpyBacking, VirtpyPaths,
+    INVALID_UTF8_PATH,
 };
 use std::{
     collections::{HashMap, HashSet},

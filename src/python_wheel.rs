@@ -193,6 +193,28 @@ impl WheelMetadata {
     }
 }
 
+// // Related: https://www.python.org/dev/peps/pep-0625/  -- File name of a Source Distribution
+// //          Contains a link to a few other PEPs.
+// //          PEP 503 defines the concept of a normalized distribution name.
+// //          https://www.python.org/dev/peps/pep-0503/#normalized-names
+// fn normalized_distribution_name(name: &str) -> String {
+//     _escape(name, "-")
+// }
+
+// Following https://packaging.python.org/specifications/binary-distribution-format/#escaping-and-unicode
+// This is important because the wheel name components may contain "-" characters,
+// but those are separators in a wheel name.
+// We need this because the dist-info and data directory contain the normalized distrib name.
+// We may have to add version normalization, if we ever get unnormalized ones.
+pub(crate) fn normalized_distribution_name_for_wheel(distrib_name: &str) -> String {
+    _escape(distrib_name, "_")
+}
+
+fn _escape(string: &str, replace_with: &str) -> String {
+    let pattern = lazy_regex::regex!(r"[-_.]+");
+    pattern.replace_all(string, replace_with).to_lowercase()
+}
+
 #[derive(PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub(crate) struct WheelRecord {
     // stored separately just so we can easily recreate the line for the RECORD itself

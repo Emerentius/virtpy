@@ -7,14 +7,13 @@
 use crate::internal_store::{
     new_dependencies, register_new_distributions, wheel_is_already_registered, StoredDistributions,
 };
-use crate::python_wheel::{RecordEntry, WheelRecord};
+use crate::python_wheel::{normalized_distribution_name_for_wheel, RecordEntry, WheelRecord};
 use crate::{
     canonicalize, check_status, delete_virtpy_backing, dist_info_matches_package, executables_path,
     generate_executable, ignore_target_exists, install_and_register_distribution_from_file,
-    is_not_found, is_path_of_executable, normalized_distribution_name_for_wheel, paths_match,
-    print_error_missing_file_in_record, python_path, python_requirements::Requirement,
-    python_version, records, relative_path, remove_leading_parent_dirs, symlink_dir, symlink_file,
-    virtpy_link_supposed_location, virtpy_link_target, Distribution, DistributionHash, EResult,
+    is_not_found, is_path_of_executable, paths_match, print_error_missing_file_in_record,
+    python_path, python_requirements::Requirement, python_version, records, relative_path,
+    remove_leading_parent_dirs, symlink_dir, symlink_file, Distribution, DistributionHash, EResult,
     FileHash, Options, Path, PathBuf, ProjectDirs, PythonVersion, ShimInfo, StoredDistribution,
     StoredDistributionType, CENTRAL_METADATA, DIST_HASH_FILE, INVALID_UTF8_PATH, LINK_METADATA,
 };
@@ -887,6 +886,56 @@ fn add_pip_shim(virtpy: &Virtpy, shim_info: ShimInfo<'_>) -> EResult<()> {
     virtpy.set_metadata("proj_dir", shim_info.proj_dirs.data().as_str())?;
 
     Ok(())
+}
+
+pub(crate) fn virtpy_link_location(virtpy: &Path) -> std::io::Result<PathBuf> {
+    let backlink = virtpy.join(CENTRAL_METADATA).join("link_location");
+    fs_err::read_to_string(backlink).map(PathBuf::from)
+}
+
+pub(crate) fn virtpy_link_target(virtpy_link: &Path) -> std::io::Result<PathBuf> {
+    let link = virtpy_link.join(LINK_METADATA).join("central_location");
+    fs_err::read_to_string(link).map(PathBuf::from)
+}
+
+fn virtpy_link_supposed_location(virtpy_link: &Path) -> std::io::Result<PathBuf> {
+    let link = virtpy_link.join(LINK_METADATA).join("link_location");
+    fs_err::read_to_string(link).map(PathBuf::from)
+}
+
+#[derive(Debug)]
+pub(crate) enum VirtpyStatus {
+    Ok { matching_link: PathBuf },
+    Orphaned { link: PathBuf },
+}
+
+pub(crate) fn virtpy_status(virtpy_path: &Path) -> EResult<VirtpyStatus> {
+    let link_location = virtpy_link_location(virtpy_path)
+        .wrap_err("failed to read location of corresponding virtpy")?;
+
+    let link_target = virtpy_link_target(&link_location);
+
+    if let Err(err) = &link_target {
+        if is_not_found(err) {
+            return Ok(VirtpyStatus::Orphaned {
+                link: link_location,
+            });
+        }
+    }
+
+    let link_target = link_target
+        .map(PathBuf::from)
+        .wrap_err("failed to read virtpy link target through backlink")?;
+
+    if !paths_match(virtpy_path.as_ref(), link_target.as_ref()).unwrap() {
+        return Ok(VirtpyStatus::Orphaned {
+            link: link_location,
+        });
+    }
+
+    Ok(VirtpyStatus::Ok {
+        matching_link: link_location,
+    })
 }
 
 // The paths where the contents of subdirs of a wheel's data directory should be placed.
