@@ -4,21 +4,23 @@
 //! 1. The venv anywhere in the file system that a user interacts with
 //! 2. The backing venv in a central location to which (1) contains symlinks to
 
+use crate::internal_store::{
+    new_dependencies, register_new_distributions, wheel_is_already_registered, StoredDistributions,
+};
 use crate::python_wheel::{RecordEntry, WheelRecord};
 use crate::{
     canonicalize, check_status, delete_virtpy_backing, dist_info_matches_package, executables_path,
     generate_executable, ignore_target_exists, install_and_register_distribution_from_file,
-    is_not_found, is_path_of_executable, new_dependencies, normalized_distribution_name_for_wheel,
-    paths_match, print_error_missing_file_in_record, python_path, python_requirements::Requirement,
+    is_not_found, is_path_of_executable, normalized_distribution_name_for_wheel, paths_match,
+    print_error_missing_file_in_record, python_path, python_requirements::Requirement,
     python_version, records, relative_path, remove_leading_parent_dirs, symlink_dir, symlink_file,
-    virtpy_link_supposed_location, virtpy_link_target, wheel_is_already_registered, Distribution,
-    DistributionHash, EResult, FileHash, Options, Path, PathBuf, ProjectDirs, PythonVersion,
-    ShimInfo, StoredDistribution, StoredDistributionType, CENTRAL_METADATA, DIST_HASH_FILE,
-    INVALID_UTF8_PATH, LINK_METADATA,
+    virtpy_link_supposed_location, virtpy_link_target, Distribution, DistributionHash, EResult,
+    FileHash, Options, Path, PathBuf, ProjectDirs, PythonVersion, ShimInfo, StoredDistribution,
+    StoredDistributionType, CENTRAL_METADATA, DIST_HASH_FILE, INVALID_UTF8_PATH, LINK_METADATA,
 };
 use crate::{
-    check_output, ignore_target_doesnt_exist, register_new_distributions,
-    serialize_requirements_txt, EntryPoint, StoredDistributions, DEFAULT_VIRTPY_PATH,
+    check_output, ignore_target_doesnt_exist, serialize_requirements_txt, EntryPoint,
+    DEFAULT_VIRTPY_PATH,
 };
 use eyre::{eyre, Context};
 use fs_err::PathExt;
