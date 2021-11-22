@@ -15,14 +15,14 @@ use crate::python::{
     serialize_requirements_txt, Distribution, DistributionHash, EntryPoint, FileHash,
     PythonVersion,
 };
-use crate::{
-    canonicalize, check_status, delete_virtpy_backing, dist_info_matches_package, executables_path,
-    ignore_target_exists, is_not_found, paths_match, python::requirements::Requirement,
-    python_path, relative_path, remove_leading_parent_dirs, symlink_dir, symlink_file, EResult,
-    Options, Path, PathBuf, ProjectDirs, ShimInfo, StoredDistribution, StoredDistributionType,
-    CENTRAL_METADATA, DIST_HASH_FILE, INVALID_UTF8_PATH, LINK_METADATA,
-};
 use crate::{check_output, ignore_target_doesnt_exist, DEFAULT_VIRTPY_PATH};
+use crate::{
+    check_status, delete_virtpy_backing, dist_info_matches_package, executables_path,
+    ignore_target_exists, is_not_found, python::requirements::Requirement, python_path,
+    relative_path, remove_leading_parent_dirs, symlink_dir, symlink_file, EResult, Options, Path,
+    PathBuf, ProjectDirs, ShimInfo, StoredDistribution, StoredDistributionType, CENTRAL_METADATA,
+    DIST_HASH_FILE, INVALID_UTF8_PATH, LINK_METADATA,
+};
 use eyre::{eyre, Context};
 use fs_err::PathExt;
 use itertools::Itertools;
@@ -1094,6 +1094,14 @@ fn install_and_register_distribution_from_file(
     )?;
 
     Ok(())
+}
+
+fn canonicalize(path: &Path) -> EResult<PathBuf> {
+    Ok(PathBuf::try_from(path.canonicalize()?)?)
+}
+
+fn paths_match(virtpy: &StdPath, link_target: &StdPath) -> EResult<bool> {
+    Ok(virtpy.fs_err_canonicalize()? == link_target.fs_err_canonicalize()?)
 }
 
 #[cfg(test)]

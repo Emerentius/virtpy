@@ -11,8 +11,6 @@ pub(crate) mod venv;
 
 use venv::{Virtpy, VirtpyPaths};
 
-use fs_err::PathExt;
-
 #[cfg(unix)]
 pub(crate) use fs_err::os::unix::fs::symlink as symlink_dir;
 #[cfg(windows)]
@@ -571,14 +569,6 @@ pub(crate) struct ShimInfo<'a> {
     //       and move it to a different location without all venvs it created breaking.
     //       Regular venvs should try to find virtpy on the PATH.
     virtpy_exe: PathBuf,
-}
-
-fn canonicalize(path: &Path) -> EResult<PathBuf> {
-    Ok(PathBuf::try_from(path.canonicalize()?)?)
-}
-
-fn paths_match(virtpy: &StdPath, link_target: &StdPath) -> EResult<bool> {
-    Ok(virtpy.fs_err_canonicalize()? == link_target.fs_err_canonicalize()?)
 }
 
 fn check_poetry_available() -> EResult<()> {
