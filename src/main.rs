@@ -436,9 +436,7 @@ fn _generate_executable(
     use std::io::Write;
     f.write_all(bytes)?;
     Ok(RecordEntry {
-        path: relative_path(site_packages, dest)
-            .try_into()
-            .expect(INVALID_UTF8_PATH),
+        path: relative_path(site_packages, dest),
         hash: FileHash::from_reader(bytes),
         filesize: bytes.len() as u64,
     })
@@ -491,10 +489,7 @@ fn install_and_register_distribution_from_file(
         }
     };
     assert!(distrib_path.extension().unwrap() == "whl");
-    python_wheel::unpack_wheel(
-        &distrib_path,
-        tmp_dir.path().try_into().expect(INVALID_UTF8_PATH),
-    )?;
+    python_wheel::unpack_wheel(&distrib_path, tmp_dir.path())?;
 
     let distrib = Distribution {
         name: requirement.name,

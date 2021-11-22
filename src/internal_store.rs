@@ -205,7 +205,7 @@ pub(crate) fn print_stats(
     Ok(())
 }
 
-fn file_dependents<'a>(
+fn file_dependents(
     proj_dirs: &ProjectDirs,
     distribution_files: &HashMap<StoredDistribution, (Vec<RecordEntry>, u64)>,
 ) -> HashMap<FileHash, Vec<StoredDistribution>> {

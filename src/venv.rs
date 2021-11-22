@@ -188,7 +188,7 @@ impl Virtpy {
 
         let prompt = prompt
             .as_deref()
-            .or(path.file_name())
+            .or_else(|| path.file_name())
             .unwrap_or(DEFAULT_VIRTPY_PATH);
         _create_virtpy(central_path, python_path, path, prompt, with_pip_shim)
     }
@@ -445,9 +445,17 @@ impl Virtpy {
 /// of the other. Either one could be deleted without the other one
 /// and the link could also be moved
 pub(crate) enum VirtpyLinkStatus {
-    Ok { matching_virtpy: PathBuf },
-    WrongLocation { should: PathBuf, actual: PathBuf },
-    Dangling { target: PathBuf },
+    Ok {
+        matching_virtpy: PathBuf,
+    },
+    WrongLocation {
+        should: PathBuf,
+        #[allow(unused)]
+        actual: PathBuf,
+    },
+    Dangling {
+        target: PathBuf,
+    },
 }
 
 fn virtpy_link_status(virtpy_link_path: &Path) -> EResult<VirtpyLinkStatus> {
@@ -462,9 +470,7 @@ fn virtpy_link_status(virtpy_link_path: &Path) -> EResult<VirtpyLinkStatus> {
 
     let target = virtpy_link_target(virtpy_link_path).wrap_err("failed to find virtpy backing")?;
     if !target.exists() {
-        return Ok(VirtpyLinkStatus::Dangling {
-            target,
-        });
+        return Ok(VirtpyLinkStatus::Dangling { target });
     }
 
     Ok(VirtpyLinkStatus::Ok {
@@ -707,10 +713,7 @@ fn link_files_from_record_into_virtpy_new(
                 let dest = base_path.join(subpath);
                 ensure_dir_exists(&dest);
                 let is_executable = subdir == "scripts";
-                record.path = relative_path(site_packages, &dest)
-                    .try_into()
-                    .expect(INVALID_UTF8_PATH);
-
+                record.path = relative_path(site_packages, &dest);
                 if !is_executable {
                     link_file_into_virtpy(proj_dirs, record, dest, distribution);
                 } else {
