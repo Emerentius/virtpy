@@ -100,7 +100,7 @@ def uninstall_package() -> None:
     assert virtpy is not None
 
     subprocess.run(
-        [*virtpy_cmd(virtpy), "internal-use-only", "remove", virtpy, package_name],
+        [*virtpy_cmd(virtpy), "remove", "--virtpy-path", virtpy, package_name],
         check=True,
     )
 
