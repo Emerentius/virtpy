@@ -125,6 +125,8 @@ enum PathCmd {
     Bin,
     /// Alias for `bin`
     Executables,
+    /// Directory where virtpy stores all its data
+    Storage,
 }
 
 const DEFAULT_VIRTPY_PATH: &str = ".venv";
@@ -427,6 +429,9 @@ fn main() -> EResult<()> {
         }
         Command::Path(PathCmd::Bin) | Command::Path(PathCmd::Executables) => {
             println!("{}", proj_dirs.executables());
+        }
+        Command::Path(PathCmd::Storage) => {
+            println!("{}", proj_dirs.data());
         }
         Command::InternalStore(InternalStoreCmd::Stats {
             bytes,
