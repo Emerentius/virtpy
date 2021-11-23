@@ -13,7 +13,7 @@ import os.path
 import itertools
 import time
 import subprocess
-from typing import List, Optional
+from typing import List, Optional, Union
 
 
 def virtpy_path() -> Optional[pathlib.Path]:
@@ -169,7 +169,7 @@ def uninstall_package() -> None:
     )
 
 
-def virtpy_cmd(venv_path: str) -> List[str]:
+def virtpy_cmd(venv_path: Union[str, pathlib.Path]) -> List[str]:
     metadata = os.path.join(venv_path, "virtpy_link_metadata")
     virtpy_exe = open(os.path.join(metadata, "virtpy_exe")).read()
     proj_dir = open(os.path.join(metadata, "proj_dir")).read()
