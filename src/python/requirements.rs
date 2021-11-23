@@ -152,11 +152,27 @@ impl Requirement {
 
     pub(crate) fn from_filename(filename: &str, hash: DistributionHash) -> EResult<Self> {
         // TODO: use a better parser
-        let (_, name, version, _) =
-            lazy_regex::regex_captures!(r"^([^-]+)-([^-]+)(\.tar\.gz|-.*\.whl)", filename).unwrap();
+        let (_, name, version) =
+            lazy_regex::regex_captures!(r"^([^-]+)-([^-]+)-.*\.whl$", filename)
+                .or_else(|| {
+                    // {distribution}-{version}.tar.gz
+                    // The distribution name may contain hyphens itself (unlike for wheels, where they are normalized).
+                    lazy_regex::regex_captures!(r"^(.+?)-([^-]+)\.tar\.gz$", filename)
+                })
+                .ok_or_else(|| eyre::eyre!("can't match {}", filename))?;
+
+        // TODO: find out if Requirement.name is expected to be normalized everywhere
+        // TODO: introduce special type for each expected normalization
+        //
+        // I've tried installing from tar.gz files with and without
+        // normalization and both ways work. We do convert it to
+        // a wheel first anyway, so it may not matter.
+        // I suspect normalization is the safer default precisely
+        // because we're converting to a wheel.
+        let name = super::wheel::normalized_distribution_name_for_wheel(name);
 
         Ok(Requirement {
-            name: name.to_owned(),
+            name,
             version: version.to_owned(),
             marker: None,
             available_hashes: vec![hash],
@@ -280,10 +296,15 @@ mod test {
             ("typing_extensions-3.7.4.2-py3-none-any.whl", ("typing_extensions", "3.7.4.2")),
             ("wcwidth-0.2.5-py2.py3-none-any.whl", ("wcwidth", "0.2.5")),
             ("wrapt-1.12.1.tar.gz", ("wrapt", "1.12.1")),
+
+            // Note: This one has a hyphen in its distribution name.
+            // Not possible for wheels.
+            ("patch-ng-1.17.4.tar.gz", ("patch_ng", "1.17.4")),
         ];
 
         for &(filename, (distrib_name, version)) in filenames_and_output.iter() {
-            let req = Requirement::from_filename(filename, DistributionHash("".into())).unwrap();
+            let req = Requirement::from_filename(filename, DistributionHash("".into()))
+                .expect(&format!("{}", filename));
             assert_eq!(req.name, distrib_name);
             assert_eq!(req.version, version);
         }
