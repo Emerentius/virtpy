@@ -65,7 +65,11 @@ def main() -> None:
         record_time(lambda: install_package_from_file(sys.argv[-1]))
     elif sys.argv[1] == "uninstall" and sys.argv[3] == "-y" and len(sys.argv) == 4:
         record_time(uninstall_package)
-    elif sys.argv[1:4] == ["install", "--no-deps", "-U"] and len(sys.argv) == 5:
+    elif (
+        sys.argv[1:4] == ["install", "--no-deps", "-U"]
+        and len(sys.argv) == 5
+        and os.path.isdir(sys.argv[4])
+    ):
         record_time(lambda: install_package_from_folder(sys.argv[-1]))
     elif sys.argv[1:] == ["--version"]:
         # poetry runs this version check before running the install command above.
