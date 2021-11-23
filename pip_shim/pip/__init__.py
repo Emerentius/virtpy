@@ -62,18 +62,77 @@ def record_time(operation) -> None:
 #       It can currently only be called via `pip $ARGS...`
 def main() -> None:
     if sys.argv[1:3] == ["install", "--no-deps"] and len(sys.argv) == 4:
-        record_time(lambda: install_package())
+        record_time(lambda: install_package_from_file(sys.argv[-1]))
+    elif sys.argv[1] == "uninstall" and sys.argv[3] == "-y" and len(sys.argv) == 4:
+        record_time(uninstall_package)
+    elif sys.argv[1:4] == ["install", "--no-deps", "-U"] and len(sys.argv) == 5:
+        record_time(lambda: install_package_from_folder(sys.argv[-1]))
+    elif sys.argv[1:] == ["--version"]:
+        # poetry runs this version check before running the install command above.
+        # I have no idea what it is looking for, but it continues even if we
+        # print nothing.
+        pass
+    else:
+        # noop = lambda: None
 
-    if sys.argv[1] == "uninstall" and sys.argv[3] == "-y" and len(sys.argv) == 4:
-        record_time(lambda: uninstall_package())
+        def fail() -> None:
+            raise Exception("unknown command")
+
+        # Log the command, but don't do anything
+        record_time(fail)
+        # record_time(noop)
 
 
-def install_package() -> None:
-    package_path = sys.argv[3]
+def install_package_from_file(package_path: str) -> None:
     prefix = "file:///" if os.name == "nt" else "file://"
     if package_path.startswith(prefix):
         package_path = package_path[len(prefix) :]
 
+    _install_package(package_path)
+
+
+def install_package_from_folder(package_path: str) -> None:
+    import tempfile
+    import glob
+
+    package_name = os.path.basename(package_path) or os.path.basename(
+        os.path.dirname(package_path)
+    )
+    virtpy = virtpy_path()
+    assert virtpy is not None
+
+    global_python = subprocess.run(
+        [*virtpy_cmd(virtpy), "internal-use-only", "global-python", virtpy],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.rstrip("\n")
+
+    with tempfile.TemporaryDirectory() as directory:
+        # TODO: make sure this is the global python
+        subprocess.run(
+            [
+                global_python,
+                "-m",
+                "pip",
+                "wheel",
+                "--no-deps",
+                "--wheel-dir",
+                directory,
+                ".venv/src/pendulum/",
+            ],
+            check=True,
+        )
+        pattern = os.path.join(directory, f"{package_name}-*.whl")
+        print(pattern)
+        print(type(directory))
+        print(os.listdir(directory))
+        output_files = glob.glob(pattern)
+        assert len(output_files) == 1, f"{output_files=}"
+        _install_package(output_files[0])
+
+
+def _install_package(package_path: str) -> None:
     if not os.path.abspath(package_path):
         return
 

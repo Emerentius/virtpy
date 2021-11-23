@@ -116,6 +116,7 @@ enum InternalStoreCmd {
 #[derive(StructOpt)]
 enum InternalUseOnly {
     AddFromFile { virtpy: PathBuf, file: PathBuf },
+    GlobalPython { virtpy: PathBuf },
 }
 
 #[derive(StructOpt)]
@@ -439,6 +440,9 @@ fn main() -> EResult<()> {
         }
         Command::InternalUseOnly(InternalUseOnly::AddFromFile { virtpy, file }) => {
             Virtpy::from_existing(&virtpy)?.add_dependency_from_file(&proj_dirs, &file, options)?;
+        }
+        Command::InternalUseOnly(InternalUseOnly::GlobalPython { virtpy }) => {
+            println!("{}", Virtpy::from_existing(&virtpy)?.global_python()?);
         }
     }
 

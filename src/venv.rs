@@ -386,7 +386,7 @@ impl Virtpy {
 
     // Returns the path of the python installation on which this
     // this virtpy builds
-    fn global_python(&self) -> EResult<PathBuf> {
+    pub(crate) fn global_python(&self) -> EResult<PathBuf> {
         #[cfg(unix)]
         {
             let python = self.python();
