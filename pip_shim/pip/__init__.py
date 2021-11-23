@@ -41,7 +41,7 @@ def record_time(operation) -> None:
     def _record_time(time_taken: float, success: bool):
         args = " ".join(sys.argv[1:])
         status = "✅" if success else "❌"
-        with open(log_file, "a") as f:
+        with open(log_file, "a", encoding="utf8") as f:
             print(f"{status} {time_taken:4.3}: {args}", file=f)
 
     start = time.time()
