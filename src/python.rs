@@ -399,7 +399,14 @@ fn _convert_to_wheel(
 
     check_status(
         std::process::Command::new(python)
-            .args(&["-m", "pip", "wheel", "--no-cache-dir", "--wheel-dir"])
+            .args(&[
+                "-m",
+                "pip",
+                "wheel",
+                "--no-cache-dir",
+                "--no-deps",
+                "--wheel-dir",
+            ])
             .arg(output_dir.path())
             .arg(distrib_path),
     )?;
