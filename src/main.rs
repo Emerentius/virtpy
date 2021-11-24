@@ -51,11 +51,11 @@ enum Command {
     },
     /// Add dependency to virtpy
     // TODO: adopt behavior of internal-use-only add-from-file
-    Add {
-        requirements: PathBuf,
-        #[structopt(long)]
-        virtpy_path: Option<PathBuf>,
-    },
+    // Add {
+    //     requirements: PathBuf,
+    //     #[structopt(long)]
+    //     virtpy_path: Option<PathBuf>,
+    // },
     /// Remove dependency from virtpy
     Remove {
         distributions: Vec<String>,
@@ -185,7 +185,7 @@ impl ProjectDirs {
 
     fn from_existing_path(data_dir: PathBuf) -> EResult<Self> {
         let proj_dirs = Self::from_path(data_dir.clone());
-        for necessary_subdir in proj_dirs._paths() {
+        for necessary_subdir in proj_dirs._required_paths() {
             if !data_dir.join(&necessary_subdir).exists() {
                 bail!("missing directory {}", necessary_subdir);
             }
@@ -195,16 +195,15 @@ impl ProjectDirs {
 
     fn create_dirs(&self) -> std::io::Result<()> {
         fs_err::create_dir_all(self.data())?;
-        for path in self._paths() {
+        for path in self._required_paths() {
             fs_err::create_dir(path).or_else(ignore_target_exists)?;
         }
         Ok(())
     }
 
-    fn _paths(&self) -> impl IntoIterator<Item = PathBuf> {
+    fn _required_paths(&self) -> impl IntoIterator<Item = PathBuf> {
         [
             self.installations(),
-            self.dist_infos(),
             self.package_files(),
             self.executables(),
             self.virtpys(),
@@ -346,27 +345,27 @@ fn main() -> EResult<()> {
     };
 
     match opt.cmd {
-        Command::Add {
-            requirements,
-            virtpy_path,
-        } => {
-            fn add_requirements(
-                proj_dirs: &ProjectDirs,
-                virtpy_path: Option<PathBuf>,
-                options: Options,
-                requirements: PathBuf,
-            ) -> EResult<()> {
-                let virtpy = Virtpy::from_existing(path_to_virtpy(&virtpy_path))?;
-                let requirements = fs_err::read_to_string(requirements)?;
-                let requirements = python::requirements::read_requirements_txt(&requirements);
+        // Command::Add {
+        //     requirements,
+        //     virtpy_path,
+        // } => {
+        //     fn add_requirements(
+        //         proj_dirs: &ProjectDirs,
+        //         virtpy_path: Option<PathBuf>,
+        //         options: Options,
+        //         requirements: PathBuf,
+        //     ) -> EResult<()> {
+        //         let virtpy = Virtpy::from_existing(path_to_virtpy(&virtpy_path))?;
+        //         let requirements = fs_err::read_to_string(requirements)?;
+        //         let requirements = python::requirements::read_requirements_txt(&requirements);
 
-                virtpy.add_dependencies(proj_dirs, requirements, options)?;
-                Ok(())
-            }
+        //         virtpy.add_dependencies(proj_dirs, requirements, options)?;
+        //         Ok(())
+        //     }
 
-            add_requirements(&proj_dirs, virtpy_path, options, requirements)
-                .wrap_err("failed to add requirements")?;
-        }
+        //     add_requirements(&proj_dirs, virtpy_path, options, requirements)
+        //         .wrap_err("failed to add requirements")?;
+        // }
         Command::Remove {
             distributions,
             virtpy_path,
