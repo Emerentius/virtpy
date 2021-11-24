@@ -7,13 +7,13 @@
 use crate::internal_store::{
     new_dependencies, register_new_distributions, wheel_is_already_registered, StoredDistributions,
 };
+use crate::python::requirements::serialize_requirements_txt;
 use crate::python::wheel::{
     is_path_of_executable, normalized_distribution_name_for_wheel, RecordEntry, WheelRecord,
 };
 use crate::python::{
-    generate_executable, print_error_missing_file_in_record, python_version, records,
-    serialize_requirements_txt, Distribution, DistributionHash, EntryPoint, FileHash,
-    PythonVersion,
+    generate_executable, print_error_missing_file_in_record, python_version, records, Distribution,
+    DistributionHash, EntryPoint, FileHash, PythonVersion,
 };
 use crate::{check_output, ignore_target_doesnt_exist, DEFAULT_VIRTPY_PATH};
 use crate::{

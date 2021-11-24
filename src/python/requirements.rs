@@ -1,6 +1,7 @@
 use super::DistributionHash;
 use crate::EResult;
 use pest::Parser;
+use std::fmt::Write;
 
 #[derive(pest_derive::Parser)]
 #[grammar = "requirements_txt.pest"] // relative to src
@@ -66,6 +67,23 @@ fn sys_platform() -> String {
     }
 }
 
+pub(crate) fn serialize_requirements_txt(reqs: &[Requirement]) -> String {
+    let mut output = String::new();
+    for req in reqs {
+        let _ = write!(&mut output, "{}=={}", req.name, req.version);
+        if let Some(marker) = req.marker.as_ref() {
+            let _ = write!(&mut output, "; {}", marker);
+        }
+        let _ = writeln!(&mut output, " \\");
+        let hashes = req
+            .available_hashes
+            .iter()
+            .map(|hash| format!("    --hash={}", hash.0.replace("=", ":")))
+            .collect::<Vec<_>>();
+        let _ = writeln!(&mut output, "{}", hashes.join(" \\\n"));
+    }
+    output
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SystemCondition {
     // "must equal" or "must not equal"
