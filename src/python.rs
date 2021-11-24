@@ -6,7 +6,6 @@ use eyre::Context;
 use self::wheel::RecordEntry;
 
 pub(crate) mod detection;
-pub(crate) mod requirements;
 pub(crate) mod wheel;
 
 // probably missing prereleases and such
@@ -289,6 +288,34 @@ impl Distribution {
     pub(crate) fn data_dir_name(&self) -> String {
         format!("{}-{}.data", self.name, self.version)
     }
+
+    pub(crate) fn from_package_name(filename: &str, hash: DistributionHash) -> EResult<Self> {
+        // TODO: use a better parser
+        let (_, name, version) =
+            lazy_regex::regex_captures!(r"^([^-]+)-([^-]+)-.*\.whl$", filename)
+                .or_else(|| {
+                    // {distribution}-{version}.tar.gz
+                    // The distribution name may contain hyphens itself (unlike for wheels, where they are normalized).
+                    lazy_regex::regex_captures!(r"^(.+?)-([^-]+)\.tar\.gz$", filename)
+                })
+                .ok_or_else(|| eyre::eyre!("can't match {}", filename))?;
+
+        // TODO: find out if distribution.name is expected to be normalized everywhere
+        // TODO: introduce special type for each expected normalization
+        //
+        // I've tried installing from tar.gz files with and without
+        // normalization and both ways work. We do convert it to
+        // a wheel first anyway, so it may not matter.
+        // I suspect normalization is the safer default precisely
+        // because we're converting to a wheel.
+        let name = wheel::normalized_distribution_name_for_wheel(name);
+
+        Ok(Self {
+            name,
+            version: version.to_owned(),
+            sha: hash,
+        })
+    }
 }
 
 pub(crate) fn print_error_missing_file_in_record(distribution: &Distribution, missing_file: &Path) {
@@ -443,5 +470,65 @@ mod test {
                 },
             ]
         )
+    }
+
+    #[test]
+    fn test_parse_wheel_name_into_requirement() {
+        #[rustfmt::skip]
+        let filenames_and_output = [
+            ("astroid-2.4.2-py3-none-any.whl", ("astroid", "2.4.2")),
+            ("async_generator-1.10-py3-none-any.whl", ("async_generator", "1.10")),
+            ("attrs-19.3.0-py2.py3-none-any.whl", ("attrs", "19.3.0")),
+            ("click-7.1.2-py2.py3-none-any.whl", ("click", "7.1.2")),
+            ("idna-3.1-py3-none-any.whl", ("idna", "3.1")),
+            ("isort-4.3.21-py2.py3-none-any.whl", ("isort", "4.3.21")),
+            ("lazy_object_proxy-1.4.3-cp38-cp38-manylinux1_x86_64.whl", ("lazy_object_proxy", "1.4.3")),
+            ("mccabe-0.6.1-py2.py3-none-any.whl", ("mccabe", "0.6.1")),
+            ("more_itertools-8.4.0-py3-none-any.whl", ("more_itertools", "8.4.0")),
+            ("mypy-0.782-cp38-cp38-manylinux1_x86_64.whl", ("mypy", "0.782")),
+            ("mypy_extensions-0.4.3-py2.py3-none-any.whl", ("mypy_extensions", "0.4.3")),
+            ("outcome-1.1.0-py2.py3-none-any.whl", ("outcome", "1.1.0")),
+            ("packaging-20.4-py2.py3-none-any.whl", ("packaging", "20.4")),
+            ("pluggy-0.13.1-py2.py3-none-any.whl", ("pluggy", "0.13.1")),
+            ("py-1.8.2-py2.py3-none-any.whl", ("py", "1.8.2")),
+            ("pylint-2.5.3-py3-none-any.whl", ("pylint", "2.5.3")),
+            ("pyparsing-2.4.7-py2.py3-none-any.whl", ("pyparsing", "2.4.7")),
+            ("pytest-5.4.3-py3-none-any.whl", ("pytest", "5.4.3")),
+            ("six-1.15.0-py2.py3-none-any.whl", ("six", "1.15.0")),
+            ("sniffio-1.2.0-py3-none-any.whl", ("sniffio", "1.2.0")),
+            ("sortedcontainers-2.4.0-py2.py3-none-any.whl", ("sortedcontainers", "2.4.0")),
+            ("toml-0.10.1-py2.py3-none-any.whl", ("toml", "0.10.1")),
+            ("trio-0.18.0-py3-none-any.whl", ("trio", "0.18.0")),
+            ("typed_ast-1.4.1-cp38-cp38-manylinux1_x86_64.whl", ("typed_ast", "1.4.1")),
+            ("typing_extensions-3.7.4.2-py3-none-any.whl", ("typing_extensions", "3.7.4.2")),
+            ("wcwidth-0.2.5-py2.py3-none-any.whl", ("wcwidth", "0.2.5")),
+            ("wrapt-1.12.1.tar.gz", ("wrapt", "1.12.1")),
+
+            // Note: This one has a hyphen in its distribution name.
+            // Not possible for wheels.
+            ("patch-ng-1.17.4.tar.gz", ("patch_ng", "1.17.4")),
+        ];
+
+        for &(filename, (distrib_name, version)) in filenames_and_output.iter() {
+            let req = Distribution::from_package_name(filename, DistributionHash("".into()))
+                .expect(&format!("{}", filename));
+            assert_eq!(req.name, distrib_name);
+            assert_eq!(req.version, version);
+        }
+    }
+
+    #[test]
+    fn read_prerelease_version_correctly() -> EResult<()> {
+        let hash = DistributionHash("sha256=foobar".to_string());
+        let req = Distribution::from_package_name("black-21.7b0-py3-none-any.whl", hash.clone())?;
+        assert_eq!(
+            req,
+            Distribution {
+                name: "black".to_string(),
+                version: "21.7b0".to_string(),
+                sha: hash,
+            }
+        );
+        Ok(())
     }
 }

@@ -4,10 +4,7 @@
 //! 1. The venv anywhere in the file system that a user interacts with
 //! 2. The backing venv in a central location to which (1) contains symlinks to
 
-use crate::internal_store::{
-    new_dependencies, register_new_distributions, wheel_is_already_registered, StoredDistributions,
-};
-use crate::python::requirements::serialize_requirements_txt;
+use crate::internal_store::{wheel_is_already_registered, StoredDistributions};
 use crate::python::wheel::{
     is_path_of_executable, normalized_distribution_name_for_wheel, RecordEntry, WheelRecord,
 };
@@ -18,10 +15,10 @@ use crate::python::{
 use crate::{check_output, ignore_target_doesnt_exist, DEFAULT_VIRTPY_PATH};
 use crate::{
     check_status, delete_virtpy_backing, dist_info_matches_package, executables_path,
-    ignore_target_exists, is_not_found, python::requirements::Requirement, python_path,
-    relative_path, remove_leading_parent_dirs, symlink_dir, symlink_file, EResult, Options, Path,
-    PathBuf, ProjectDirs, ShimInfo, StoredDistribution, StoredDistributionType, CENTRAL_METADATA,
-    DIST_HASH_FILE, INVALID_UTF8_PATH, LINK_METADATA,
+    ignore_target_exists, is_not_found, python_path, relative_path, remove_leading_parent_dirs,
+    symlink_dir, symlink_file, EResult, Options, Path, PathBuf, ProjectDirs, ShimInfo,
+    StoredDistribution, StoredDistributionType, CENTRAL_METADATA, DIST_HASH_FILE,
+    INVALID_UTF8_PATH, LINK_METADATA,
 };
 use eyre::{eyre, Context};
 use fs_err::PathExt;
@@ -217,29 +214,6 @@ impl Virtpy {
         })
     }
 
-    pub(crate) fn add_dependencies(
-        &self,
-        proj_dirs: &ProjectDirs,
-        requirements: Vec<Requirement>,
-        options: Options,
-    ) -> EResult<()> {
-        let new_deps = new_dependencies(&requirements, proj_dirs, self.python_version)?;
-
-        // The virtpy doesn't contain pip so get the appropriate global python
-        let python_path = self.global_python()?;
-
-        install_and_register_distributions(
-            &python_path,
-            proj_dirs,
-            &new_deps,
-            self.python_version,
-            options,
-        )?;
-
-        link_requirements_into_virtpy(proj_dirs, self, requirements, options)
-            .wrap_err("failed to add packages to virtpy")
-    }
-
     pub(crate) fn add_dependency_from_file(
         &self,
         proj_dirs: &ProjectDirs,
@@ -247,20 +221,20 @@ impl Virtpy {
         options: Options,
     ) -> EResult<()> {
         let file_hash = DistributionHash::from_file(file);
-        let requirement =
-            Requirement::from_filename(file.file_name().unwrap(), file_hash.clone()).unwrap();
+        let distribution =
+            Distribution::from_package_name(file.file_name().unwrap(), file_hash.clone()).unwrap();
 
         if !wheel_is_already_registered(file_hash, proj_dirs, self.python_version)? {
             install_and_register_distribution_from_file(
                 proj_dirs,
                 file,
-                requirement.clone(),
+                distribution.clone(),
                 self.python_version,
                 options,
             )?;
         }
 
-        link_requirements_into_virtpy(proj_dirs, self, vec![requirement], options)
+        link_distributions_into_virtpy(proj_dirs, self, vec![distribution], options)
             .wrap_err("failed to add packages to virtpy")
     }
 
@@ -479,10 +453,10 @@ fn virtpy_link_status(virtpy_link_path: &Path) -> EResult<VirtpyStatus> {
     })
 }
 
-fn link_requirements_into_virtpy(
+fn link_distributions_into_virtpy(
     proj_dirs: &ProjectDirs,
     virtpy: &Virtpy,
-    mut requirements: Vec<Requirement>,
+    distributions: Vec<Distribution>,
     options: Options,
 ) -> EResult<()> {
     // Link files into the backing virtpy so that when new top-level directories are
@@ -490,26 +464,15 @@ fn link_requirements_into_virtpy(
     // Symlinks for the new dirs are generated after all the files have been liked in.
     let site_packages = virtpy.virtpy_backing().site_packages();
 
-    requirements.retain(|req| {
-        req.marker
-            .as_ref()
-            .map_or(true, |cond| cond.matches_system())
-    });
-    let requirements = requirements;
-
     let stored_distributions = StoredDistributions::load(proj_dirs)?;
     let existing_deps = stored_distributions
         .0
         .get(&virtpy.python_version.as_string_without_patch())
         .cloned()
         .unwrap_or_default();
-    for distribution in requirements {
+    for distribution in distributions {
         // find compatible hash
-        let stored_distrib = match distribution
-            .available_hashes
-            .iter()
-            .find_map(|hash| existing_deps.get(hash))
-        {
+        let stored_distrib = match existing_deps.get(&distribution.sha) {
             Some(stored_distrib) => stored_distrib,
             None => {
                 // return Err(format!(
@@ -518,15 +481,11 @@ fn link_requirements_into_virtpy(
                 // )
                 // .into());
                 println!(
-                    "failed to find dist_info for distribution: {} {} {}",
-                    distribution.name,
-                    distribution.version,
-                    distribution
-                        .marker
-                        .map_or(String::new(), |m| format!(", {}", m))
+                    "failed to find dist_info for distribution: {} {}",
+                    distribution.name, distribution.version
                 );
                 if options.verbose >= 2 {
-                    println!("available_hashes: {:#?}", distribution.available_hashes);
+                    println!("hash: {:#?}", distribution.sha);
                 }
                 continue;
             }
@@ -983,86 +942,10 @@ print(json.dumps(paths))"#,
     }
 }
 
-fn install_and_register_distributions(
-    python_path: &Path,
-    proj_dirs: &ProjectDirs,
-    distribs: &[Requirement],
-    python_version: PythonVersion,
-    options: Options,
-) -> EResult<()> {
-    if options.verbose >= 1 {
-        println!("Adding {} new distributions", distribs.len());
-    }
-    if distribs.is_empty() {
-        return Ok(());
-    }
-
-    let tmp_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), "virtpy")?;
-    let tmp_requirements = tmp_dir.as_ref().join("__tmp_requirements.txt");
-    let reqs = serialize_requirements_txt(distribs);
-    fs_err::write(&tmp_requirements, reqs)?;
-    let output = std::process::Command::new(python_path)
-        .args(&["-m", "pip", "install", "--no-deps", "--no-compile", "-r"])
-        .arg(&tmp_requirements)
-        .arg("-t")
-        .arg(tmp_dir.as_ref())
-        .arg("-v")
-        .output()?;
-    if !output.status.success() {
-        panic!(
-            "pip error:\n{}",
-            std::str::from_utf8(&output.stderr).unwrap()
-        );
-    }
-
-    let pip_log = String::from_utf8(output.stdout)?;
-
-    let new_distribs = newly_installed_distributions(&pip_log);
-    register_new_distributions(
-        options,
-        new_distribs,
-        distribs.len(),
-        proj_dirs,
-        pip_log,
-        python_version,
-        tmp_dir,
-    )?;
-
-    Ok(())
-}
-
-fn newly_installed_distributions(pip_log: &str) -> Vec<Distribution> {
-    let mut installed_distribs = Vec::new();
-
-    let install_url_pattern = lazy_regex::regex!(
-        r"Added ([\w_-]+)==(.*) from (https://[^\s]+)/([\w_]+)-[\w_\-\.]+#(sha256=[0-9a-fA-F]{64})"
-    );
-
-    for line in pip_log.lines() {
-        if let Some(install_captures) = install_url_pattern.captures(line) {
-            let get = |idx| install_captures.get(idx).unwrap().as_str().to_owned();
-            // false name, may not have right case
-            //let name = get(1);
-            let version = get(2);
-            //let url = get(3);
-            let name = get(4);
-            let sha = DistributionHash(get(5));
-
-            //installed_distribs.push((url, distribution, version));
-            installed_distribs.push(Distribution { version, sha, name })
-        } else if line.contains("Added ") {
-            // The regex should have matched.
-            panic!("2: {}", line);
-        }
-    }
-
-    installed_distribs
-}
-
 fn install_and_register_distribution_from_file(
     proj_dirs: &ProjectDirs,
     distrib_path: &Path,
-    requirement: Requirement,
+    distribution: Distribution,
     python_version: crate::python::PythonVersion,
     options: Options,
 ) -> EResult<()> {
@@ -1088,15 +971,9 @@ fn install_and_register_distribution_from_file(
     assert!(distrib_path.extension().unwrap() == "whl");
     crate::python::wheel::unpack_wheel(&distrib_path, tmp_dir.path())?;
 
-    let distrib = crate::python::Distribution {
-        name: requirement.name,
-        version: requirement.version,
-        sha: requirement.available_hashes.into_iter().next().unwrap(),
-    };
-
     crate::internal_store::register_new_distribution(
         options,
-        distrib,
+        distribution,
         proj_dirs,
         python_version,
         tmp_dir,
@@ -1138,80 +1015,5 @@ mod test {
         let missing = required_keys.difference(&existent_keys).collect::<Vec<_>>();
         assert!(missing.is_empty(), "missing keys: {:?}", missing);
         Ok(())
-    }
-
-    #[test]
-    fn test_pip_log_parsing() {
-        let text = include_str!("../test_files/pip.log");
-        let distribs = newly_installed_distributions(text);
-        assert_eq!(
-            distribs,
-            &[
-                Distribution {
-                    name: "astroid".into(),
-                    version: "2.4.2".into(),
-                    sha: DistributionHash(
-                        "sha256=bc58d83eb610252fd8de6363e39d4f1d0619c894b0ed24603b881c02e64c7386"
-                            .into()
-                    )
-                },
-                Distribution {
-                    name: "isort".into(),
-                    version: "4.3.21".into(),
-                    sha: DistributionHash(
-                        "sha256=6e811fcb295968434526407adb8796944f1988c5b65e8139058f2014cbe100fd"
-                            .into()
-                    )
-                },
-                Distribution {
-                    name: "lazy_object_proxy".into(),
-                    version: "1.4.3".into(),
-                    sha: DistributionHash(
-                        "sha256=a6ae12d08c0bf9909ce12385803a543bfe99b95fe01e752536a60af2b7797c62"
-                            .into()
-                    )
-                },
-                Distribution {
-                    name: "mccabe".into(),
-                    version: "0.6.1".into(),
-                    sha: DistributionHash(
-                        "sha256=ab8a6258860da4b6677da4bd2fe5dc2c659cff31b3ee4f7f5d64e79735b80d42"
-                            .into()
-                    )
-                },
-                Distribution {
-                    name: "pylint".into(),
-                    version: "2.5.3".into(),
-                    sha: DistributionHash(
-                        "sha256=d0ece7d223fe422088b0e8f13fa0a1e8eb745ebffcb8ed53d3e95394b6101a1c"
-                            .into()
-                    )
-                },
-                Distribution {
-                    name: "six".into(),
-                    version: "1.15.0".into(),
-                    sha: DistributionHash(
-                        "sha256=8b74bedcbbbaca38ff6d7491d76f2b06b3592611af620f8426e82dddb04a5ced"
-                            .into()
-                    )
-                },
-                Distribution {
-                    name: "toml".into(),
-                    version: "0.10.1".into(),
-                    sha: DistributionHash(
-                        "sha256=bda89d5935c2eac546d648028b9901107a595863cb36bae0c73ac804a9b4ce88"
-                            .into()
-                    )
-                },
-                Distribution {
-                    name: "wrapt".into(),
-                    version: "1.12.1".into(),
-                    sha: DistributionHash(
-                        "sha256=b62ffa81fb85f4332a4f609cab4ac40709470da05643a082ec1eb88e6d9b97d7"
-                            .into()
-                    )
-                }
-            ]
-        );
     }
 }
