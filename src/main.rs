@@ -719,6 +719,7 @@ mod test {
             ("mypy", false),
             ("youtube-dl", false),
             ("vulture", false),
+            ("conan", false),
         ];
 
         // The pip shim calls back to virtpy and for that we need a compiled binary.
