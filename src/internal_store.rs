@@ -184,7 +184,7 @@ pub(crate) fn print_stats(
 
     println!(
         "total space saved: {}",
-        readable_size(total_size_with_duplicates - total_size)
+        readable_size(total_size_with_duplicates.saturating_sub(total_size))
     );
 
     if options.verbose >= 1 {
