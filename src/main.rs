@@ -185,7 +185,7 @@ impl ProjectDirs {
 
     fn from_existing_path(data_dir: PathBuf) -> EResult<Self> {
         let proj_dirs = Self::from_path(data_dir.clone());
-        for necessary_subdir in proj_dirs._paths() {
+        for necessary_subdir in proj_dirs._required_paths() {
             if !data_dir.join(&necessary_subdir).exists() {
                 bail!("missing directory {}", necessary_subdir);
             }
@@ -195,16 +195,15 @@ impl ProjectDirs {
 
     fn create_dirs(&self) -> std::io::Result<()> {
         fs_err::create_dir_all(self.data())?;
-        for path in self._paths() {
+        for path in self._required_paths() {
             fs_err::create_dir(path).or_else(ignore_target_exists)?;
         }
         Ok(())
     }
 
-    fn _paths(&self) -> impl IntoIterator<Item = PathBuf> {
+    fn _required_paths(&self) -> impl IntoIterator<Item = PathBuf> {
         [
             self.installations(),
-            self.dist_infos(),
             self.package_files(),
             self.executables(),
             self.virtpys(),
