@@ -1070,9 +1070,18 @@ fn install_and_register_distribution_from_file(
     let (distrib_path, _wheel_tmp_dir) = match distrib_path.extension().unwrap() {
         "whl" => (distrib_path.to_owned(), None),
         _ => {
+            if options.verbose >= 2 {
+                println!("converting to wheel: {}", distrib_path);
+            }
+
             let python = crate::python::detection::detect_from_version(python_version)?;
             let (wheel_path, tmp_dir) =
                 crate::python::convert_to_wheel(&python, proj_dirs, distrib_path)?;
+
+            if options.verbose >= 2 {
+                println!("wheel file placed at {}", wheel_path);
+            }
+
             (wheel_path, Some(tmp_dir))
         }
     };

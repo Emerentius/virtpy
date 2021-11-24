@@ -50,6 +50,7 @@ enum Command {
         without_pip_shim: bool,
     },
     /// Add dependency to virtpy
+    // TODO: adopt behavior of internal-use-only add-from-file
     Add {
         requirements: PathBuf,
         #[structopt(long)]
