@@ -1,12 +1,12 @@
 # Several tools expect that they can interact with a venv through pip.
-# This module can be installed into a virtpy via `virtpy new --with-pip-shim`
-# instead of pip and will translate and forward commands to virtpy.
+# This module is installed by default into all virtpys and will translate and forward commands to virtpy.
 #
 # This allows transparent usage of virtpy by tools that are not aware of it
-# (which is just like every single one of them)
+# (which is just, like, every single one of them)
 #
-# EXTREMELY incomplete and brittle.
+# EXTREMELY incomplete
 
+import argparse
 import sys
 import pathlib
 import os.path
@@ -55,36 +55,82 @@ def record_time(operation) -> None:
         raise
 
 
-# TODO: add real argument parser.
-# TODO: make it work with `python3 -m pip`.
-#       Calling the shim like that changes the number of arguments in sys.argv and
-#       breaks the logic below.
-#       It can currently only be called via `pip $ARGS...`
 def main() -> None:
-    if sys.argv[1:3] == ["install", "--no-deps"] and len(sys.argv) == 4:
-        record_time(lambda: install_package_from_file(sys.argv[-1]))
-    elif sys.argv[1] == "uninstall" and sys.argv[3] == "-y" and len(sys.argv) == 4:
-        record_time(uninstall_package)
-    elif (
-        sys.argv[1:4] == ["install", "--no-deps", "-U"]
-        and len(sys.argv) == 5
-        and os.path.isdir(sys.argv[4])
-    ):
-        record_time(lambda: install_package_from_folder(sys.argv[-1]))
-    elif sys.argv[1:] == ["--version"]:
-        # poetry runs this version check before running the install command above.
-        # I have no idea what it is looking for, but it continues even if we
-        # print nothing.
-        pass
-    else:
-        # noop = lambda: None
+    parser = argparse.ArgumentParser()
 
-        def fail() -> None:
-            raise Exception("unknown command")
+    # TODO: make command logging (record_time) unconditional. Right now, it's scattered
+    #       in separate locations and it's unclear how to ensure it's
+    #       always called.
+    #       `pip --version` is one thing where it's not logged right now.
 
-        # Log the command, but don't do anything
-        record_time(fail)
-        # record_time(noop)
+    # Only used when no subcommand overwrites func
+    def require_version_or_subcommand(args: argparse.Namespace) -> None:
+        if args.version:
+            # poetry runs a pip version check before running the install command
+            # `install --no-deps -U path/to/package/git/repo`
+            # I have no idea what it is looking for in the version, but it
+            # continues even if we print nothing.
+            pass
+        else:
+            parser.print_help()
+
+    parser.set_defaults(func=require_version_or_subcommand)
+    parser.add_argument("--version", action="store_true")
+    subcommands = parser.add_subparsers(title="Commands")
+    add_install_subcommand(subcommands)
+    add_uninstall_subcommand(subcommands)
+
+    args = parser.parse_args()
+    args.func(args)
+
+    # TODO: refactor this super indirect way of recording a failure
+    # def fail() -> None:
+    #     raise Exception("unknown command")
+
+    # # Log the command, but don't do anything
+    # try:
+    #     record_time(fail)
+    # except:
+    #     pass
+
+
+def add_install_subcommand(
+    argparser: "argparse._SubParsersAction[argparse.ArgumentParser]",
+) -> None:
+    cmd = argparser.add_parser("install")
+    cmd.add_argument(
+        "--no-deps", required=True, action="store_true"
+    )  # required, we never add deps
+    cmd.add_argument(
+        "-U", "--upgrade", action="store_true"
+    )  # TODO: add logic using this
+    cmd.add_argument("path")
+
+    def install(args: argparse.Namespace) -> None:
+        # CAREFUL! Impossible to typecheck args.
+        print(args.path)
+        if args.path.startswith("file://"):
+            install_package_from_file(args.path)
+        elif os.path.isdir(args.path):
+            install_package_from_folder(args.path)
+        else:
+            raise Exception("Not a path to a file or folder")
+
+    cmd.set_defaults(func=lambda args: record_time(lambda: install(args)))
+
+
+def add_uninstall_subcommand(
+    argparser: "argparse._SubParsersAction[argparse.ArgumentParser]",
+) -> None:
+    cmd = argparser.add_parser("uninstall")
+    cmd.add_argument("-y", "--yes", required=True)  # required, we never prompt
+    cmd.add_argument("package")  # TODO: allow multiple
+
+    def uninstall(args: argparse.Namespace) -> None:
+        # CAREFUL! Impossible to typecheck args.
+        uninstall_package(args.package)
+
+    cmd.set_defaults(func=lambda args: record_time(lambda: uninstall(args)))
 
 
 def install_package_from_file(package_path: str) -> None:
@@ -113,7 +159,6 @@ def install_package_from_folder(package_path: str) -> None:
     ).stdout.rstrip("\n")
 
     with tempfile.TemporaryDirectory() as directory:
-        # TODO: make sure this is the global python
         subprocess.run(
             [
                 global_python,
@@ -156,8 +201,7 @@ def _install_package(package_path: str) -> None:
     )
 
 
-def uninstall_package() -> None:
-    package_name = sys.argv[2]
+def uninstall_package(package_name: str) -> None:
     assert not package_name.startswith("-")
 
     virtpy = virtpy_path()
