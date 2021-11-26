@@ -396,6 +396,7 @@ fn main() -> EResult<()> {
             allow_prereleases,
             python,
         } => {
+            let mut any_errors = false;
             for package in package {
                 println!("installing {}...", package);
                 match install_executable_package(
@@ -410,18 +411,32 @@ fn main() -> EResult<()> {
                     Ok(InstalledStatus::AlreadyInstalled) => {
                         println!("package is already installed.")
                     }
-                    Err(err) => eprintln!("{:?}", err),
+                    Err(err) => {
+                        any_errors = true;
+                        eprintln!("{:?}", err);
+                    }
                 }
+            }
+
+            if any_errors {
+                bail!("some installs failed");
             }
         }
         Command::Uninstall { package } => {
+            let mut any_errors = false;
             for package in package {
                 match delete_executable_virtpy(&proj_dirs, &package)
                     .wrap_err(eyre!("failed to uninstall {}", package))
                 {
                     Ok(()) => println!("uninstalled {}.", package),
-                    Err(err) => eprintln!("{:?}", err),
+                    Err(err) => {
+                        any_errors = true;
+                        eprintln!("{:?}", err)
+                    }
                 }
+            }
+            if any_errors {
+                bail!("some uninstalls failed");
             }
         }
         Command::InternalStore(InternalStoreCmd::Gc { remove }) => {
