@@ -195,26 +195,25 @@ impl WheelMetadata {
     }
 }
 
-// // Related: https://www.python.org/dev/peps/pep-0625/  -- File name of a Source Distribution
-// //          Contains a link to a few other PEPs.
-// //          PEP 503 defines the concept of a normalized distribution name.
-// //          https://www.python.org/dev/peps/pep-0503/#normalized-names
-// fn normalized_distribution_name(name: &str) -> String {
-//     _escape(name, "-")
-// }
-
 // Following https://packaging.python.org/specifications/binary-distribution-format/#escaping-and-unicode
 // This is important because the wheel name components may contain "-" characters,
 // but those are separators in a wheel name.
 // We need this because the dist-info and data directory contain the normalized distrib name.
 // We may have to add version normalization, if we ever get unnormalized ones.
+//
+// NOTE: The specification claims:
+// In distribution names, any run of -_. characters (HYPHEN-MINUS, LOW LINE and FULL STOP) should be
+// replaced with _ (LOW LINE). This is equivalent to PEP 503 normalisation followed by replacing - with _.
+//
+// This is NOT TRUE. PEP 503 normalization includes conversion to lowercase. We MUST NOT do that.
+// Package names out in the wild contain uppercase names and are accepted by pip.
 pub(crate) fn normalized_distribution_name_for_wheel(distrib_name: &str) -> String {
     _escape(distrib_name, "_")
 }
 
 fn _escape(string: &str, replace_with: &str) -> String {
     let pattern = lazy_regex::regex!(r"[-_.]+");
-    pattern.replace_all(string, replace_with).to_lowercase()
+    pattern.replace_all(string, replace_with).into_owned()
 }
 
 pub(crate) fn is_path_of_executable(path: &Utf8Path) -> bool {
