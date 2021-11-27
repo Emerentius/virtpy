@@ -366,16 +366,7 @@ fn main() -> EResult<()> {
             without_pip_shim,
             ..
         } => {
-            let path = path.unwrap_or_else(|| PathBuf::from(DEFAULT_VIRTPY_PATH));
-
-            let shim_info = (!without_pip_shim)
-                .then(|| shim_info(&proj_dirs))
-                .transpose()?;
-            python::detection::detect(&python)
-                .and_then(|python_path| {
-                    Virtpy::create(&proj_dirs, &python_path, &path, None, shim_info)
-                })
-                .wrap_err("failed to create virtpy")?;
+            create_new_virtpy(&proj_dirs, path, without_pip_shim, &python)?;
         }
         Command::Install {
             package,
@@ -456,6 +447,21 @@ fn main() -> EResult<()> {
     Ok(())
 }
 
+fn create_new_virtpy(
+    proj_dirs: &ProjectDirs,
+    path: Option<Utf8PathBuf>,
+    without_pip_shim: bool,
+    python: &str,
+) -> EResult<Virtpy> {
+    let path = path.unwrap_or_else(|| PathBuf::from(DEFAULT_VIRTPY_PATH));
+    let shim_info = (!without_pip_shim)
+        .then(|| shim_info(&proj_dirs))
+        .transpose()?;
+    python::detection::detect(&python)
+        .and_then(|python_path| Virtpy::create(&proj_dirs, &python_path, &path, None, shim_info))
+        .wrap_err("failed to create virtpy")
+}
+
 enum InstalledStatus {
     NewlyInstalled,
     AlreadyInstalled,
@@ -505,31 +511,7 @@ fn install_executable_package(
 
     init_temporary_poetry_project(tmp_dir.path())?;
 
-    let mut cmd = std::process::Command::new("poetry");
-    cmd.arg("add").arg(package).current_dir(tmp_dir.path());
-    cmd.arg("--no-ansi");
-    cmd.arg("--no-interaction");
-    if allow_prereleases {
-        cmd.arg("--allow-prereleases");
-    }
-    match options.verbose {
-        // poetry uses -v for normal output
-        // -vv for verbose
-        // -vvv for debug
-        0 => (),
-        1 => {
-            cmd.arg("-vv");
-        }
-        _ => {
-            cmd.arg("-vvv");
-        }
-    };
-    check_status(&mut cmd)
-        .wrap_err("failed to install package into virtpy")
-        .wrap_err_with(|| match virtpy.pip_shim_log() {
-            Ok(log) => eyre!("{}", log.unwrap_or("no log found".into())),
-            Err(err) => eyre!("failed to read pip_shim_log: {}", err),
-        })?;
+    poetry_add(&virtpy, package, allow_prereleases, options.verbose)?;
 
     // {
     //     // allows manually introspecting the temporary files via breakpoint
@@ -555,6 +537,68 @@ fn install_executable_package(
     // if everything succeeds, keep the venv
     std::mem::forget(virtpy);
     Ok(InstalledStatus::NewlyInstalled)
+}
+
+fn poetry_add(
+    virtpy: &Virtpy,
+    package: &str,
+    allow_prereleases: bool,
+    verbosity: u8,
+) -> EResult<()> {
+    let mut cmd = std::process::Command::new("poetry");
+    cmd.arg("add")
+        .arg(package)
+        .current_dir(virtpy.location().parent().unwrap());
+    cmd.arg("--no-ansi");
+    cmd.arg("--no-interaction");
+    if allow_prereleases {
+        cmd.arg("--allow-prereleases");
+    }
+    match verbosity {
+        // poetry uses -v for normal output
+        // -vv for verbose
+        // -vvv for debug
+        0 => (),
+        1 => {
+            cmd.arg("-vv");
+        }
+        _ => {
+            cmd.arg("-vvv");
+        }
+    };
+    check_status(&mut cmd)
+        .wrap_err("failed to install package into virtpy")
+        .wrap_err_with(|| match virtpy.pip_shim_log() {
+            Ok(log) => eyre!("{}", log.unwrap_or("no log found".into())),
+            Err(err) => eyre!("failed to read pip_shim_log: {}", err),
+        })
+}
+
+fn _poetry_remove(virtpy: &Virtpy, package: &str, verbosity: u8) -> EResult<()> {
+    let mut cmd = std::process::Command::new("poetry");
+    cmd.arg("remove")
+        .arg(package)
+        .current_dir(virtpy.location().parent().unwrap());
+    cmd.arg("--no-ansi");
+    cmd.arg("--no-interaction");
+    match verbosity {
+        // poetry uses -v for normal output
+        // -vv for verbose
+        // -vvv for debug
+        0 => (),
+        1 => {
+            cmd.arg("-vv");
+        }
+        _ => {
+            cmd.arg("-vvv");
+        }
+    };
+    check_status(&mut cmd)
+        .wrap_err("failed to remove package from virtpy")
+        .wrap_err_with(|| match virtpy.pip_shim_log() {
+            Ok(log) => eyre!("{}", log.unwrap_or("no log found".into())),
+            Err(err) => eyre!("failed to read pip_shim_log: {}", err),
+        })
 }
 
 fn is_not_found(error: &std::io::Error) -> bool {
@@ -776,6 +820,23 @@ mod test {
                 package
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_integration_pip_shim_with_poetry() -> EResult<()> {
+        let tmp_dir = tempdir::TempDir::new("virtpy_poetry_integration_test")?;
+        let proj_dirs = test_proj_dirs();
+        let virtpy_path = tmp_dir.path().join(".venv").try_into()?;
+
+        let virtpy = crate::create_new_virtpy(&proj_dirs, Some(virtpy_path), false, "3")?;
+        init_temporary_poetry_project(tmp_dir.path())?;
+
+        // TODO: add packages where the module name doesn't have the same case as the package name
+        poetry_add(&virtpy, "mypy", false, 2)?;
+        _poetry_remove(&virtpy, "mypy", 2)?;
+        assert!(virtpy.dist_info("mypy").is_err());
+
         Ok(())
     }
 
