@@ -112,11 +112,14 @@ def add_install_subcommand(
 
     def install(args: argparse.Namespace) -> None:
         # CAREFUL! Impossible to typecheck args.
-        print(args.path)
-        if args.path.startswith("file://"):
-            install_package_from_file(args.path)
+        package_path = args.path
+        prefix = "file:///" if os.name == "nt" else "file://"
+        if package_path.startswith(prefix):
+            package_path = package_path[len(prefix) :]
+        if os.path.isfile(package_path):
+            install_package_from_file(package_path)
         elif os.path.isdir(args.path):
-            install_package_from_folder(args.path)
+            install_package_from_folder(package_path)
         else:
             raise Exception("Not a path to a file or folder")
 
@@ -137,14 +140,6 @@ def add_uninstall_subcommand(
         uninstall_package(args.package)
 
     cmd.set_defaults(func=uninstall)
-
-
-def install_package_from_file(package_path: str) -> None:
-    prefix = "file:///" if os.name == "nt" else "file://"
-    if package_path.startswith(prefix):
-        package_path = package_path[len(prefix) :]
-
-    _install_package(package_path)
 
 
 def install_package_from_folder(package_path: str) -> None:
@@ -185,10 +180,10 @@ def install_package_from_folder(package_path: str) -> None:
         print(os.listdir(directory))
         output_files = glob.glob(pattern)
         assert len(output_files) == 1, f"{output_files=}"
-        _install_package(output_files[0])
+        install_package_from_file(output_files[0])
 
 
-def _install_package(package_path: str) -> None:
+def install_package_from_file(package_path: str) -> None:
     if not os.path.abspath(package_path):
         return
 
