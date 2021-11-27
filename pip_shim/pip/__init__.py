@@ -38,20 +38,21 @@ def record_time(operation) -> None:
 
     log_file = virtpy.joinpath("virtpy_link_metadata", "pip_shim.log")
 
-    def _record_time(time_taken: float, success: bool):
+    def _record_time(time_taken: float, success: bool, message: Optional[str] = None):
         args = " ".join(sys.argv[1:])
         status = "✅" if success else "❌"
         with open(log_file, "a", encoding="utf8") as f:
-            print(f"{status} {time_taken:4.3}: {args}", file=f)
+            message = f": {message}" if message is not None else ""
+            print(f"{status} {time_taken:4.3}: {args}{message}", file=f)
 
     start = time.time()
     try:
         operation()
         time_taken = time.time() - start
         _record_time(time_taken, True)
-    except:
+    except Exception as e:
         time_taken = time.time() - start
-        _record_time(time_taken, False)
+        _record_time(time_taken, False, str(e))
         raise
 
 
