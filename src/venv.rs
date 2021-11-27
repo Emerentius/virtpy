@@ -564,7 +564,7 @@ fn link_single_requirement_into_virtpy(
             fs_err::write(&hash_path, &dist_hash)
                 .wrap_err("failed to write distribution hash file")?;
             record.files.push(RecordEntry {
-                path: hash_path,
+                path: relative_path(site_packages, hash_path),
                 hash: FileHash::from_reader(dist_hash.as_bytes()), // It's a hash of a hash => can't just copy it
                 filesize: dist_hash.len() as u64,
             });
