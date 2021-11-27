@@ -384,6 +384,10 @@ impl Virtpy {
         }
     }
 
+    pub(crate) fn pip_shim_log(&self) -> EResult<Option<String>> {
+        self.get_metadata("pip_shim.log")
+    }
+
     pub(crate) fn delete(self) -> EResult<()> {
         fs_err::remove_dir_all(self.location())?;
         delete_virtpy_backing(&self.backing)?;

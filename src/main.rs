@@ -524,7 +524,19 @@ fn install_executable_package(
             cmd.arg("-vvv");
         }
     };
-    check_status(&mut cmd).wrap_err("failed to install package into virtpy")?;
+    check_status(&mut cmd)
+        .wrap_err("failed to install package into virtpy")
+        .wrap_err_with(|| match virtpy.pip_shim_log() {
+            Ok(log) => eyre!("{}", log.unwrap_or("no log found".into())),
+            Err(err) => eyre!("failed to read pip_shim_log: {}", err),
+        })?;
+
+    // {
+    //     // allows manually introspecting the temporary files via breakpoint
+    //     // or via exit
+    //     println!("virtpy path: {}", virtpy.location());
+    //     std::process::exit(1);
+    // }
 
     let distrib = virtpy
         .dist_info(package)
