@@ -729,6 +729,8 @@ mod test {
         let cargo_run = escargot::CargoBuild::new().bin("virtpy").run().unwrap();
 
         for &(package, allow_prereleases) in &packages {
+            println!("testing install of {}", package);
+
             let base_cmd = || -> EResult<_> {
                 let mut cmd = assert_cmd::Command::from_std(cargo_run.command());
                 cmd.arg("--project-dir").arg(proj_dirs.data()).arg("-vv");
