@@ -38,30 +38,37 @@ def record_time(operation) -> None:
 
     log_file = virtpy.joinpath("virtpy_link_metadata", "pip_shim.log")
 
-    def _record_time(time_taken: float, success: bool):
+    def _record_time(time_taken: float, success: bool, message: Optional[str] = None):
         args = " ".join(sys.argv[1:])
         status = "✅" if success else "❌"
         with open(log_file, "a", encoding="utf8") as f:
-            print(f"{status} {time_taken:4.3}: {args}", file=f)
+            message = f": {message}" if message is not None else ""
+            print(f"{status} {time_taken:4.3}: {args}{message}", file=f)
 
     start = time.time()
     try:
         operation()
         time_taken = time.time() - start
         _record_time(time_taken, True)
-    except:
+    except Exception as e:
         time_taken = time.time() - start
-        _record_time(time_taken, False)
+        _record_time(time_taken, False, str(e))
         raise
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
+# Taken from argparse docs.
+# The standard argparse exits the program on any argument error.
+# We want to log ALL invocations of this shim however, so we need to catch
+# those cases.
+class ErrorCatchingArgumentParser(argparse.ArgumentParser):
+    def exit(self, status=0, message=None):
+        if status:
+            raise Exception(f"Exiting because of an error: {message}")
+        exit(status)
 
-    # TODO: make command logging (record_time) unconditional. Right now, it's scattered
-    #       in separate locations and it's unclear how to ensure it's
-    #       always called.
-    #       `pip --version` is one thing where it's not logged right now.
+
+def main() -> None:
+    parser = ErrorCatchingArgumentParser()
 
     # Only used when no subcommand overwrites func
     def require_version_or_subcommand(args: argparse.Namespace) -> None:
@@ -80,18 +87,15 @@ def main() -> None:
     add_install_subcommand(subcommands)
     add_uninstall_subcommand(subcommands)
 
-    args = parser.parse_args()
-    args.func(args)
+    def parse_and_run() -> None:
+        args = parser.parse_args()
+        args.func(args)
 
-    # TODO: refactor this super indirect way of recording a failure
-    # def fail() -> None:
-    #     raise Exception("unknown command")
-
-    # # Log the command, but don't do anything
-    # try:
-    #     record_time(fail)
-    # except:
-    #     pass
+    try:
+        record_time(parse_and_run)
+    except Exception as e:
+        print(f"{e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def add_install_subcommand(
@@ -108,37 +112,34 @@ def add_install_subcommand(
 
     def install(args: argparse.Namespace) -> None:
         # CAREFUL! Impossible to typecheck args.
-        print(args.path)
-        if args.path.startswith("file://"):
-            install_package_from_file(args.path)
+        package_path = args.path
+        prefix = "file:///" if os.name == "nt" else "file://"
+        if package_path.startswith(prefix):
+            package_path = package_path[len(prefix) :]
+        if os.path.isfile(package_path):
+            install_package_from_file(package_path)
         elif os.path.isdir(args.path):
-            install_package_from_folder(args.path)
+            install_package_from_folder(package_path)
         else:
             raise Exception("Not a path to a file or folder")
 
-    cmd.set_defaults(func=lambda args: record_time(lambda: install(args)))
+    cmd.set_defaults(func=install)
 
 
 def add_uninstall_subcommand(
     argparser: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> None:
     cmd = argparser.add_parser("uninstall")
-    cmd.add_argument("-y", "--yes", required=True)  # required, we never prompt
+    cmd.add_argument(
+        "-y", "--yes", required=True, action="store_true"
+    )  # required, we never prompt
     cmd.add_argument("package")  # TODO: allow multiple
 
     def uninstall(args: argparse.Namespace) -> None:
         # CAREFUL! Impossible to typecheck args.
         uninstall_package(args.package)
 
-    cmd.set_defaults(func=lambda args: record_time(lambda: uninstall(args)))
-
-
-def install_package_from_file(package_path: str) -> None:
-    prefix = "file:///" if os.name == "nt" else "file://"
-    if package_path.startswith(prefix):
-        package_path = package_path[len(prefix) :]
-
-    _install_package(package_path)
+    cmd.set_defaults(func=uninstall)
 
 
 def install_package_from_folder(package_path: str) -> None:
@@ -179,10 +180,10 @@ def install_package_from_folder(package_path: str) -> None:
         print(os.listdir(directory))
         output_files = glob.glob(pattern)
         assert len(output_files) == 1, f"{output_files=}"
-        _install_package(output_files[0])
+        install_package_from_file(output_files[0])
 
 
-def _install_package(package_path: str) -> None:
+def install_package_from_file(package_path: str) -> None:
     if not os.path.abspath(package_path):
         return
 

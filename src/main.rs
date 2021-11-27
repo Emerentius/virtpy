@@ -183,16 +183,6 @@ impl ProjectDirs {
         Self { data_dir }
     }
 
-    fn from_existing_path(data_dir: PathBuf) -> EResult<Self> {
-        let proj_dirs = Self::from_path(data_dir.clone());
-        for necessary_subdir in proj_dirs._required_paths() {
-            if !data_dir.join(&necessary_subdir).exists() {
-                bail!("missing directory {}", necessary_subdir);
-            }
-        }
-        Ok(proj_dirs)
-    }
-
     fn create_dirs(&self) -> std::io::Result<()> {
         fs_err::create_dir_all(self.data())?;
         for path in self._required_paths() {
@@ -336,13 +326,10 @@ fn main() -> EResult<()> {
     let current_dir =
         PathBuf::try_from(std::env::current_dir().wrap_err("can't get current dir")?)?;
     let proj_dirs = match opt.project_dir {
-        Some(dir) => ProjectDirs::from_existing_path(current_dir.join(&dir))?,
-        None => {
-            let proj_dirs = ProjectDirs::new().ok_or_else(|| eyre!("failed to get proj dirs"))?;
-            proj_dirs.create_dirs()?;
-            proj_dirs
-        }
+        Some(dir) => ProjectDirs::from_path(current_dir.join(&dir)),
+        None => ProjectDirs::new().ok_or_else(|| eyre!("failed to get proj dirs"))?,
     };
+    proj_dirs.create_dirs()?;
 
     match opt.cmd {
         // Command::Add {
@@ -396,6 +383,7 @@ fn main() -> EResult<()> {
             allow_prereleases,
             python,
         } => {
+            let mut any_errors = false;
             for package in package {
                 println!("installing {}...", package);
                 match install_executable_package(
@@ -410,18 +398,32 @@ fn main() -> EResult<()> {
                     Ok(InstalledStatus::AlreadyInstalled) => {
                         println!("package is already installed.")
                     }
-                    Err(err) => eprintln!("{:?}", err),
+                    Err(err) => {
+                        any_errors = true;
+                        eprintln!("{:?}", err);
+                    }
                 }
+            }
+
+            if any_errors {
+                bail!("some installs failed");
             }
         }
         Command::Uninstall { package } => {
+            let mut any_errors = false;
             for package in package {
                 match delete_executable_virtpy(&proj_dirs, &package)
                     .wrap_err(eyre!("failed to uninstall {}", package))
                 {
                     Ok(()) => println!("uninstalled {}.", package),
-                    Err(err) => eprintln!("{:?}", err),
+                    Err(err) => {
+                        any_errors = true;
+                        eprintln!("{:?}", err)
+                    }
                 }
+            }
+            if any_errors {
+                bail!("some uninstalls failed");
             }
         }
         Command::InternalStore(InternalStoreCmd::Gc { remove }) => {
@@ -505,6 +507,8 @@ fn install_executable_package(
 
     let mut cmd = std::process::Command::new("poetry");
     cmd.arg("add").arg(package).current_dir(tmp_dir.path());
+    cmd.arg("--no-ansi");
+    cmd.arg("--no-interaction");
     if allow_prereleases {
         cmd.arg("--allow-prereleases");
     }
@@ -520,7 +524,19 @@ fn install_executable_package(
             cmd.arg("-vvv");
         }
     };
-    check_status(&mut cmd).wrap_err("failed to install package into virtpy")?;
+    check_status(&mut cmd)
+        .wrap_err("failed to install package into virtpy")
+        .wrap_err_with(|| match virtpy.pip_shim_log() {
+            Ok(log) => eyre!("{}", log.unwrap_or("no log found".into())),
+            Err(err) => eyre!("failed to read pip_shim_log: {}", err),
+        })?;
+
+    // {
+    //     // allows manually introspecting the temporary files via breakpoint
+    //     // or via exit
+    //     println!("virtpy path: {}", virtpy.location());
+    //     std::process::exit(1);
+    // }
 
     let distrib = virtpy
         .dist_info(package)
@@ -708,7 +724,6 @@ mod test {
     }
 
     #[test]
-    #[ignore]
     fn test_install_uninstall() -> EResult<()> {
         let proj_dirs = test_proj_dirs();
 
@@ -728,6 +743,8 @@ mod test {
         let cargo_run = escargot::CargoBuild::new().bin("virtpy").run().unwrap();
 
         for &(package, allow_prereleases) in &packages {
+            println!("testing install of {}", package);
+
             let base_cmd = || -> EResult<_> {
                 let mut cmd = assert_cmd::Command::from_std(cargo_run.command());
                 cmd.arg("--project-dir").arg(proj_dirs.data()).arg("-vv");

@@ -107,13 +107,14 @@ impl std::fmt::Display for DistributionHash {
 
 // returns all files recorded in RECORDS, except for .dist-info files
 pub(crate) fn records(
-    record: &Path,
+    record_path: &Path,
 ) -> csv::Result<impl Iterator<Item = csv::Result<RecordEntry>>> {
+    let record_path = record_path.to_owned();
     Ok(csv::ReaderBuilder::new()
         .has_headers(false)
-        .from_path(record)?
+        .from_path(&record_path)?
         .into_records()
-        .filter_map(|record| {
+        .filter_map(move |record| {
             let record = match record {
                 Ok(rec) => rec,
                 Err(err) => return Some(Err(err)),
@@ -121,7 +122,12 @@ pub(crate) fn records(
             let path = &record[0];
             let path = Path::new(path);
             // this isn't true, the path may be absolute but that's not supported yet
-            assert!(path.is_relative());
+            assert!(
+                path.is_relative(),
+                "record: {}, path: {}",
+                record_path,
+                path
+            );
             let first = path
                 .components()
                 .find_map(|comp| match comp {
