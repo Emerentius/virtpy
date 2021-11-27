@@ -369,7 +369,7 @@ fn register_distribution_files_of_wheel(
     stored_distributions: &mut HashMap<DistributionHash, StoredDistribution>,
     options: crate::Options,
 ) -> EResult<()> {
-    let dist_info_foldername = format!("{}-{}.dist-info", distribution.name, distribution.version);
+    let dist_info_foldername = distribution.dist_info_name();
     let src_dist_info = install_folder.join(&dist_info_foldername);
 
     let stored_distrib = StoredDistribution {
