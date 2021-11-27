@@ -123,7 +123,9 @@ def add_uninstall_subcommand(
     argparser: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> None:
     cmd = argparser.add_parser("uninstall")
-    cmd.add_argument("-y", "--yes", required=True)  # required, we never prompt
+    cmd.add_argument(
+        "-y", "--yes", required=True, action="store_true"
+    )  # required, we never prompt
     cmd.add_argument("package")  # TODO: allow multiple
 
     def uninstall(args: argparse.Namespace) -> None:
