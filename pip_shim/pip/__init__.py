@@ -90,7 +90,11 @@ def main() -> None:
         args = parser.parse_args()
         args.func(args)
 
-    record_time(parse_and_run)
+    try:
+        record_time(parse_and_run)
+    except Exception as e:
+        print(f"{e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def add_install_subcommand(
