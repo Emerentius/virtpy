@@ -183,16 +183,6 @@ impl ProjectDirs {
         Self { data_dir }
     }
 
-    fn from_existing_path(data_dir: PathBuf) -> EResult<Self> {
-        let proj_dirs = Self::from_path(data_dir.clone());
-        for necessary_subdir in proj_dirs._required_paths() {
-            if !data_dir.join(&necessary_subdir).exists() {
-                bail!("missing directory {}", necessary_subdir);
-            }
-        }
-        Ok(proj_dirs)
-    }
-
     fn create_dirs(&self) -> std::io::Result<()> {
         fs_err::create_dir_all(self.data())?;
         for path in self._required_paths() {
@@ -336,13 +326,10 @@ fn main() -> EResult<()> {
     let current_dir =
         PathBuf::try_from(std::env::current_dir().wrap_err("can't get current dir")?)?;
     let proj_dirs = match opt.project_dir {
-        Some(dir) => ProjectDirs::from_existing_path(current_dir.join(&dir))?,
-        None => {
-            let proj_dirs = ProjectDirs::new().ok_or_else(|| eyre!("failed to get proj dirs"))?;
-            proj_dirs.create_dirs()?;
-            proj_dirs
-        }
+        Some(dir) => ProjectDirs::from_path(current_dir.join(&dir)),
+        None => ProjectDirs::new().ok_or_else(|| eyre!("failed to get proj dirs"))?,
     };
+    proj_dirs.create_dirs()?;
 
     match opt.cmd {
         // Command::Add {
