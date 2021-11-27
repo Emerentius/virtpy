@@ -55,13 +55,19 @@ def record_time(operation) -> None:
         raise
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
+# Taken from argparse docs.
+# The standard argparse exits the program on any argument error.
+# We want to log ALL invocations of this shim however, so we need to catch
+# those cases.
+class ErrorCatchingArgumentParser(argparse.ArgumentParser):
+    def exit(self, status=0, message=None):
+        if status:
+            raise Exception(f"Exiting because of an error: {message}")
+        exit(status)
 
-    # TODO: make command logging (record_time) unconditional. Right now, it's scattered
-    #       in separate locations and it's unclear how to ensure it's
-    #       always called.
-    #       `pip --version` is one thing where it's not logged right now.
+
+def main() -> None:
+    parser = ErrorCatchingArgumentParser()
 
     # Only used when no subcommand overwrites func
     def require_version_or_subcommand(args: argparse.Namespace) -> None:
@@ -80,18 +86,11 @@ def main() -> None:
     add_install_subcommand(subcommands)
     add_uninstall_subcommand(subcommands)
 
-    args = parser.parse_args()
-    args.func(args)
+    def parse_and_run() -> None:
+        args = parser.parse_args()
+        args.func(args)
 
-    # TODO: refactor this super indirect way of recording a failure
-    # def fail() -> None:
-    #     raise Exception("unknown command")
-
-    # # Log the command, but don't do anything
-    # try:
-    #     record_time(fail)
-    # except:
-    #     pass
+    record_time(parse_and_run)
 
 
 def add_install_subcommand(
@@ -116,7 +115,7 @@ def add_install_subcommand(
         else:
             raise Exception("Not a path to a file or folder")
 
-    cmd.set_defaults(func=lambda args: record_time(lambda: install(args)))
+    cmd.set_defaults(func=install)
 
 
 def add_uninstall_subcommand(
@@ -132,7 +131,7 @@ def add_uninstall_subcommand(
         # CAREFUL! Impossible to typecheck args.
         uninstall_package(args.package)
 
-    cmd.set_defaults(func=lambda args: record_time(lambda: uninstall(args)))
+    cmd.set_defaults(func=uninstall)
 
 
 def install_package_from_file(package_path: str) -> None:
