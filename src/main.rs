@@ -507,6 +507,8 @@ fn install_executable_package(
 
     let mut cmd = std::process::Command::new("poetry");
     cmd.arg("add").arg(package).current_dir(tmp_dir.path());
+    cmd.arg("--no-ansi");
+    cmd.arg("--no-interaction");
     if allow_prereleases {
         cmd.arg("--allow-prereleases");
     }
