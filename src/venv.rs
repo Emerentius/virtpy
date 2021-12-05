@@ -839,7 +839,7 @@ fn add_pip_shim(virtpy: &Virtpy, shim_info: ShimInfo<'_>) -> EResult<()> {
     let entry_point = EntryPoint {
         name: "pip".to_owned(),
         module: "pip".to_owned(),
-        qualname: Some("main".to_owned()),
+        qualname: "main".to_owned(),
     };
     let _ = entry_point.generate_executable(
         &virtpy.executables(),

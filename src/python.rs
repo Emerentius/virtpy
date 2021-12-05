@@ -145,7 +145,7 @@ pub(crate) fn records(
 pub(crate) struct EntryPoint {
     pub(crate) name: String,
     pub(crate) module: String,
-    pub(crate) qualname: Option<String>,
+    pub(crate) qualname: String,
     // optional and now deprecated
     //extras: Option<Vec<String>>
 }
@@ -155,7 +155,7 @@ impl EntryPoint {
     pub(crate) fn new(key: &str, value: &str) -> Self {
         let mut it = value.split(':');
         let module = it.next().unwrap().to_owned();
-        let qualname = it.next().map(<_>::to_owned);
+        let qualname = it.next().unwrap().to_owned();
 
         EntryPoint {
             name: key.to_owned(),
@@ -176,7 +176,7 @@ if __name__ == '__main__':
     sys.exit({qualname}())
 ",
             self.module,
-            qualname = self.qualname.clone().unwrap()
+            qualname = self.qualname
         )
     }
 
@@ -457,22 +457,22 @@ mod test {
                 EntryPoint {
                     name: "dmypy".into(),
                     module: "mypy.dmypy.client".into(),
-                    qualname: Some("console_entry".into())
+                    qualname: "console_entry".into()
                 },
                 EntryPoint {
                     name: "mypy".into(),
                     module: "mypy.__main__".into(),
-                    qualname: Some("console_entry".into())
+                    qualname: "console_entry".into()
                 },
                 EntryPoint {
                     name: "stubgen".into(),
                     module: "mypy.stubgen".into(),
-                    qualname: Some("main".into())
+                    qualname: "main".into()
                 },
                 EntryPoint {
                     name: "stubtest".into(),
                     module: "mypy.stubtest".into(),
-                    qualname: Some("main".into())
+                    qualname: "main".into()
                 },
             ]
         )
