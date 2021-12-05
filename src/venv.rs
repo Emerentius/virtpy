@@ -27,7 +27,17 @@ use rand::Rng;
 use std::collections::{HashMap, HashSet};
 use std::path::Path as StdPath;
 
-/// A venv in the central store
+/// A venv in the central store.
+/// When we are installing files into this venv, we hardlink them from the shared storage.
+/// The backing virtpys contain no symlinks.
+/// It's important that we recreate the full directory structure of what a venv would
+/// normally look like without any symlinks, because some python modules introspect their own
+/// files and in doing so, they often get the absolute path to their own location via a function
+/// that also resolves symlinks like os.path.realpath or pathlib.Path.resolve.
+/// They then expect a specific directory structure at the resolved path and go up and
+/// down directories. The backing venvs give them this directory structure.
+/// The virtpys out in the filesystem that a user is interacting with contain symlinks to the
+/// backing venv.
 pub(crate) struct VirtpyBacking {
     location: PathBuf,
     python_version: PythonVersion,
@@ -43,6 +53,9 @@ pub(crate) struct Virtpy {
     python_version: PythonVersion,
 }
 
+/// Provide accessors to various directories in a venv.
+/// Both [`VirtpyBacking`]s and [`Virtpy`]s have the directory structure of a venv,
+/// so a lot of the code is shared.
 pub(crate) trait VirtpyPaths {
     fn location(&self) -> &Path;
     fn python_version(&self) -> PythonVersion;
@@ -903,12 +916,12 @@ pub(crate) fn virtpy_status(virtpy_path: &Path) -> EResult<VirtpyBackingStatus> 
     })
 }
 
-// The paths where the contents of subdirs of a wheel's data directory should be placed.
-// The documentation does not say what these are or where to get them, but it says that it follows
-// distutils.commands.install.install and we can seemingly extract them from there.
-// Is this correct? Who knows with "standards" like in the python world.
-//
-// This is a mapping like `{ "headers": "some/path/to/place/headers", "purelib": "other/path" }`.
+/// The paths where the contents of subdirs of a wheel's data directory should be placed.
+/// The documentation does not say what these are or where to get them, but it says that it follows
+/// distutils.commands.install.install and we can seemingly extract them from there.
+/// Is this correct? Who knows with "standards" like in the python world.
+///
+/// This is a mapping like `{ "headers": "some/path/to/place/headers", "purelib": "other/path" }`.
 struct InstallPaths(HashMap<String, PathBuf>);
 
 impl InstallPaths {

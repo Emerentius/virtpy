@@ -8,6 +8,7 @@ use self::wheel::RecordEntry;
 pub(crate) mod detection;
 pub(crate) mod wheel;
 
+/// The version of the python language that the interpreter runs.
 // probably missing prereleases and such
 // TODO: check official scheme
 #[derive(Copy, Clone)]
@@ -44,8 +45,9 @@ pub(crate) fn python_version(python_path: &Path) -> EResult<PythonVersion> {
     })
 }
 
-// The base16 encoded hash of a distribution file, in most cases of a wheel file
-// but it could also be of a tar.gz file, for example.
+// The base16 encoded hash of a distribution archive file.
+// We use this encoding because that's how they are encoded in requirements files.
+// In most cases that of a wheel, but it could also be of other types like a tar.gz.
 // Has the form "sha256=[0-9a-fA-F]{64}".
 #[derive(
     Clone, Hash, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
@@ -53,7 +55,8 @@ pub(crate) fn python_version(python_path: &Path) -> EResult<PythonVersion> {
 pub(crate) struct DistributionHash(pub(crate) String);
 
 // The base64 encoded hash of a file in a wheel.
-// has the form "sha256=${base64_encoded_string}"
+// A wheel's RECORD file contains hashes encoded this way.
+// Has the form "sha256=${base64_encoded_string}"
 #[derive(
     Clone, Hash, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
@@ -141,10 +144,18 @@ pub(crate) fn records(
         }))
 }
 
+/// A wheel can contain an entry_points.txt ini file.
+/// We concern ourselves only with the console_scripts section of that file.
+/// A console script entrypoint is a function for which an executable shall be generated during
+/// installation of a python distribution.
+// TODO: support gui_scripts (windows only)
 #[derive(PartialEq, Eq, Debug)]
 pub(crate) struct EntryPoint {
+    /// Name of the executable to be generated
     pub(crate) name: String,
+    /// Path to the module containing the entrypoint function
     pub(crate) module: String,
+    /// Name of the entrypoint function
     pub(crate) qualname: String,
     // optional and now deprecated
     //extras: Option<Vec<String>>
@@ -259,6 +270,18 @@ fn _generate_executable(
     })
 }
 
+/// A specific package file that can be installed into a python environment.
+/// The file is clearly identified by the hash of its contents.
+///
+/// Python's terminology is somwehat confused in that a package can be two things:
+/// 1. an archive containing python code packaged for distribution
+/// 2. A folder on disk that contains other folders (packages) or
+///    python files (modules) and which can be `import`ed inside python.
+///
+/// A package (in the first sense) can contain multiple packages of the second kind.
+/// Packages of the first kind are called distributions here for clarity.
+/// This is following the usage of the term distribution in the official
+/// wheel specification.
 #[derive(Debug, PartialEq, Eq, Hash, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Distribution {
     pub(crate) name: String,

@@ -430,6 +430,7 @@ fn register_distribution_files_of_wheel(
     Ok(())
 }
 
+/// A [`crate::python::Distribution`] that exists in the internal store.
 #[derive(Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize, Clone)]
 pub(crate) struct StoredDistribution {
     pub(crate) distribution: Distribution,
@@ -447,7 +448,7 @@ pub(crate) enum StoredDistributionType {
 }
 
 // We don't know what environments and what python versions a
-// given distribution is compatible with, so we let pip decide
+// given distribution is compatible with, so we let other tools decide
 // what distribution is compatible and only remember afterwards
 // which ones (recognized by hash) we've already installed
 // for a specific python version.

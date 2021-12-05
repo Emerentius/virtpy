@@ -164,6 +164,11 @@ pub(crate) struct Options {
     verbose: u8,
 }
 
+/// The directory where the internal store is placed.
+/// We default to the data directory that the [`directories`] crate gives us,
+/// but it can also be overridden via cli argument. This exists primarily for testability.
+/// Different project directories can exist simultaneously, but all virtpy calls
+/// affecting a venv have to know what internal store the venv is linked with.
 pub(crate) struct ProjectDirs {
     data_dir: PathBuf,
 }
@@ -585,6 +590,10 @@ fn delete_virtpy_backing(backing_folder: &Path) -> std::io::Result<()> {
     fs_err::remove_dir_all(backing_folder)
 }
 
+/// The pip shim we are installing into a virtpy needs to know where the internal store
+/// to which the venv is linked to is located.
+/// For our integration tests, it's also important that the pip shim is calling the
+/// freshly compiled virtpy executable and not the globally installed one.
 pub(crate) struct ShimInfo<'a> {
     proj_dirs: &'a ProjectDirs,
     // TODO: make this part optional

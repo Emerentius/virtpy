@@ -72,9 +72,11 @@ fn wheel_dist_info_path(wheel_name: &str) -> EResult<String> {
 
 //fn install_wheel()
 
-// They never define the version format outright, but the wheel format docs mention
-// major and minor version and how to handle those so I assume the version is just those
-// two numbers.
+/// The version of the wheel packaging format (not of the packaged code)
+/// The specification (https://packaging.python.org/specifications/binary-distribution-format/)
+/// never actually defines the version format, but the docs reference
+/// major and minor version and how to handle those so I assume the version is just those
+/// two numbers.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Hash)]
 struct WheelFormatVersion {
     major: u32,
@@ -127,7 +129,8 @@ enum WheelVersionSupport {
     Unsupported,
 }
 
-// Metadata about the wheel archive itself, not the contained package
+/// Metadata about the wheel archive itself, not the contained package.
+/// Stored in the file `METADATA` in a wheel's dist-info directory.
 struct WheelMetadata {
     version: WheelFormatVersion,
     #[allow(unused)]
@@ -219,6 +222,13 @@ fn _escape(string: &str, replace_with: &str) -> String {
 pub(crate) fn is_path_of_executable(path: &Utf8Path) -> bool {
     path.starts_with("bin") || path.starts_with("Scripts")
 }
+
+/// The record of all files belonging to a distribution along with their path, size and hash.
+/// It is stored in the file `RECORD` inside a distribution's dist-info directory.
+/// Exists only for packages distributed as wheels.
+/// The installed distributions retain the record and any files that are newly generated
+/// or moved to their target destinations from the data directory have to be added
+/// to the record by the installer (i.e. us).
 #[derive(PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub(crate) struct WheelRecord {
     // stored separately just so we can easily recreate the line for the RECORD itself
