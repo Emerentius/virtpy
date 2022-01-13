@@ -290,10 +290,11 @@ impl Virtpy {
         });
 
         let mut files_to_remove = vec![];
-        // TODO: remove executables (entrypoints)
         for info in dist_infos {
             let dist_infos = site_packages.join(&info);
             let record_file = dist_infos.join("RECORD");
+            // TODO: the new install method creates a real .dist-info directory and so we must delete
+            //       its contents as well. records() filters those out.
             for file in records(&record_file)? {
                 let file = file?;
 
