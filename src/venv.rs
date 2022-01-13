@@ -283,7 +283,10 @@ impl Virtpy {
 
         dist_infos.retain(|name| {
             let dist = name.split('-').next().unwrap();
-            dists_to_remove.contains(dist)
+            // It should already be in normalized form as far as I know,
+            // but of course that's not always the case.
+            let dist = normalized_distribution_name_for_wheel(dist);
+            dists_to_remove.contains(&dist)
         });
 
         let mut files_to_remove = vec![];
