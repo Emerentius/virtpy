@@ -98,7 +98,7 @@ impl FileHash {
     }
 
     fn from_hash(hash: String) -> Self {
-        Self(format!("sha256={}", hash))
+        Self(format!("sha256={hash}"))
     }
 }
 
@@ -125,12 +125,7 @@ pub(crate) fn records(
             let path = &record[0];
             let path = Path::new(path);
             // this isn't true, the path may be absolute but that's not supported yet
-            assert!(
-                path.is_relative(),
-                "record: {}, path: {}",
-                record_path,
-                path
-            );
+            assert!(path.is_relative(), "record: {record_path}, path: {path}");
             let first = path
                 .components()
                 .find_map(|comp| match comp {
@@ -212,14 +207,10 @@ pub(crate) fn generate_executable(
     code: &str,
     site_packages: &Path,
 ) -> std::io::Result<RecordEntry> {
-    let shebang = format!("#!{}", python_path);
+    let shebang = format!("#!{python_path}");
     #[cfg(unix)]
     {
-        _generate_executable(
-            dest,
-            format!("{}\n{}", shebang, code).as_bytes(),
-            site_packages,
-        )
+        _generate_executable(dest, format!("{shebang}\n{code}").as_bytes(), site_packages)
     }
 
     #[cfg(windows)]
@@ -235,7 +226,7 @@ pub(crate) fn generate_executable(
         static LAUNCHER_CODE: &[u8] = include_bytes!("../windows_exe_wrappers/t64.exe");
         let mut zip_writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::<u8>::new()));
         zip_writer.start_file("__main__.py", zip::write::FileOptions::default())?;
-        write!(&mut zip_writer, "{}", code).unwrap();
+        write!(&mut zip_writer, "{code}").unwrap();
         let mut wrapper = LAUNCHER_CODE.to_vec();
         wrapper.extend(shebang.as_bytes());
         wrapper.extend(b".exe");
@@ -349,9 +340,8 @@ impl Distribution {
 
 pub(crate) fn print_error_missing_file_in_record(distribution: &Distribution, missing_file: &Path) {
     println!(
-        "couldn't find recorded file from {}: {}",
+        "couldn't find recorded file from {}: {missing_file}",
         distribution.name_and_version(),
-        missing_file
     )
 }
 
@@ -540,7 +530,7 @@ mod test {
 
         for &(filename, (distrib_name, version)) in filenames_and_output.iter() {
             let req = Distribution::from_package_name(filename, DistributionHash("".into()))
-                .expect(&format!("{}", filename));
+                .expect(&filename.to_string());
             assert_eq!(req.name, distrib_name);
             assert_eq!(req.version, version);
         }

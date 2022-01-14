@@ -38,12 +38,12 @@ pub(crate) fn detect_from_version(python_version: super::PythonVersion) -> EResu
 
 fn find_python_by_version(major: u32, minor: Option<u32>) -> EResult<PathBuf> {
     let version = match minor {
-        Some(minor) => format!("{}.{}", major, minor),
+        Some(minor) => format!("{major}.{minor}"),
         None => major.to_string(),
     };
     #[cfg(unix)]
     {
-        find_executable_in_path(&format!("python{}", version))
+        find_executable_in_path(&format!("python{version}"))
     }
 
     #[cfg(windows)]
@@ -51,7 +51,7 @@ fn find_python_by_version(major: u32, minor: Option<u32>) -> EResult<PathBuf> {
         use color_eyre::section::{Section, SectionExt};
         let mut cmd = std::process::Command::new("py");
         cmd.args(&[
-            &format!("-{}", version),
+            &format!("-{version}"),
             "-c",
             "import sys; print(sys.executable)",
         ]);
@@ -146,12 +146,12 @@ mod test {
 
         // this upper boundary should last a while
         let path_with_minor = (5..30)
-            .map(|minor| format!("3.{}", minor))
+            .map(|minor| format!("3.{minor}"))
             .find_map(|version| detect(&version).ok())
             .unwrap();
 
         let path_with_minor2 = (5..30)
-            .map(|minor| format!("python3.{}", minor))
+            .map(|minor| format!("python3.{minor}"))
             .find_map(|version| detect(&version).ok())
             .unwrap();
 

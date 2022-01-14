@@ -257,7 +257,7 @@ impl ProjectDirs {
     }
 
     fn package_folder(&self, package: &str) -> PathBuf {
-        self.installations().join(&format!("{}.virtpy", package))
+        self.installations().join(&format!("{package}.virtpy"))
     }
 
     fn installed_distributions(&self) -> impl Iterator<Item = StoredDistribution> + '_ {
@@ -390,7 +390,7 @@ fn main() -> EResult<()> {
         } => {
             let mut any_errors = false;
             for package in package {
-                println!("installing {}...", package);
+                println!("installing {package}...");
                 match install_executable_package(
                     &proj_dirs,
                     options,
@@ -399,13 +399,13 @@ fn main() -> EResult<()> {
                     allow_prereleases,
                     &python,
                 ) {
-                    Ok(InstalledStatus::NewlyInstalled) => println!("installed {}.", package),
+                    Ok(InstalledStatus::NewlyInstalled) => println!("installed {package}."),
                     Ok(InstalledStatus::AlreadyInstalled) => {
                         println!("package is already installed.")
                     }
                     Err(err) => {
                         any_errors = true;
-                        eprintln!("{:?}", err);
+                        eprintln!("{err:?}");
                     }
                 }
             }
@@ -420,10 +420,10 @@ fn main() -> EResult<()> {
                 match delete_executable_virtpy(&proj_dirs, &package)
                     .wrap_err(eyre!("failed to uninstall {}", package))
                 {
-                    Ok(()) => println!("uninstalled {}.", package),
+                    Ok(()) => println!("uninstalled {package}."),
                     Err(err) => {
                         any_errors = true;
-                        eprintln!("{:?}", err)
+                        eprintln!("{err:?}")
                     }
                 }
             }
@@ -488,7 +488,7 @@ fn install_executable_package(
 
     check_poetry_available()?;
 
-    let tmp_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), &format!("install_{}", package))?;
+    let tmp_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), &format!("install_{package}"))?;
     let tmp_path = PathBuf::try_from(tmp_dir.path().to_owned())
         .expect(INVALID_UTF8_PATH)
         .join(".venv");
@@ -752,7 +752,7 @@ mod test {
         let cargo_run = escargot::CargoBuild::new().bin("virtpy").run().unwrap();
 
         for &(package, allow_prereleases) in &packages {
-            println!("testing install of {}", package);
+            println!("testing install of {package}");
 
             let base_cmd = || -> EResult<_> {
                 let mut cmd = assert_cmd::Command::from_std(cargo_run.command());
@@ -773,16 +773,14 @@ mod test {
             assert_ne!(
                 proj_dirs._executables_list(),
                 Vec::<String>::new(),
-                "{}",
-                package
+                "{package}"
             );
 
             uninstall_cmd.ok()?;
             assert_eq!(
                 proj_dirs._executables_list(),
                 Vec::<String>::new(),
-                "{}",
-                package
+                "{package}"
             );
         }
         Ok(())

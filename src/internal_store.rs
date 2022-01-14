@@ -34,7 +34,7 @@ pub(crate) fn collect_garbage(
         match virtpy_status(&path) {
             Ok(VirtpyBackingStatus::Ok { .. }) => (),
             Ok(VirtpyBackingStatus::Orphaned { link }) => danglers.push((path, link)),
-            Err(err) => println!("failed to check {}: {}", path, err),
+            Err(err) => println!("failed to check {path}: {err}"),
         };
     }
 
@@ -52,7 +52,7 @@ pub(crate) fn collect_garbage(
             println!("If you've moved some of these, recreate new ones in their place as they'll break when the orphaned backing stores are deleted.\nRun `virtpy gc --remove` to delete orphans\n");
 
             for (target, virtpy_gone_awol) in danglers {
-                println!("{} => {}", virtpy_gone_awol, target);
+                println!("{virtpy_gone_awol} => {target}");
             }
         }
     }
@@ -70,7 +70,7 @@ pub(crate) fn collect_garbage(
                     assert!(path.starts_with(&proj_dirs.data()));
 
                     let Distribution { name, version, sha } = &dist.distribution;
-                    println!("Removing {} {} ({})", name, version, sha);
+                    println!("Removing {name} {version} ({sha})");
 
                     let res = fs_err::remove_dir_all(path);
 
@@ -104,7 +104,7 @@ pub(crate) fn collect_garbage(
                 for file in unused_package_files {
                     assert!(file.starts_with(&package_files_dir));
                     if options.verbose >= 1 {
-                        println!("Removing {}", file);
+                        println!("Removing {file}");
                     }
                     fs_err::remove_file(file).unwrap();
                 }
@@ -127,7 +127,7 @@ pub(crate) fn print_verify_store(proj_dirs: &ProjectDirs) {
         let path: PathBuf = file.path().try_into().expect(INVALID_UTF8_PATH);
         let base64_hash = FileHash::from_file(&path);
         if base64_hash != FileHash::from_filename(&path) {
-            println!("doesn't match hash: {}, hash = {}", path, base64_hash);
+            println!("doesn't match hash: {path}, hash = {base64_hash}");
             any_error = true;
         }
     }
@@ -190,16 +190,16 @@ pub(crate) fn print_stats(
         for (distr, dependents) in distribution_dependents {
             println!(
                 "{:30} {} dependents    ({})",
-                format!("{} {}", distr.distribution.name, distr.distribution.version,),
+                format_args!("{} {}", distr.distribution.name, distr.distribution.version,),
                 dependents.len(),
                 distr.distribution.sha
             );
             if options.verbose >= 2 {
                 for dependent in dependents {
                     let link_location = virtpy_link_location(&dependent).unwrap();
-                    print!("    {}", link_location);
+                    print!("    {link_location}");
                     if options.verbose >= 3 {
-                        print!("  =>  {}", dependent);
+                        print!("  =>  {dependent}");
                     }
                     println!();
                 }
@@ -404,7 +404,7 @@ fn register_distribution_files_of_wheel(
         assert!(src.starts_with(&install_folder));
         let dest = proj_dirs.package_file(&file.hash);
         if options.verbose >= 2 {
-            println!("    moving {} to {}", src, dest);
+            println!("    moving {src} to {dest}");
         }
 
         let res = move_file(&src, &dest, use_move);
@@ -747,7 +747,7 @@ pub(crate) fn wheel_is_already_registered(
 }
 
 // fn dist_info_dirname(name: &str, version: &str, hash: &DistributionHash) -> String {
-//     format!("{},{},{}", name, version, hash)
+//     format!("{name},{version},{hash}")
 // }
 
 fn move_file(

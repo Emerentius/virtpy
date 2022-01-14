@@ -348,12 +348,12 @@ impl Virtpy {
 
             if false {
                 if path.extension() != Some("pyc") {
-                    println!("deleting {}", path);
+                    println!("deleting {path}");
                 }
             } else {
                 // not using fs_err here, because we're not bubbling the error up
                 if let Err(e) = std::fs::remove_file(&path).or_else(ignore_target_doesnt_exist) {
-                    eprintln!("failed to delete {}: {}", path, e);
+                    eprintln!("failed to delete {path}: {e}");
                 }
             }
         }
@@ -540,7 +540,7 @@ fn link_single_requirement_into_virtpy(
             let dist_info_foldername = distrib.distribution.dist_info_name();
             let target = site_packages.join(&dist_info_foldername);
             if options.verbose >= 1 {
-                println!("symlinking dist info from {} to {}", dist_info_path, target);
+                println!("symlinking dist info from {dist_info_path} to {target}");
             }
 
             symlink_dir(&dist_info_path, &target)
@@ -657,7 +657,7 @@ fn link_file_into_virtpy(
         //       condition
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => (),
         Err(err) if is_not_found(&err) => print_error_missing_file_in_record(distribution, &src),
-        Err(err) => panic!("failed to hardlink file from {} to {}: {}", src, dest, err),
+        Err(err) => panic!("failed to hardlink file from {src} to {dest}: {err}"),
     };
 }
 
@@ -936,15 +936,14 @@ impl InstallPaths {
 from distutils import dist
 from distutils.command import install
 
-distrib = dist.Distribution({{"name": "{}"}})
+distrib = dist.Distribution({{"name": "{sys_name}"}})
 inst = install.install(distrib)
 inst.finalize_options()
 
 paths = {{
     k: getattr(inst, f"install_{{k}}") for k in install.SCHEME_KEYS
 }}
-print(json.dumps(paths))"#,
-                sys_name
+print(json.dumps(paths))"#
             )
         };
 
@@ -975,7 +974,7 @@ fn install_and_register_distribution_from_file(
         "whl" => (distrib_path.to_owned(), None),
         _ => {
             if options.verbose >= 2 {
-                println!("converting to wheel: {}", distrib_path);
+                println!("converting to wheel: {distrib_path}");
             }
 
             let python = crate::python::detection::detect_from_version(python_version)?;
@@ -983,7 +982,7 @@ fn install_and_register_distribution_from_file(
                 crate::python::convert_to_wheel(&python, proj_dirs, distrib_path)?;
 
             if options.verbose >= 2 {
-                println!("wheel file placed at {}", wheel_path);
+                println!("wheel file placed at {wheel_path}");
             }
 
             (wheel_path, Some(tmp_dir))

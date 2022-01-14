@@ -41,7 +41,7 @@ pub(crate) fn unpack_wheel(wheel: &Path, dest: &StdPath) -> EResult<()> {
 
 fn check_version_support(wheel_name: &str, metadata: WheelMetadata) -> EResult<()> {
     match metadata.version.support_status() {
-        WheelVersionSupport::SupportedButNewer(supported_version) => println!("Warning: wheel {} uses a compatible, but newer version than supported: wheel format version: {}, newest supported: {}", wheel_name, metadata.version, supported_version),
+        WheelVersionSupport::SupportedButNewer(supported_version) => println!("Warning: wheel {wheel_name} uses a compatible, but newer version than supported: wheel format version: {}, newest supported: {supported_version}", metadata.version),
         WheelVersionSupport::Unsupported => bail!("wheel uses unsupported version {}", metadata.version),
         WheelVersionSupport::Supported => (),
     };
@@ -53,10 +53,10 @@ fn parse_wheel_metadata<R: Read + Seek>(
     wheel_archive: &mut zip::ZipArchive<R>,
 ) -> EResult<WheelMetadata> {
     let dist_info_name = wheel_dist_info_path(wheel_name)?;
-    let wheel_version_file = format!("{}/WHEEL", dist_info_name);
+    let wheel_version_file = format!("{dist_info_name}/WHEEL");
     let mut wheel_version_file = wheel_archive
         .by_name(&wheel_version_file)
-        .wrap_err(format!("could not find {}", wheel_version_file))?;
+        .wrap_err(format!("could not find {wheel_version_file}"))?;
     let mut wheel_metadata = String::new();
     wheel_version_file.read_to_string(&mut wheel_metadata)?;
 
