@@ -73,7 +73,7 @@ pub(crate) trait VirtpyPaths {
         let package = &normalized_distribution_name_for_wheel(package);
         self.dist_infos()
             .find(|path| dist_info_matches_package(path, package))
-            .ok_or_else(|| eyre!("failed to find dist-info for {}", package))
+            .ok_or_else(|| eyre!("failed to find dist-info for {package}"))
     }
 
     fn dist_infos(&self) -> Box<dyn Iterator<Item = PathBuf>> {
@@ -192,10 +192,7 @@ impl Virtpy {
             .take(n_max_attempts)
             .find(|path| !path.exists())
             .ok_or_else(|| {
-                eyre!(
-                    "failed to generate an unused virtpy path in {} attempts",
-                    n_max_attempts
-                )
+                eyre!("failed to generate an unused virtpy path in {n_max_attempts} attempts")
             })?;
 
         let prompt = prompt
@@ -208,10 +205,10 @@ impl Virtpy {
     pub(crate) fn from_existing(virtpy_link: &Path) -> EResult<Self> {
         match virtpy_link_status(virtpy_link).wrap_err("failed to verify virtpy")? {
             VirtpyStatus::WrongLocation { should, .. } => {
-                Err(eyre!("virtpy copied or moved from {}", should))
+                Err(eyre!("virtpy copied or moved from {should}"))
             }
             VirtpyStatus::Dangling { target } => {
-                Err(eyre!("backing storage for virtpy not found: {}", target))
+                Err(eyre!("backing storage for virtpy not found: {target}"))
             }
             VirtpyStatus::Ok { matching_virtpy } => Ok(Virtpy {
                 link: canonicalize(virtpy_link)?,
@@ -219,12 +216,7 @@ impl Virtpy {
                 python_version: python_version(&python_path(virtpy_link))?,
             }),
         }
-        .wrap_err_with(|| {
-            eyre!(
-                "the virtpy `{}` is broken, please recreate it.",
-                virtpy_link,
-            )
-        })
+        .wrap_err_with(|| eyre!("the virtpy `{virtpy_link}` is broken, please recreate it.",))
     }
 
     pub(crate) fn add_dependency_from_file(
@@ -497,8 +489,7 @@ fn link_distributions_into_virtpy(
             Some(stored_distrib) => stored_distrib,
             None => {
                 // return Err(format!(
-                //     "failed to find dist_info for distribution: {:?}",
-                //     distribution
+                //     "failed to find dist_info for distribution: {distribution:?}",
                 // )
                 // .into());
                 println!(
@@ -751,8 +742,7 @@ fn ensure_toplevel_symlinks_exist(backing_location: &Path, virtpy_location: &Pat
             symlink_file(&entry_path, &target)
         } else {
             eyre::bail!(
-                "virtpy backing contains file that's neither directory nor file: {}",
-                entry_path
+                "virtpy backing contains file that's neither directory nor file: {entry_path}"
             )
         };
         res.or_else(ignore_target_exists)?;
@@ -820,7 +810,7 @@ fn _create_bare_venv(python_path: &Path, path: &Path, prompt: &str) -> EResult<(
             .stdout(std::process::Stdio::null()),
     )
     .map(drop)
-    .wrap_err_with(|| eyre!("failed to create virtpy {}", path))
+    .wrap_err_with(|| eyre!("failed to create virtpy {path}"))
 }
 
 fn install_executables(
@@ -851,7 +841,7 @@ fn add_pip_shim(virtpy: &Virtpy, shim_info: ShimInfo<'_>) -> EResult<()> {
         .expect("internal error: invalid archive for pip shim");
     archive
         .extract(&target_path)
-        .wrap_err_with(|| eyre!("failed to extract pip shim archive to {}", target_path))?;
+        .wrap_err_with(|| eyre!("failed to extract pip shim archive to {target_path}"))?;
 
     let entry_point = EntryPoint {
         name: "pip".to_owned(),
@@ -1033,7 +1023,7 @@ mod test {
         let existent_keys = install_paths.0.keys().cloned().collect::<HashSet<_>>();
 
         let missing = required_keys.difference(&existent_keys).collect::<Vec<_>>();
-        assert!(missing.is_empty(), "missing keys: {:?}", missing);
+        assert!(missing.is_empty(), "missing keys: {missing:?}");
         Ok(())
     }
 }

@@ -28,15 +28,15 @@ impl PythonVersion {
 
 pub(crate) fn python_version(python_path: &Path) -> EResult<PythonVersion> {
     let output = check_output(std::process::Command::new(python_path).arg("--version"))
-        .wrap_err_with(|| eyre!("couldn't get python version of `{}`", python_path))?;
+        .wrap_err_with(|| eyre!("couldn't get python version of `{python_path}`"))?;
     let version = output.trim().to_owned();
     let (_, major, minor, patch) =
         lazy_regex::regex_captures!(r"Python (\d+)\.(\d+)\.(\d+)", &version)
-            .ok_or_else(|| eyre!("failed to read python version from {:?}", version))?;
+            .ok_or_else(|| eyre!("failed to read python version from {version:?}"))?;
 
     let parse_num = |num: &str| {
         num.parse::<i32>()
-            .wrap_err_with(|| eyre!("failed to parse number: \"{:?}\"", num))
+            .wrap_err_with(|| eyre!("failed to parse number: \"{num:?}\""))
     };
     Ok(PythonVersion {
         major: parse_num(major)?,
@@ -318,7 +318,7 @@ impl Distribution {
                     // The distribution name may contain hyphens itself (unlike for wheels, where they are normalized).
                     lazy_regex::regex_captures!(r"^(.+?)-([^-]+)\.tar\.gz$", filename)
                 })
-                .ok_or_else(|| eyre::eyre!("can't match {}", filename))?;
+                .ok_or_else(|| eyre::eyre!("can't match {filename}"))?;
 
         // TODO: find out if distribution.name is expected to be normalized everywhere
         // TODO: introduce special type for each expected normalization
@@ -413,7 +413,7 @@ pub(crate) fn convert_to_wheel(
 ) -> EResult<(PathBuf, tempdir::TempDir)> {
     let path = distrib_path.as_ref();
     _convert_to_wheel(python, proj_dirs, path)
-        .wrap_err_with(|| eyre!("failed to convert file to wheel: {}", path))
+        .wrap_err_with(|| eyre!("failed to convert file to wheel: {path}"))
 }
 
 fn _convert_to_wheel(

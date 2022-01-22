@@ -14,7 +14,7 @@ pub(crate) fn detect(python: &str) -> EResult<PathBuf> {
         if path.exists() {
             return Ok(path.to_owned());
         } else {
-            bail!("python not found at {}", path);
+            bail!("python not found at {path}");
         }
     }
 
@@ -102,7 +102,7 @@ fn find_executable_in_path(executable: impl AsRef<Path>) -> EResult<PathBuf> {
     };
 
     let exe_path = _find_executable_in_custom_path(executable, path.map(std::ffi::OsString::from))
-        .ok_or_else(|| eyre!("couldn't find python executable `{}` in PATH", executable))?;
+        .ok_or_else(|| eyre!("couldn't find python executable `{executable}` in PATH"))?;
     exe_path.try_into().wrap_err(INVALID_UTF8_PATH)
 }
 

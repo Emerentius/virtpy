@@ -31,7 +31,7 @@ pub(crate) fn unpack_wheel(wheel: &Path, dest: &StdPath) -> EResult<()> {
 
     archive
         .extract(dest)
-        .wrap_err_with(|| eyre!("failed to extract wheel to {:?}", dest))?;
+        .wrap_err_with(|| eyre!("failed to extract wheel to {dest:?}"))?;
     Ok(())
 }
 
@@ -65,7 +65,7 @@ fn parse_wheel_metadata<R: Read + Seek>(
 
 fn wheel_dist_info_path(wheel_name: &str) -> EResult<String> {
     let (idx, _) = wheel_name.char_indices().filter(|&(_, ch)| ch == '-')
-    .nth(1).ok_or_else(|| eyre!("deformed wheel name, could not determine distribition and version from wheel name {}", wheel_name))?;
+    .nth(1).ok_or_else(|| eyre!("deformed wheel name, could not determine distribition and version from wheel name {wheel_name}"))?;
 
     Ok(format!("{}.dist-info", &wheel_name[..idx]))
 }
@@ -90,15 +90,12 @@ impl WheelFormatVersion {
     fn from_str(version: &str) -> EResult<Self> {
         let (_, major, minor) = lazy_regex::regex_captures!(r"^(\d+)\.(\d+)$", version)
             .ok_or_else(|| {
-                eyre!(
-                    "version does not match format $MAJOR_NUM.$MINOR_NUM: {}",
-                    version
-                )
+                eyre!("version does not match format $MAJOR_NUM.$MINOR_NUM: {version}")
             })?;
 
         let parse_version = |num: &str, info: &str| {
             num.parse()
-                .wrap_err_with(|| eyre!("could not parse {} version number: \"{:?}\"", info, num))
+                .wrap_err_with(|| eyre!("could not parse {info} version number: \"{num:?}\""))
         };
         Ok(Self {
             major: parse_version(major, "major")?,
@@ -164,13 +161,13 @@ impl WheelMetadata {
         {
             let (key, value) = line
                 .split_once(": ")
-                .ok_or_else(|| eyre!("found key without value: {:?}", line))?;
+                .ok_or_else(|| eyre!("found key without value: {line:?}"))?;
             key_values.entry(key).or_default().push(value);
         }
 
         let get_unique_optional = |key| match key_values.get(key) {
             Some(x) if x.len() == 1 => Ok(Some(x[0].to_owned())),
-            Some(_) => Err(eyre!("multiple key-value pairs for key {}", key)),
+            Some(_) => Err(eyre!("multiple key-value pairs for key {key}")),
             None => Ok(None),
         };
 
@@ -182,7 +179,7 @@ impl WheelMetadata {
         let parse_bool = |value| match value {
             "true" => Ok(true),
             "false" => Ok(false),
-            _ => Err(eyre!("invalid value for boolean: {:?}", value)),
+            _ => Err(eyre!("invalid value for boolean: {value:?}")),
         };
 
         Ok(WheelMetadata {
@@ -297,7 +294,7 @@ impl WheelRecord {
     pub(crate) fn save_to_file(&self, dest: impl AsRef<Path>) -> EResult<()> {
         let dest = dest.as_ref();
         self._save_to_file(dest)
-            .wrap_err_with(|| eyre!("failed to save record to {:?}", dest))
+            .wrap_err_with(|| eyre!("failed to save record to {dest:?}"))
     }
 
     fn _save_to_file(&self, dest: &Path) -> EResult<()> {

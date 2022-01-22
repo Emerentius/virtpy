@@ -142,7 +142,7 @@ const DIST_HASH_FILE: &str = "DISTRIBUTION_HASH";
 
 fn check_output(cmd: &mut std::process::Command) -> EResult<String> {
     String::from_utf8(_check_output(cmd)?)
-        .wrap_err_with(|| eyre!("output isn't valid utf8 for {:?}", cmd))
+        .wrap_err_with(|| eyre!("output isn't valid utf8 for {cmd:?}"))
 }
 
 fn check_status(cmd: &mut std::process::Command) -> EResult<()> {
@@ -153,7 +153,7 @@ fn _check_output(cmd: &mut std::process::Command) -> EResult<Vec<u8>> {
     let output = cmd.output()?;
     ensure!(output.status.success(), {
         let error = String::from_utf8_lossy(&output.stderr);
-        eyre!("command failed\n    {:?}:\n{}", cmd, error)
+        eyre!("command failed\n    {cmd:?}:\n{error}")
     });
     Ok(output.stdout)
 }
@@ -418,7 +418,7 @@ fn main() -> EResult<()> {
             let mut any_errors = false;
             for package in package {
                 match delete_executable_virtpy(&proj_dirs, &package)
-                    .wrap_err(eyre!("failed to uninstall {}", package))
+                    .wrap_err(eyre!("failed to uninstall {package}"))
                 {
                     Ok(()) => println!("uninstalled {package}."),
                     Err(err) => {
@@ -533,7 +533,7 @@ fn install_executable_package(
         .wrap_err("failed to install package into virtpy")
         .wrap_err_with(|| match virtpy.pip_shim_log() {
             Ok(log) => eyre!("{}", log.unwrap_or("no log found".into())),
-            Err(err) => eyre!("failed to read pip_shim_log: {}", err),
+            Err(err) => eyre!("failed to read pip_shim_log: {err}"),
         })?;
 
     // {
@@ -656,9 +656,7 @@ fn _relative_path(base: &Path, path: &Path) -> PathBuf {
     // TODO: convert to error
     assert!(
         base.is_absolute() && path.is_absolute() || base.is_relative() && path.is_relative(),
-        "paths need to be both relative or both absolute: {:?}, {:?}",
-        base,
-        path
+        "paths need to be both relative or both absolute: {base:?}, {path:?}",
     );
     // can't assert this, because it requires IO and this function should be pure. But it SHOULD be true.
     //assert!(base.is_dir());
