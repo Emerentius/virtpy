@@ -5,7 +5,7 @@ virtpy creates Python [venv](https://docs.python.org/3/library/venv.html)s where
 The name stands for <b>virt</b>ual <b>py</b>thon and is subject to change. The entire project is an early prototype. Expect bugs and crashes.
 
 # Requirements
-* Python3  
+* Python3.8+  
   with
   * a modern-ish pip version
   * the `wheel` module available globally for python.
