@@ -230,7 +230,6 @@ pub(crate) fn is_path_of_executable(path: &Utf8Path) -> bool {
 pub(crate) struct WheelRecord {
     // stored separately just so we can easily recreate the line for the RECORD itself
     // without making paths and filesizes optional for all other files.
-    // If `None`, don't write a RECORD line.
     pub(crate) record_path: PathBuf,
     // All files in the record except for the record itself.
     pub(crate) files: Vec<RecordEntry>,
@@ -263,10 +262,48 @@ pub(crate) struct RecordEntry {
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash, Clone)]
-struct MaybeRecordEntry {
-    path: PathBuf,
-    hash: String,
-    filesize: Option<u64>,
+pub(crate) struct MaybeRecordEntry {
+    pub(crate) path: PathBuf,
+    pub(crate) hash: String,
+    pub(crate) filesize: Option<u64>,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub(crate) enum RecordEntryError {
+    #[error("record entry has no filesize")]
+    MissingFilesize,
+    #[error("record entry has invalid hash: {0}")]
+    InvalidHash(String),
+}
+
+impl TryFrom<MaybeRecordEntry> for RecordEntry {
+    type Error = RecordEntryError;
+
+    fn try_from(maybe_entry: MaybeRecordEntry) -> Result<Self, Self::Error> {
+        let filesize = maybe_entry
+            .filesize
+            .ok_or(RecordEntryError::MissingFilesize)?;
+        let hash = maybe_entry.hash;
+        if hash.len() != 50 || !hash.starts_with("sha256=") {
+            return Err(RecordEntryError::InvalidHash(hash));
+        }
+
+        Ok(Self {
+            path: maybe_entry.path,
+            hash: FileHash(hash),
+            filesize,
+        })
+    }
+}
+
+impl From<RecordEntry> for MaybeRecordEntry {
+    fn from(entry: RecordEntry) -> Self {
+        Self {
+            path: entry.path,
+            hash: entry.hash.0,
+            filesize: Some(entry.filesize),
+        }
+    }
 }
 
 impl WheelRecord {

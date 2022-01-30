@@ -3,7 +3,7 @@ use crate::{PathBuf, ProjectDirs};
 use eyre::eyre;
 use eyre::Context;
 
-use self::wheel::RecordEntry;
+use self::wheel::{MaybeRecordEntry, RecordEntry};
 
 pub(crate) mod detection;
 pub(crate) mod wheel;
@@ -108,34 +108,45 @@ impl std::fmt::Display for DistributionHash {
     }
 }
 
-// returns all files recorded in RECORDS, except for .dist-info files
+// returns all files recorded in RECORDS
 pub(crate) fn records(
     record_path: &Path,
-) -> csv::Result<impl Iterator<Item = csv::Result<RecordEntry>>> {
+    filter_out_dist_info_files: bool,
+) -> csv::Result<impl Iterator<Item = csv::Result<MaybeRecordEntry>>> {
     let record_path = record_path.to_owned();
     Ok(csv::ReaderBuilder::new()
         .has_headers(false)
         .from_path(&record_path)?
         .into_records()
-        .filter_map(move |record| {
-            let record = match record {
-                Ok(rec) => rec,
-                Err(err) => return Some(Err(err)),
-            };
+        .map(move |record| -> csv::Result<MaybeRecordEntry> {
+            let record = record?;
             let path = &record[0];
             let path = Path::new(path);
             // this isn't true, the path may be absolute but that's not supported yet
             assert!(path.is_relative(), "record: {record_path}, path: {path}");
-            let first = path
+
+            record.deserialize(None)
+        })
+        // Some use cases require to skip the files dist-info, if using the old install method
+        // TODO: delete with rest of deprecated code when compatibility is dropped
+        .filter(move |record| {
+            if !filter_out_dist_info_files {
+                return true;
+            }
+            let record = match record {
+                Ok(r) => r,
+                Err(_) => return true,
+            };
+
+            let first = record
+                .path
                 .components()
                 .find_map(|comp| match comp {
                     camino::Utf8Component::Normal(path) => Some(path),
                     _ => None,
                 })
                 .unwrap();
-            let is_dist_info = first.ends_with(".dist-info");
-
-            (!is_dist_info).then(|| record.deserialize(None))
+            !first.ends_with(".dist-info")
         }))
 }
 

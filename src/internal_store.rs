@@ -1,6 +1,7 @@
 use eyre::{ensure, eyre, WrapErr};
 use fs_err::File;
 
+use crate::python::wheel::MaybeRecordEntry;
 use crate::python::{
     print_error_missing_file_in_record, records, Distribution, DistributionHash, EntryPoint,
     FileHash, PythonVersion,
@@ -280,6 +281,7 @@ fn files_of_distribution(
                 .records(proj_dirs)
                 .unwrap()
                 .map(Result::unwrap)
+                .flat_map(RecordEntry::try_from)
                 .filter(|record| {
                     // FIXME: files with ../../
                     proj_dirs.package_file(&record.hash).exists()
@@ -528,13 +530,19 @@ impl StoredDistribution {
     fn records(
         &self,
         project_dirs: &ProjectDirs,
-    ) -> EResult<Box<dyn Iterator<Item = EResult<RecordEntry>>>> {
+    ) -> EResult<Box<dyn Iterator<Item = EResult<MaybeRecordEntry>>>> {
         let record = self.dist_info_file(project_dirs, "RECORD").unwrap();
         Ok(match self.installed_via {
-            StoredDistributionType::FromPip => Box::new(records(&record)?.map(|rec| Ok(rec?))),
-            StoredDistributionType::FromWheel => {
-                Box::new(WheelRecord::from_file(&record)?.files.into_iter().map(Ok))
+            StoredDistributionType::FromPip => {
+                Box::new(records(&record, false)?.map(|rec| Ok(rec?)))
             }
+            StoredDistributionType::FromWheel => Box::new(
+                WheelRecord::from_file(&record)?
+                    .files
+                    .into_iter()
+                    .map(|entry| entry.into())
+                    .map(Ok),
+            ),
         })
     }
 
@@ -772,7 +780,7 @@ mod test {
 
     #[test]
     fn test_records() {
-        records("test_files/RECORD".as_ref())
+        records("test_files/RECORD".as_ref(), false)
             .unwrap()
             .map(Result::unwrap)
             .for_each(drop);

@@ -258,7 +258,7 @@ impl Virtpy {
         for dir_entry in site_packages.as_std_path().fs_err_read_dir()? {
             let dir_entry = dir_entry?;
             // use fs_err::metadata instead of DirEntry::metadata so it traverses symlinks
-            // as dist-info dirs are currently symlinked in.
+            // as dist-info dirs were symlinked in when using the old pip install method.
             let filetype = fs_err::metadata(dir_entry.path())?.file_type();
             if !filetype.is_dir() {
                 continue;
@@ -285,9 +285,13 @@ impl Virtpy {
         for info in dist_infos {
             let dist_infos = site_packages.join(&info);
             let record_file = dist_infos.join("RECORD");
-            // TODO: the new install method creates a real .dist-info directory and so we must delete
-            //       its contents as well. records() filters those out.
-            for file in records(&record_file)? {
+
+            let was_installed_via_old_method = dist_infos
+                .as_std_path()
+                .fs_err_symlink_metadata()?
+                .is_symlink();
+
+            for file in records(&record_file, was_installed_via_old_method)? {
                 let file = file?;
 
                 let path = site_packages.join(file.path);
@@ -302,9 +306,9 @@ impl Virtpy {
                 files_to_remove.push(path);
             }
 
-            // NOTE: when dist-infos will not be symlinked in, this will cause an error
-            //       when file deletion is attempted.
-            files_to_remove.push(dist_infos);
+            if was_installed_via_old_method {
+                files_to_remove.push(dist_infos);
+            }
         }
 
         // Collect the directories so they can be deleted, if empty.
@@ -373,14 +377,10 @@ impl Virtpy {
         #[cfg(unix)]
         {
             let python = self.python();
+            let link = &self.link;
             let python: PathBuf =
                 PathBuf::try_from(python.as_std_path().fs_err_canonicalize().wrap_err_with(
-                    || {
-                        eyre!(
-                            "failed to find path of the global python used by virtpy at {}",
-                            self.link
-                        )
-                    },
+                    || eyre!("failed to find path of the global python used by virtpy at {link}"),
                 )?)
                 .expect(INVALID_UTF8_PATH);
             Ok(python)
@@ -597,10 +597,11 @@ fn link_files_from_record_into_virtpy(
     proj_dirs: &ProjectDirs,
     distribution: &Distribution,
 ) {
-    for record in records(&dist_info_path.join("RECORD"))
+    for record in records(&dist_info_path.join("RECORD"), true)
         .unwrap()
         .map(Result::unwrap)
     {
+        let record = RecordEntry::try_from(record).unwrap();
         let dest = match remove_leading_parent_dirs(&record.path) {
             Ok(path) => {
                 let toplevel_dirs = ["bin", "Scripts", "include", "lib", "lib64", "share"];

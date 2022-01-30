@@ -1167,6 +1167,7 @@ dependencies = [
  "sha2",
  "structopt",
  "tempdir",
+ "thiserror",
  "walkdir",
  "zip",
 ]
