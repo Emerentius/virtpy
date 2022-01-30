@@ -326,12 +326,20 @@ impl Virtpy {
         //       3 directories, 0 files
         //
         //       maybe we need to take into account *.dist-info/top_level.txt for this.
-        let directories = files_to_remove
-            .iter()
-            // parent() should never return None,
-            // but it's gonna return an error anyway when deletion is attempted.
-            .filter_map(|path| path.parent())
-            .collect::<HashSet<_>>();
+
+        // add all parent dirs of files to be removed to a list for later deletion
+        let mut directories = HashSet::new();
+        for path in &files_to_remove {
+            let mut path = path.to_owned();
+            while path.pop() {
+                if path == site_packages {
+                    break;
+                }
+                if !directories.insert(path.clone()) {
+                    break;
+                }
+            }
+        }
         let directories = directories
             .into_iter()
             .sorted_by_key(|path| std::cmp::Reverse(path.iter().count()))
