@@ -886,8 +886,13 @@ fn virtpy_link_supposed_location(virtpy_link: &Path) -> std::io::Result<PathBuf>
 
 #[derive(Debug)]
 pub(crate) enum VirtpyBackingStatus {
-    Ok { matching_link: PathBuf },
-    Orphaned { link: PathBuf },
+    #[allow(unused)]
+    Ok {
+        matching_link: PathBuf,
+    },
+    Orphaned {
+        link: PathBuf,
+    },
 }
 
 pub(crate) fn virtpy_status(virtpy_path: &Path) -> EResult<VirtpyBackingStatus> {
