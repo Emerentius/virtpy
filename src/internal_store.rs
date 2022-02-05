@@ -2,16 +2,13 @@ use eyre::{bail, ensure, eyre, WrapErr};
 use fs_err::File;
 
 use crate::python::wheel::MaybeRecordEntry;
-use crate::python::{
-    print_error_missing_file_in_record, records, Distribution, DistributionHash, EntryPoint,
-    FileHash, PythonVersion,
-};
+use crate::python::{records, Distribution, DistributionHash, EntryPoint, FileHash, PythonVersion};
 use crate::venv::{
     virtpy_link_location, virtpy_link_target, virtpy_status, VirtpyBacking, VirtpyBackingStatus,
     VirtpyPaths,
 };
 use crate::{
-    delete_virtpy_backing, is_not_found, package_info_from_dist_info_dirname,
+    delete_virtpy_backing, package_info_from_dist_info_dirname,
     python::wheel::{RecordEntry, WheelRecord},
     EResult, Options, Path, PathBuf, ProjectDirs, INVALID_UTF8_PATH,
 };
@@ -125,7 +122,7 @@ pub(crate) fn print_verify_store(proj_dirs: &ProjectDirs) {
     {
         // the path is also the hash
         let path: PathBuf = file.path().try_into().expect(INVALID_UTF8_PATH);
-        let base64_hash = FileHash::from_file(&path);
+        let base64_hash = FileHash::from_file(&path).unwrap();
         if base64_hash != FileHash::from_filename(&path) {
             println!("doesn't match hash: {path}, hash = {base64_hash}");
             any_error = true;
@@ -391,25 +388,17 @@ fn register_distribution_files_of_wheel(
             println!("    moving {src} to {dest}");
         }
 
-        let res = fs_err::rename(&src, &dest);
-        match &res {
-            // TODO: Add check of RECORD during wheel installation before registration.
-            //       It must be complete and correct so we should never run into this.
-            Err(err) if is_not_found(err) => {
-                print_error_missing_file_in_record(distribution, file.path.as_ref())
-            }
-            _ => {
-                res.unwrap();
-            }
-        };
+        fs_err::rename(&src, &dest).wrap_err("failed to move file into central store")?;
     }
-
     let repo_records_dir = proj_dirs.records().join(distribution.as_csv());
     fs_err::create_dir_all(&repo_records_dir)?;
     wheel_record
         .save_to_file(repo_records_dir.join("RECORD"))
         .wrap_err("failed to save RECORD")?;
 
+    // Any error happening prior to the distribution being registered in stored_distributions
+    // and saved to disk will result in unreferenced files in the central store which can be
+    // removed by a garbage collection run.
     stored_distributions.insert(distribution.sha.clone(), stored_distrib);
     Ok(())
 }
@@ -707,7 +696,8 @@ pub(crate) fn register_new_distribution(
     let wheel_record = crate::python::wheel::WheelRecord::from_file(&src_dist_info.join("RECORD"))
         .wrap_err("couldn't get dist-info/RECORD")?;
 
-    check_file_hashes_match_record(install_folder, &wheel_record)?;
+    check_file_hashes_match_record(install_folder, &wheel_record)
+        .wrap_err("failed to verify wheel record")?;
 
     let mut all_stored_distributions = StoredDistributions::load(proj_dirs)?;
     let stored_distributions = all_stored_distributions
@@ -739,7 +729,7 @@ fn check_file_hashes_match_record(
 ) -> EResult<()> {
     for entry in &wheel_record.files {
         let path = install_folder.join(&entry.path);
-        let hash = FileHash::from_file(&path);
+        let hash = FileHash::from_file(&path)?;
         if hash != entry.hash {
             bail!(
                 "hash mismatch in package files: '{}', expected: {}, found: {hash}",

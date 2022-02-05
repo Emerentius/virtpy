@@ -76,14 +76,16 @@ impl AsRef<Path> for FileHash {
 }
 
 impl DistributionHash {
-    pub(crate) fn from_file(path: &Path) -> Self {
-        Self(format!("sha256={}", hash_of_file_sha256_base16(path)))
+    pub(crate) fn from_file(path: &Path) -> EResult<Self> {
+        let hash = hash_of_file_sha256_base16(path)?;
+        Ok(Self(format!("sha256={hash}")))
     }
 }
 
 impl FileHash {
-    pub(crate) fn from_file(path: &Path) -> Self {
-        Self::from_hash(hash_of_file_sha256_base64(path))
+    pub(crate) fn from_file(path: &Path) -> EResult<Self> {
+        let hash = hash_of_file_sha256_base64(path)?;
+        Ok(Self::from_hash(hash))
     }
 
     // files in the repository are named after their hash, so we can just use the filename
@@ -374,14 +376,17 @@ pub(crate) fn entrypoints(path: &Path) -> Option<Vec<EntryPoint>> {
     Some(entrypoints)
 }
 
-fn hash_of_file_sha256_base64(path: &Path) -> String {
-    let hash = _hash_of_file_sha256(path);
-    base64::encode_config(hash.as_ref(), base64::URL_SAFE_NO_PAD)
+fn hash_of_file_sha256_base64(path: &Path) -> EResult<String> {
+    let hash = _hash_of_file_sha256(path)?;
+    Ok(base64::encode_config(
+        hash.as_ref(),
+        base64::URL_SAFE_NO_PAD,
+    ))
 }
 
-fn hash_of_file_sha256_base16(path: &Path) -> String {
-    let hash = _hash_of_file_sha256(path);
-    base16::encode_lower(hash.as_ref())
+fn hash_of_file_sha256_base16(path: &Path) -> EResult<String> {
+    let hash = _hash_of_file_sha256(path)?;
+    Ok(base16::encode_lower(hash.as_ref()))
 }
 
 // fn hash_of_reader_sha256_base16(reader: impl std::io::Read) -> String {
@@ -394,11 +399,11 @@ fn hash_of_reader_sha256_base64(reader: impl std::io::Read) -> String {
     base64::encode_config(hash.as_ref(), base64::URL_SAFE_NO_PAD)
 }
 
-fn _hash_of_file_sha256(path: &Path) -> impl AsRef<[u8]> {
-    let file = fs_err::File::open(path).unwrap();
+fn _hash_of_file_sha256(path: &Path) -> EResult<impl AsRef<[u8]>> {
+    let file = fs_err::File::open(path)?;
     // significant speed improvement, but not huge
     let file = std::io::BufReader::new(file);
-    _hash_of_reader_sha256(file)
+    Ok(_hash_of_reader_sha256(file))
 }
 
 fn _hash_of_reader_sha256(mut reader: impl std::io::Read) -> impl AsRef<[u8]> {

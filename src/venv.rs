@@ -225,7 +225,7 @@ impl Virtpy {
         file: &Path,
         options: Options,
     ) -> EResult<()> {
-        let file_hash = DistributionHash::from_file(file);
+        let file_hash = DistributionHash::from_file(file)?;
         let distribution =
             Distribution::from_package_name(file.file_name().unwrap(), file_hash).unwrap();
 
