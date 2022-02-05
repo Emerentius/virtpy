@@ -1,5 +1,6 @@
 use eyre::{bail, ensure, eyre, WrapErr};
 use fs_err::File;
+use itertools::Itertools;
 
 use crate::python::wheel::MaybeRecordEntry;
 use crate::python::{records, Distribution, DistributionHash, EntryPoint, FileHash, PythonVersion};
@@ -520,16 +521,13 @@ impl StoredDistribution {
     // The executables of this distribution that can be added to the global install dir.
     // For wheel installs this is both entrypoints and scripts from the data dir, but
     // for the legacy pip installed distributions it is just the entrypoints.
-    pub(crate) fn executable_names(
-        &self,
-        proj_dirs: &ProjectDirs,
-    ) -> eyre::Result<HashSet<String>> {
+    pub(crate) fn executable_names(&self, proj_dirs: &ProjectDirs) -> eyre::Result<Vec<String>> {
         let entrypoint_exes = self
             .entrypoints(proj_dirs)
             .unwrap_or_default()
             .into_iter()
             .map(|ep| ep.name)
-            .collect::<HashSet<_>>();
+            .collect::<Vec<_>>();
         let mut exes = entrypoint_exes.clone();
         if self.installed_via == StoredDistributionType::FromWheel {
             let record = WheelRecord::from_file(self.dist_info_file(proj_dirs, "RECORD").unwrap())?;
@@ -540,13 +538,10 @@ impl StoredDistribution {
             let data_exes = data_exes
                 .into_iter()
                 .map(|entry| entry.path.file_name().unwrap().to_owned())
-                .collect::<HashSet<_>>();
+                .collect_vec();
+            let all_exes = entrypoint_exes.iter().chain(data_exes.iter());
+            let duplicates = all_exes.duplicates().map(String::as_str).collect_vec();
 
-            let duplicates = entrypoint_exes
-                .intersection(&data_exes)
-                .cloned()
-                .collect::<Vec<_>>();
-            // TODO: actually, this could happen even within entrypoints only.
             ensure!(
                 duplicates.is_empty(),
                 "distribution {} contains executables with duplicate names: {}",
