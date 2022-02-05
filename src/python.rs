@@ -202,7 +202,7 @@ if __name__ == '__main__':
         dest: &Path,
         python_path: &Path,
         site_packages: &Path,
-    ) -> std::io::Result<RecordEntry> {
+    ) -> EResult<RecordEntry> {
         let dest = match dest.is_dir() {
             true => dest.join(&self.name),
             false => dest.to_owned(),
@@ -217,7 +217,7 @@ pub(crate) fn generate_executable(
     python_path: &Path,
     code: &str,
     site_packages: &Path,
-) -> std::io::Result<RecordEntry> {
+) -> EResult<RecordEntry> {
     let shebang = format!("#!{python_path}");
     #[cfg(unix)]
     {
@@ -247,11 +247,7 @@ pub(crate) fn generate_executable(
     }
 }
 
-fn _generate_executable(
-    dest: &Path,
-    bytes: &[u8],
-    site_packages: &Path,
-) -> std::io::Result<RecordEntry> {
+fn _generate_executable(dest: &Path, bytes: &[u8], site_packages: &Path) -> EResult<RecordEntry> {
     let mut opts = fs_err::OpenOptions::new();
     // create_new causes failure if the target already exists
     // TODO: handle error
@@ -266,7 +262,7 @@ fn _generate_executable(
     use std::io::Write;
     f.write_all(bytes)?;
     Ok(RecordEntry {
-        path: relative_path(site_packages, dest),
+        path: relative_path(site_packages, dest)?,
         hash: FileHash::from_reader(bytes),
         filesize: bytes.len() as u64,
     })

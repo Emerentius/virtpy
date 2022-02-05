@@ -580,7 +580,7 @@ fn link_single_requirement_into_virtpy(
             fs_err::write(&hash_path, &dist_hash)
                 .wrap_err("failed to write distribution hash file")?;
             record.files.push(RecordEntry {
-                path: relative_path(site_packages, hash_path),
+                path: relative_path(site_packages, hash_path)?,
                 hash: FileHash::from_reader(dist_hash.as_bytes()), // It's a hash of a hash => can't just copy it
                 filesize: dist_hash.len() as u64,
             });
@@ -694,7 +694,7 @@ fn link_files_from_record_into_virtpy_new(
                 let dest = base_path.join(subpath);
                 ensure_dir_exists(&dest);
                 let is_executable = subdir == "scripts";
-                record.path = relative_path(site_packages, &dest);
+                record.path = relative_path(site_packages, &dest)?;
                 if !is_executable {
                     link_file_into_virtpy(proj_dirs, record, dest, distribution);
                 } else {

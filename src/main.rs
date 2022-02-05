@@ -647,14 +647,14 @@ fn dist_info_matches_package(dist_info: &Path, package: &str) -> bool {
 }
 
 // Returns a relative path that can be joined onto `base` to get `path`.
-// Both `base` and `path` must be absolute.
-fn relative_path(base: impl AsRef<Path>, path: impl AsRef<Path>) -> PathBuf {
+// `base` and `path` must be both be absolute or both relative.
+// May not return a valid result, if `base` contains symlinks.
+fn relative_path(base: impl AsRef<Path>, path: impl AsRef<Path>) -> EResult<PathBuf> {
     _relative_path(base.as_ref(), path.as_ref())
 }
 
-fn _relative_path(base: &Path, path: &Path) -> PathBuf {
-    // TODO: convert to error
-    assert!(
+fn _relative_path(base: &Path, path: &Path) -> EResult<PathBuf> {
+    ensure!(
         base.is_absolute() && path.is_absolute() || base.is_relative() && path.is_relative(),
         "paths need to be both relative or both absolute: {base:?}, {path:?}",
     );
@@ -680,7 +680,7 @@ fn _relative_path(base: &Path, path: &Path) -> PathBuf {
     let mut rel_path = PathBuf::new();
     rel_path.extend(iter_base.map(|_| ".."));
     rel_path.push(iter_path.as_path());
-    rel_path
+    Ok(rel_path)
 }
 
 fn remove_leading_parent_dirs(mut path: &Utf8Path) -> Result<&Utf8Path, &Utf8Path> {
@@ -809,7 +809,7 @@ mod test {
     fn relative_path_is_correct() {
         // I bet there's a library for this
         let case = |base: &str, path: &str, expected: &str| {
-            assert_eq!(relative_path(base, path), Path::new(expected))
+            assert_eq!(relative_path(base, path).unwrap(), Path::new(expected))
         };
 
         case("/c0/c1/a0/a1/", "/c0/c1/b0/b1", "../../b0/b1");
