@@ -377,9 +377,6 @@ fn register_distribution_files_of_wheel(
         installed_via: StoredDistributionType::FromWheel,
     };
 
-    // let use_move = can_move_files(&proj_dirs.package_files(), install_folder).unwrap_or(false);
-    let use_move = true;
-
     if options.verbose >= 1 {
         println!(
             "Adding {} {} to central store.",
@@ -395,7 +392,7 @@ fn register_distribution_files_of_wheel(
             println!("    moving {src} to {dest}");
         }
 
-        let res = move_file(&src, &dest, use_move);
+        let res = fs_err::rename(&src, &dest);
         match &res {
             // TODO: Add check of RECORD during wheel installation before registration.
             //       It must be complete and correct so we should never run into this.
@@ -791,26 +788,6 @@ pub(crate) fn wheel_is_already_registered(
     }
 
     Ok(false)
-}
-
-// fn dist_info_dirname(name: &str, version: &str, hash: &DistributionHash) -> String {
-//     format!("{name},{version},{hash}")
-// }
-
-fn move_file(
-    src: impl AsRef<StdPath>,
-    dst: impl AsRef<StdPath>,
-    use_move: bool,
-) -> std::io::Result<()> {
-    _move_file(src.as_ref(), dst.as_ref(), use_move)
-}
-
-fn _move_file(src: &StdPath, dst: &StdPath, use_move: bool) -> std::io::Result<()> {
-    if use_move {
-        fs_err::rename(src, dst)
-    } else {
-        fs_err::copy(src, dst).map(drop)
-    }
 }
 
 #[cfg(test)]
