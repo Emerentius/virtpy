@@ -393,11 +393,6 @@ fn hash_of_file_sha256_base16(path: &Path) -> EResult<String> {
     Ok(base16::encode_lower(hash.as_ref()))
 }
 
-// fn hash_of_reader_sha256_base16(reader: impl std::io::Read) -> String {
-//     let hash = _hash_of_reader_sha256(reader);
-//     base16::encode_lower(hash.as_ref())
-// }
-
 fn hash_of_reader_sha256_base64(reader: impl std::io::Read) -> String {
     let hash = _hash_of_reader_sha256(reader);
     base64::encode_config(hash.as_ref(), base64::URL_SAFE_NO_PAD)

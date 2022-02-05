@@ -1,8 +1,8 @@
-use eyre::{bail, ensure, eyre, WrapErr};
+use eyre::{ensure, eyre, WrapErr};
 use fs_err::File;
 use itertools::Itertools;
 
-use crate::python::wheel::MaybeRecordEntry;
+use crate::python::wheel::{verify_wheel_contents, MaybeRecordEntry};
 use crate::python::{records, Distribution, DistributionHash, EntryPoint, FileHash, PythonVersion};
 use crate::venv::{
     virtpy_link_location, virtpy_link_target, virtpy_status, VirtpyBacking, VirtpyBackingStatus,
@@ -14,7 +14,7 @@ use crate::{
     EResult, Options, Path, PathBuf, ProjectDirs, INVALID_UTF8_PATH,
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     io::{BufReader, Seek},
 };
 
@@ -691,7 +691,7 @@ pub(crate) fn register_new_distribution(
     let wheel_record = crate::python::wheel::WheelRecord::from_file(&src_dist_info.join("RECORD"))
         .wrap_err("couldn't get dist-info/RECORD")?;
 
-    check_file_hashes_match_record(install_folder, &wheel_record)
+    verify_wheel_contents(install_folder, &wheel_record)
         .wrap_err("failed to verify wheel record")?;
 
     let mut all_stored_distributions = StoredDistributions::load(proj_dirs)?;
@@ -715,25 +715,6 @@ pub(crate) fn register_new_distribution(
         )
     })?;
     all_stored_distributions.save()?;
-    Ok(())
-}
-
-fn check_file_hashes_match_record(
-    install_folder: &Path,
-    wheel_record: &WheelRecord,
-) -> EResult<()> {
-    for entry in &wheel_record.files {
-        let path = install_folder.join(&entry.path);
-        let hash = FileHash::from_file(&path)?;
-        if hash != entry.hash {
-            bail!(
-                "hash mismatch in package files: '{}', expected: {}, found: {hash}",
-                entry.path,
-                entry.hash,
-            );
-        }
-    }
-
     Ok(())
 }
 

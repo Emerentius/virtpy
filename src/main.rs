@@ -806,27 +806,6 @@ mod test {
         Ok(())
     }
 
-    // #[test]
-    // fn existing_deps_recognized_as_not_new_by_hash() {
-    //     let proj_dir = proj_dir().unwrap();
-    //     let data_dir = proj_dir.data_dir();
-
-    //     let dist_infos = data_dir.join("dist-infos");
-    //     let existing_deps = already_installed(&dist_infos).unwrap();
-
-    //     let pseudo_reqs = existing_deps
-    //         .into_iter()
-    //         .map(|(hash, _)| python_requirements::Requirement {
-    //             name: "".into(),
-    //             available_hashes: vec![hash],
-    //             version: "".into(),
-    //             marker: None,
-    //         })
-    //         .collect::<Vec<_>>();
-    //     let new_deps = new_dependencies(&pseudo_reqs, &dist_infos).unwrap();
-    //     assert_eq!(&new_deps, &[]);
-    // }
-
     #[test]
     fn relative_path_is_correct() {
         // I bet there's a library for this

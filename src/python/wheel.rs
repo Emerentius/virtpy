@@ -35,9 +35,24 @@ pub(crate) fn unpack_wheel(wheel: &Path, dest: &StdPath) -> EResult<()> {
     Ok(())
 }
 
-// fn verify_wheel_contents(wheel_name: &str, dest: &Path) {
-//     let record = crate::records(record);
-// }
+pub(crate) fn verify_wheel_contents(
+    install_folder: &Path,
+    wheel_record: &WheelRecord,
+) -> EResult<()> {
+    for entry in &wheel_record.files {
+        let path = install_folder.join(&entry.path);
+        let hash = FileHash::from_file(&path)?;
+        if hash != entry.hash {
+            bail!(
+                "hash mismatch in package files: '{}', expected: {}, found: {hash}",
+                entry.path,
+                entry.hash,
+            );
+        }
+    }
+
+    Ok(())
+}
 
 fn check_version_support(wheel_name: &str, metadata: WheelMetadata) -> EResult<()> {
     match metadata.version.support_status() {
@@ -357,7 +372,6 @@ impl WheelRecord {
             .map(|record| record.and_then(|rec| rec.deserialize(None)))
             .collect::<Result<Vec<MaybeRecordEntry>, _>>()?;
 
-        // TODO: add verification
         let record_path = files
             .iter()
             .find(|f| {
