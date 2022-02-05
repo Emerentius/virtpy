@@ -640,17 +640,17 @@ fn link_files_from_record_into_virtpy(
                 dest
             }
         };
-        link_file_into_virtpy(proj_dirs, &record, dest, distribution);
+        link_file_into_virtpy(proj_dirs, &record.hash, dest, distribution);
     }
 }
 
 fn link_file_into_virtpy(
     proj_dirs: &ProjectDirs,
-    record: &RecordEntry, // TODO: take only hash
+    filehash: &FileHash,
     dest: PathBuf,
     distribution: &Distribution,
 ) {
-    let src = proj_dirs.package_file(&record.hash);
+    let src = proj_dirs.package_file(&filehash);
     match fs_err::hard_link(&src, &dest) {
         Ok(_) => (),
         // TODO: can this error exist? Docs don't say anything about this being a failure
@@ -696,7 +696,7 @@ fn link_files_from_record_into_virtpy_new(
                 let is_executable = subdir == "scripts";
                 record.path = relative_path(site_packages, &dest)?;
                 if !is_executable {
-                    link_file_into_virtpy(proj_dirs, record, dest, distribution);
+                    link_file_into_virtpy(proj_dirs, &record.hash, dest, distribution);
                 } else {
                     let src = proj_dirs.package_file(&record.hash);
                     let script = fs_err::read_to_string(src)?;
@@ -715,14 +715,14 @@ fn link_files_from_record_into_virtpy_new(
                             &virtpy.site_packages(),
                         )?;
                     } else {
-                        link_file_into_virtpy(proj_dirs, record, dest, distribution);
+                        link_file_into_virtpy(proj_dirs, &record.hash, dest, distribution);
                     }
                 }
             }
             Err(_) => {
                 let dest = site_packages.join(&record.path);
                 ensure_dir_exists(&dest);
-                link_file_into_virtpy(proj_dirs, record, dest, distribution);
+                link_file_into_virtpy(proj_dirs, &record.hash, dest, distribution);
             }
         };
     }
