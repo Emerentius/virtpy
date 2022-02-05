@@ -227,7 +227,7 @@ impl Virtpy {
     ) -> EResult<()> {
         let file_hash = DistributionHash::from_file(file);
         let distribution =
-            Distribution::from_package_name(file.file_name().unwrap(), file_hash.clone()).unwrap();
+            Distribution::from_package_name(file.file_name().unwrap(), file_hash).unwrap();
 
         if !wheel_is_already_registered(&distribution, proj_dirs, self.python_version)? {
             install_and_register_distribution_from_file(
@@ -796,7 +796,7 @@ fn _create_virtpy(
     }
 
     let checked_virtpy = Virtpy {
-        link: path.to_owned(),
+        link: path,
         backing: central_path,
         // Not all users of this function may need the python version, but it's
         // cheap to get and simpler to just always query.

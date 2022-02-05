@@ -15,7 +15,6 @@ use crate::{
     python::wheel::{RecordEntry, WheelRecord},
     EResult, Options, Path, PathBuf, ProjectDirs, INVALID_UTF8_PATH,
 };
-use std::path::Path as StdPath;
 use std::{
     collections::{HashMap, HashSet},
     io::{BufReader, Seek},

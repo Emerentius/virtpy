@@ -532,7 +532,7 @@ fn install_executable_package(
     check_status(&mut cmd)
         .wrap_err("failed to install package into virtpy")
         .wrap_err_with(|| match virtpy.pip_shim_log() {
-            Ok(log) => eyre!("{}", log.unwrap_or("no log found".into())),
+            Ok(log) => eyre!("{}", log.as_deref().unwrap_or("no log found")),
             Err(err) => eyre!("failed to read pip_shim_log: {err}"),
         })?;
 
