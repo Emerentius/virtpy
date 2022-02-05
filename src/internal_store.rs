@@ -729,7 +729,6 @@ pub(crate) fn wheel_is_already_registered(
         distribution: distribution.clone(),
         installed_via: StoredDistributionType::FromWheel,
     };
-    let dst_record_dir = proj_dirs.records().join(distribution.as_csv());
 
     let stored_distribs = stored_distributions
         .0
@@ -740,12 +739,26 @@ pub(crate) fn wheel_is_already_registered(
             return Ok(true);
         }
     };
-    if dst_record_dir.exists() {
-        // TODO: add check that it really is the same package
+    // Check if the package has already been installed for another python version.
+    // If so, just add it for the current python version.
+    // NOTE: This is a holdover from the old pip install method where we used
+    //       poetry to generate a requirements file. That file contained
+    //       a list of hashes for each package and it was up to us to figure out
+    //       if a given package was compatible with a python version.
+    //       This approach is now deprecated and so `StoredDistributions` should be
+    //       changed to no longer keep this distinction as soon as the residual support
+    //       for packages installed via the old method are removed.
+    if stored_distributions
+        .0
+        .values()
+        .any(|a| a.contains_key(&distribution.sha))
+    {
         // add it here, because it may have been installed by a different
         // python version. In that case, the current python version's list
         // may be missing this distribution.
-        stored_distribs
+        stored_distributions
+            .0
+            .entry(python_version.as_string_without_patch())
             .or_default()
             .insert(distribution.sha.clone(), stored_distrib);
         stored_distributions.save()?;
