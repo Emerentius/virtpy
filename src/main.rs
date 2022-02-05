@@ -2,6 +2,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use eyre::bail;
 use eyre::{ensure, eyre, WrapErr};
 use internal_store::{StoredDistribution, StoredDistributionType};
+use itertools::Itertools;
 use std::path::Path as StdPath;
 use structopt::StructOpt;
 
@@ -82,6 +83,7 @@ enum Command {
     Path(PathCmd),
     InternalStore(InternalStoreCmd),
     InternalUseOnly(InternalUseOnly),
+    ListAll,
 }
 
 #[derive(StructOpt)]
@@ -455,6 +457,26 @@ fn main() -> EResult<()> {
         }
         Command::InternalUseOnly(InternalUseOnly::GlobalPython { virtpy }) => {
             println!("{}", Virtpy::from_existing(&virtpy)?.global_python()?);
+        }
+        Command::ListAll => {
+            // TODO: error handling
+            let link_locations = proj_dirs
+                .virtpys()
+                .read_dir()?
+                .map(|entry| entry.unwrap())
+                .filter(|entry| entry.path().join("virtpy_central_metadata").exists())
+                .map(|entry| {
+                    entry
+                        .path()
+                        .join("virtpy_central_metadata")
+                        .join("link_location")
+                })
+                .map(|path| fs_err::read_to_string(path).unwrap())
+                .sorted()
+                .collect_vec();
+            for path in link_locations {
+                println!("{path}");
+            }
         }
     }
 

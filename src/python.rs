@@ -259,7 +259,6 @@ fn _generate_windows_executable(
 fn _generate_executable(dest: &Path, bytes: &[u8], site_packages: &Path) -> EResult<RecordEntry> {
     let mut opts = fs_err::OpenOptions::new();
     // create_new causes failure if the target already exists
-    // TODO: handle error
     opts.write(true).create_new(true);
     #[cfg(unix)]
     {
