@@ -229,7 +229,7 @@ impl Virtpy {
         let distribution =
             Distribution::from_package_name(file.file_name().unwrap(), file_hash.clone()).unwrap();
 
-        if !wheel_is_already_registered(file_hash, proj_dirs, self.python_version)? {
+        if !wheel_is_already_registered(&distribution, proj_dirs, self.python_version)? {
             install_and_register_distribution_from_file(
                 proj_dirs,
                 file,
