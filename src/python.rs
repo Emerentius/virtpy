@@ -226,25 +226,34 @@ pub(crate) fn generate_executable(
 
     #[cfg(windows)]
     {
-        // Generate .exe wrappers for python scripts.
-        // This uses the same launcher as the python module "distlib", which is what pip uses
-        // to generate exe wrappers.
-        // The launcher needs to be concatenated with a shebang and a zip of the code to be executed.
-        // The launcher code is at https://bitbucket.org/vinay.sajip/simple_launcher/
-
-        // 32 bit launchers and GUI launchers are not supported (yet)
-        use std::io::Write;
-        static LAUNCHER_CODE: &[u8] = include_bytes!("../windows_exe_wrappers/t64.exe");
-        let mut zip_writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::<u8>::new()));
-        zip_writer.start_file("__main__.py", zip::write::FileOptions::default())?;
-        write!(&mut zip_writer, "{code}").unwrap();
-        let mut wrapper = LAUNCHER_CODE.to_vec();
-        wrapper.extend(shebang.as_bytes());
-        wrapper.extend(b".exe");
-        wrapper.extend(b"\r\n");
-        wrapper.extend(zip_writer.finish()?.into_inner());
-        _generate_executable(&dest.with_extension("exe"), &wrapper, site_packages)
+        _generate_windows_executable(dest, shebang, code, site_packages)
     }
+}
+
+fn _generate_windows_executable(
+    dest: &Path,
+    shebang: &str,
+    code: &str,
+    site_packages: &Path,
+) -> EResult<RecordEntry> {
+    // Generate .exe wrappers for python scripts.
+    // This uses the same launcher as the python module "distlib", which is what pip uses
+    // to generate exe wrappers.
+    // The launcher needs to be concatenated with a shebang and a zip of the code to be executed.
+    // The launcher code is at https://bitbucket.org/vinay.sajip/simple_launcher/
+
+    // 32 bit launchers and GUI launchers are not supported (yet)
+    use std::io::Write;
+    static LAUNCHER_CODE: &[u8] = include_bytes!("../windows_exe_wrappers/t64.exe");
+    let mut zip_writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::<u8>::new()));
+    zip_writer.start_file("__main__.py", zip::write::FileOptions::default())?;
+    write!(&mut zip_writer, "{code}").unwrap();
+    let mut wrapper = LAUNCHER_CODE.to_vec();
+    wrapper.extend(shebang.as_bytes());
+    wrapper.extend(b".exe");
+    wrapper.extend(b"\r\n");
+    wrapper.extend(zip_writer.finish()?.into_inner());
+    _generate_executable(&dest.with_extension("exe"), &wrapper, site_packages)
 }
 
 fn _generate_executable(dest: &Path, bytes: &[u8], site_packages: &Path) -> EResult<RecordEntry> {
