@@ -1,4 +1,4 @@
-use eyre::{ensure, eyre, WrapErr};
+use eyre::{bail, ensure, eyre, WrapErr};
 use fs_err::File;
 
 use crate::python::wheel::MaybeRecordEntry;
@@ -367,31 +367,19 @@ fn unused_package_files(proj_dirs: &ProjectDirs) -> impl Iterator<Item = PathBuf
 fn register_distribution_files_of_wheel(
     proj_dirs: &ProjectDirs,
     install_folder: &Path,
+    wheel_record: WheelRecord,
     distribution: &Distribution,
     stored_distributions: &mut HashMap<DistributionHash, StoredDistribution>,
     options: crate::Options,
 ) -> EResult<()> {
-    let dist_info_foldername = distribution.dist_info_name();
-    let src_dist_info = install_folder.join(&dist_info_foldername);
-
     let stored_distrib = StoredDistribution {
         distribution: distribution.clone(),
         installed_via: StoredDistributionType::FromWheel,
     };
-    let dst_record_dir = proj_dirs
-        .records()
-        .join(&stored_distrib.distribution.as_csv());
 
     // let use_move = can_move_files(&proj_dirs.package_files(), install_folder).unwrap_or(false);
     let use_move = true;
 
-    if dst_record_dir.exists() {
-        // add it here, because it may have been installed by a different
-        // python version. In that case, the current python version's list
-        // may be missing this distribution.
-        stored_distributions.insert(distribution.sha.clone(), stored_distrib);
-        return Ok(());
-    }
     if options.verbose >= 1 {
         println!(
             "Adding {} {} to central store.",
@@ -399,9 +387,7 @@ fn register_distribution_files_of_wheel(
         );
     }
 
-    let records = crate::python::wheel::WheelRecord::from_file(&src_dist_info.join("RECORD"))
-        .wrap_err("couldn't get dist-info/RECORD")?;
-    for file in &records.files {
+    for file in &wheel_record.files {
         let src = install_folder.join(&file.path);
         assert!(src.starts_with(&install_folder));
         let dest = proj_dirs.package_file(&file.hash);
@@ -424,7 +410,7 @@ fn register_distribution_files_of_wheel(
 
     let repo_records_dir = proj_dirs.records().join(distribution.as_csv());
     fs_err::create_dir_all(&repo_records_dir)?;
-    records
+    wheel_record
         .save_to_file(repo_records_dir.join("RECORD"))
         .wrap_err("failed to save RECORD")?;
 
@@ -719,6 +705,14 @@ pub(crate) fn register_new_distribution(
             distrib.name, distrib.version, distrib.sha
         );
     }
+
+    let install_folder = Path::from_path(tmp_dir.path()).expect(INVALID_UTF8_PATH);
+    let src_dist_info = install_folder.join(distrib.dist_info_name());
+    let wheel_record = crate::python::wheel::WheelRecord::from_file(&src_dist_info.join("RECORD"))
+        .wrap_err("couldn't get dist-info/RECORD")?;
+
+    check_file_hashes_match_record(install_folder, &wheel_record)?;
+
     let mut all_stored_distributions = StoredDistributions::load(proj_dirs)?;
     let stored_distributions = all_stored_distributions
         .0
@@ -726,7 +720,8 @@ pub(crate) fn register_new_distribution(
         .or_default();
     register_distribution_files_of_wheel(
         proj_dirs,
-        tmp_dir.path().try_into().expect(INVALID_UTF8_PATH),
+        install_folder,
+        wheel_record,
         &distrib,
         stored_distributions,
         options,
@@ -742,16 +737,60 @@ pub(crate) fn register_new_distribution(
     Ok(())
 }
 
+fn check_file_hashes_match_record(
+    install_folder: &Path,
+    wheel_record: &WheelRecord,
+) -> EResult<()> {
+    for entry in &wheel_record.files {
+        let path = install_folder.join(&entry.path);
+        let hash = FileHash::from_file(&path);
+        if hash != entry.hash {
+            bail!(
+                "hash mismatch in package files: '{}', expected: {}, found: {hash}",
+                entry.path,
+                entry.hash,
+            );
+        }
+    }
+
+    Ok(())
+}
+
 pub(crate) fn wheel_is_already_registered(
-    wheel_hash: DistributionHash,
+    distribution: &Distribution,
     proj_dirs: &ProjectDirs,
     python_version: PythonVersion,
 ) -> EResult<bool> {
-    let stored_distributions = StoredDistributions::load(proj_dirs)?;
-    Ok(stored_distributions
+    let mut stored_distributions = StoredDistributions::load(proj_dirs)?;
+
+    let stored_distrib = StoredDistribution {
+        distribution: distribution.clone(),
+        installed_via: StoredDistributionType::FromWheel,
+    };
+    let dst_record_dir = proj_dirs.records().join(distribution.as_csv());
+
+    let stored_distribs = stored_distributions
         .0
-        .get(&python_version.as_string_without_patch())
-        .map_or(false, |deps| deps.contains_key(&wheel_hash)))
+        .entry(python_version.as_string_without_patch());
+
+    if let std::collections::hash_map::Entry::Occupied(deps) = &stored_distribs {
+        if deps.get().contains_key(&distribution.sha) {
+            return Ok(true);
+        }
+    };
+    if dst_record_dir.exists() {
+        // TODO: add check that it really is the same package
+        // add it here, because it may have been installed by a different
+        // python version. In that case, the current python version's list
+        // may be missing this distribution.
+        stored_distribs
+            .or_default()
+            .insert(distribution.sha.clone(), stored_distrib);
+        stored_distributions.save()?;
+        return Ok(true);
+    }
+
+    Ok(false)
 }
 
 // fn dist_info_dirname(name: &str, version: &str, hash: &DistributionHash) -> String {

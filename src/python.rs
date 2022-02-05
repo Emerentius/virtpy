@@ -82,8 +82,6 @@ impl DistributionHash {
 }
 
 impl FileHash {
-    // TODO: use when checking file hashes in RECORD to be correct
-    #[allow(unused)]
     pub(crate) fn from_file(path: &Path) -> Self {
         Self::from_hash(hash_of_file_sha256_base64(path))
     }
