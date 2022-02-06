@@ -2,7 +2,7 @@ use eyre::{ensure, eyre, WrapErr};
 use fs_err::File;
 use itertools::Itertools;
 
-use crate::python::wheel::{verify_wheel_contents, MaybeRecordEntry};
+use crate::python::wheel::MaybeRecordEntry;
 use crate::python::{records, Distribution, DistributionHash, EntryPoint, FileHash, PythonVersion};
 use crate::venv::{
     virtpy_link_location, virtpy_link_target, virtpy_status, VirtpyBacking, VirtpyBackingStatus,

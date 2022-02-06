@@ -353,13 +353,6 @@ impl Distribution {
     }
 }
 
-pub(crate) fn print_error_missing_file_in_record(distribution: &Distribution, missing_file: &Path) {
-    println!(
-        "couldn't find recorded file from {}: {missing_file}",
-        distribution.name_and_version(),
-    )
-}
-
 pub(crate) fn entrypoints(path: &Path) -> Option<Vec<EntryPoint>> {
     let ini = ini::Ini::load_from_file(path);
 

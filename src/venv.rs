@@ -9,8 +9,8 @@ use crate::python::wheel::{
     is_path_of_executable, normalized_distribution_name_for_wheel, RecordEntry, WheelRecord,
 };
 use crate::python::{
-    generate_executable, print_error_missing_file_in_record, python_version, records, Distribution,
-    DistributionHash, EntryPoint, FileHash, PythonVersion,
+    generate_executable, python_version, records, Distribution, DistributionHash, EntryPoint,
+    FileHash, PythonVersion,
 };
 use crate::{check_output, ignore_target_doesnt_exist, DEFAULT_VIRTPY_PATH};
 use crate::{
