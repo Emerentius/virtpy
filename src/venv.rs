@@ -651,14 +651,23 @@ fn link_file_into_virtpy(
     distribution: &Distribution,
 ) {
     let src = proj_dirs.package_file(&filehash);
-    match fs_err::hard_link(&src, &dest) {
-        Ok(_) => (),
-        // TODO: can this error exist? Docs don't say anything about this being a failure
-        //       condition
-        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => (),
-        Err(err) if is_not_found(&err) => print_error_missing_file_in_record(distribution, &src),
-        Err(err) => panic!("failed to hardlink file from {src} to {dest}: {err}"),
-    };
+    fs_err::hard_link(&src, &dest)
+        .or_else(|err| {
+            if err.kind() == std::io::ErrorKind::AlreadyExists {
+                // Should this ever happen? No of course not.
+                // But pip will happily overwrite things and so we have to as well.
+                // Packages that do this for example: jupyter and jupyter_core.
+                // TODO: verify file hashes on package removal so we don't delete files that
+                //       other packages have already overwritten and which
+                //       therefore don't belong to the package that is being removed.
+                fs_err::remove_file(&dest)?;
+                fs_err::hard_link(&src, &dest)
+            } else {
+                Err(err)
+            }
+        })
+        .wrap_err_with(|| eyre!("distribution {}", distribution.name_and_version()))
+        .unwrap();
 }
 
 fn link_files_from_record_into_virtpy_new(
