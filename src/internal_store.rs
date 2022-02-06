@@ -691,8 +691,25 @@ pub(crate) fn register_new_distribution(
     let wheel_record = crate::python::wheel::WheelRecord::from_file(&src_dist_info.join("RECORD"))
         .wrap_err("couldn't get dist-info/RECORD")?;
 
-    verify_wheel_contents(install_folder, &wheel_record)
-        .wrap_err("failed to verify wheel record")?;
+    // As stated in the wheel format specification
+    // https://packaging.python.org/en/latest/specifications/binary-distribution-format/#the-dist-info-directory
+    //
+    // >During extraction, wheel installers verify all the hashes in RECORD against the file contents.
+    // Apart from RECORD and its signatures, installation will fail if any file in the archive is not both
+    // mentioned and correctly hashed in RECORD.
+    //
+    // Pip, THE python package manager, neglected to implement this so now there are lots of invalid wheels
+    // in the wild and we have to deal with them. Why am I not surprised?
+    //
+    // Given that our pip shim calls virtpy non-interactively, we can't inform the user and prompt
+    // whether they want to accept corrupted wheels.
+    // We could automatically fix the wheels by computing the correct hash. If we simply accepted
+    // files into the central store under whatever hash is in the RECORD, it would be trivial to maliciously
+    // create collisions and overwrite another distribution's files.
+    //
+    // TODO: implement auto-fixing of corrupted wheels.
+    // verify_wheel_contents(install_folder, &wheel_record)
+    //     .wrap_err("failed to verify wheel record")?;
 
     let mut all_stored_distributions = StoredDistributions::load(proj_dirs)?;
     let stored_distributions = all_stored_distributions

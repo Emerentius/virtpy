@@ -35,6 +35,8 @@ pub(crate) fn unpack_wheel(wheel: &Path, dest: &StdPath) -> EResult<()> {
     Ok(())
 }
 
+// TODO: check that ALL files in the install folder are also mentioned in the RECORD
+#[allow(unused)]
 pub(crate) fn verify_wheel_contents(
     install_folder: &Path,
     wheel_record: &WheelRecord,
