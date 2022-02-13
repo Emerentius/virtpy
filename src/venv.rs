@@ -25,6 +25,7 @@ use fs_err::PathExt;
 use itertools::Itertools;
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
+use std::io::Read;
 use std::path::Path as StdPath;
 
 /// A venv in the central store.
@@ -708,11 +709,28 @@ fn link_files_from_record_into_virtpy_new(
                     link_file_into_virtpy(proj_dirs, &record.hash, dest, distribution);
                 } else {
                     let src = proj_dirs.package_file(&record.hash);
-                    let script = fs_err::read_to_string(src)?;
+
+                    // First, read the file as bytes to check if it starts with the
+                    // magic number, i.e. the shebang "#!python".
+                    // Only if it does, read it in as a String.
+                    // While the wheel specification only speaks about distributing scripts
+                    // (presumably python scripts) in the data directory,
+                    // people are also distributing native executables and those are not
+                    // UTF-8, so they can't be read into a String.
+                    let mut file = fs_err::File::open(&src)?;
+                    let mut buf = vec![0; 10];
+                    let n_read = file.read(&mut buf)?;
+                    let beginning = &buf[..n_read];
 
                     // A bit complicated because I'm trying to replace ONLY the first line,
                     // indepently of \n and \r\n without running more code than necessary.
-                    if script.lines().next() == Some("#!python") {
+                    let shebang_to_replace = b"#!python";
+                    if beginning.starts_with(shebang_to_replace) && {
+                        let rest = &beginning[shebang_to_replace.len()..];
+                        rest.starts_with(b"\r\n") || rest.starts_with(b"\n")
+                    } {
+                        drop(file);
+                        let script = fs_err::read_to_string(src)?;
                         // lines() iter doesn't have a method for getting the rest of the string, sadly.
                         let first_linebreak = script.find('\n'); // could actually be None, for an empty script.
                         let code = first_linebreak.map_or("", |linebreak| &script[linebreak..]);
