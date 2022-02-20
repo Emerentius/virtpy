@@ -10,7 +10,7 @@ mod internal_store;
 mod python;
 pub(crate) mod venv;
 
-use venv::{Virtpy, VirtpyPaths};
+use venv::{add_package_resources, Virtpy, VirtpyPaths};
 
 #[cfg(unix)]
 pub(crate) use fs_err::os::unix::fs::symlink as symlink_dir;
@@ -49,6 +49,9 @@ enum Command {
         python: String,
         #[structopt(long)]
         without_pip_shim: bool,
+        /// Don't add pkg_resources module that is usually installed into venvs alongside setuptools.
+        #[structopt(long)]
+        without_package_resources: bool,
     },
     /// Add dependency to virtpy
     // TODO: adopt behavior of internal-use-only add-from-file
@@ -78,6 +81,13 @@ enum Command {
     /// Delete the virtpy of a previously installed executable package
     Uninstall {
         package: Vec<String>,
+    },
+    /// Add the pkg_resources module to the virtpy.
+    /// Subcommand will be deleted again in the future.
+    // TODO: delete again
+    AddPackageResources {
+        #[structopt(long)]
+        virtpy_path: Option<PathBuf>,
     },
     /// Print paths where various files are stored
     Path(PathCmd),
@@ -371,18 +381,22 @@ fn main() -> EResult<()> {
             path,
             python,
             without_pip_shim,
-            ..
+            without_package_resources,
         } => {
             let path = path.unwrap_or_else(|| PathBuf::from(DEFAULT_VIRTPY_PATH));
 
             let shim_info = (!without_pip_shim)
                 .then(|| shim_info(&proj_dirs))
                 .transpose()?;
-            python::detection::detect(&python)
+            let virtpy = python::detection::detect(&python)
                 .and_then(|python_path| {
                     Virtpy::create(&proj_dirs, &python_path, &path, None, shim_info)
                 })
                 .wrap_err("failed to create virtpy")?;
+
+            if !without_package_resources {
+                add_package_resources(&proj_dirs, options, &virtpy)?;
+            }
         }
         Command::Install {
             package,
@@ -432,6 +446,11 @@ fn main() -> EResult<()> {
             if any_errors {
                 bail!("some uninstalls failed");
             }
+        }
+        Command::AddPackageResources { virtpy_path } => {
+            let path = virtpy_path.unwrap_or_else(|| PathBuf::from(DEFAULT_VIRTPY_PATH));
+            let virtpy = Virtpy::from_existing(&path)?;
+            venv::add_package_resources(&proj_dirs, options, &virtpy)?;
         }
         Command::InternalStore(InternalStoreCmd::Gc { remove }) => {
             internal_store::collect_garbage(&proj_dirs, remove, options)?;

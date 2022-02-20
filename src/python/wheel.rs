@@ -287,22 +287,23 @@ pub(crate) struct MaybeRecordEntry {
 
 #[derive(thiserror::Error, Debug)]
 pub(crate) enum RecordEntryError {
-    #[error("record entry has no filesize")]
-    MissingFilesize,
-    #[error("record entry has invalid hash: {0}")]
-    InvalidHash(String),
+    #[error("record entry has no filesize: {0}")]
+    MissingFilesize(PathBuf),
+    #[error("record entry has invalid hash: {0}, hash = {1}")]
+    InvalidHash(PathBuf, String),
 }
 
 impl TryFrom<MaybeRecordEntry> for RecordEntry {
     type Error = RecordEntryError;
 
     fn try_from(maybe_entry: MaybeRecordEntry) -> Result<Self, Self::Error> {
-        let filesize = maybe_entry
-            .filesize
-            .ok_or(RecordEntryError::MissingFilesize)?;
+        let filesize = match maybe_entry.filesize {
+            Some(size) => size,
+            None => return Err(RecordEntryError::MissingFilesize(maybe_entry.path)),
+        };
         let hash = maybe_entry.hash;
         if hash.len() != 50 || !hash.starts_with("sha256=") {
-            return Err(RecordEntryError::InvalidHash(hash));
+            return Err(RecordEntryError::InvalidHash(maybe_entry.path, hash));
         }
 
         Ok(Self {
@@ -333,16 +334,20 @@ impl WheelRecord {
     // }
 
     pub(crate) fn from_file(record: impl AsRef<Path>) -> EResult<Self> {
-        Self::_from_file(record.as_ref())
-            .wrap_err_with(|| eyre!("failed to read record from {:?}", record.as_ref()))
+        Self::_from_file(record.as_ref(), false)
     }
 
-    fn _from_file(record: &Path) -> EResult<Self> {
-        let reader = csv::ReaderBuilder::new()
-            .has_headers(false)
-            .from_path(record)?;
+    pub(crate) fn from_file_ignoring_pyc(record: impl AsRef<Path>) -> EResult<Self> {
+        Self::_from_file(record.as_ref(), true)
+    }
 
-        Self::_from_csv_reader(reader)
+    fn _from_file(record: &Path, ignore_pyc_files: bool) -> EResult<Self> {
+        csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_path(record)
+            .map_err(Into::into)
+            .and_then(|reader| Self::_from_csv_reader(reader, ignore_pyc_files))
+            .wrap_err_with(|| eyre!("failed to read record from {record:?}"))
     }
 
     pub(crate) fn save_to_file(&self, dest: impl AsRef<Path>) -> EResult<()> {
@@ -368,7 +373,10 @@ impl WheelRecord {
     //     String::from_utf8(writer.into_inner().unwrap()).unwrap()
     // }
 
-    fn _from_csv_reader<R: std::io::Read>(reader: csv::Reader<R>) -> EResult<Self> {
+    fn _from_csv_reader<R: std::io::Read>(
+        reader: csv::Reader<R>,
+        ignore_pyc_files: bool,
+    ) -> EResult<Self> {
         let files = reader
             .into_records()
             .map(|record| record.and_then(|rec| rec.deserialize(None)))
@@ -384,13 +392,10 @@ impl WheelRecord {
             .clone();
         let files = files
             .into_iter()
-            .filter(|entry| entry.filesize.is_some())
-            .map(|entry| RecordEntry {
-                path: entry.path,
-                hash: FileHash(entry.hash),
-                filesize: entry.filesize.unwrap(),
-            })
-            .collect::<Vec<_>>();
+            .filter(|entry| !(ignore_pyc_files && entry.path.extension() == Some("pyc")))
+            .filter(|entry| !entry.path.ends_with("RECORD"))
+            .map(|maybe_entry| RecordEntry::try_from(maybe_entry))
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Self { files, record_path })
     }
