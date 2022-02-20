@@ -93,14 +93,7 @@ pub(crate) trait VirtpyPaths {
     }
 
     fn site_packages(&self) -> PathBuf {
-        if cfg!(unix) {
-            self.location().join(format!(
-                "lib/python{}/site-packages",
-                self.python_version().as_string_without_patch()
-            ))
-        } else {
-            self.location().join("Lib").join("site-packages")
-        }
+        venv_site_packages(self.location(), self.python_version())
     }
 
     fn set_metadata(&self, name: &str, value: &str) -> EResult<()> {
@@ -118,6 +111,17 @@ pub(crate) trait VirtpyPaths {
                     Err(err.into())
                 }
             })
+    }
+}
+
+fn venv_site_packages(venv: &Path, python_version: PythonVersion) -> PathBuf {
+    if cfg!(unix) {
+        venv.join(format!(
+            "lib/python{}/site-packages",
+            python_version.as_string_without_patch()
+        ))
+    } else {
+        venv.join("Lib").join("site-packages")
     }
 }
 
@@ -1031,6 +1035,98 @@ fn install_and_register_distribution_from_file(
     )?;
 
     Ok(())
+}
+
+// Returns path of pkg_resources wheel.
+// Generates the wheel, if it isn't cached already.
+fn package_resources_wheel(proj_dirs: &ProjectDirs, global_python: &Path) -> EResult<PathBuf> {
+    let wheel_dir = proj_dirs.data().join("wheels");
+    let wheel_name = "pkg_resources-0.0.0-py2.py3-none-any.whl";
+    let target = wheel_dir.join(wheel_name);
+
+    if !target.exists() {
+        generate_pkg_resources_wheel(global_python, wheel_dir, proj_dirs, wheel_name)?;
+    }
+
+    Ok(target)
+}
+
+// Generate pkg_resources wheel and store it in our data directory for later use.
+fn generate_pkg_resources_wheel(
+    global_python: &camino::Utf8Path,
+    wheel_dir: camino::Utf8PathBuf,
+    proj_dirs: &ProjectDirs,
+    wheel_name: &str,
+) -> EResult<()> {
+    // Create a venv WITH pip. This will also install setuptools and pkg_resources.
+    // We can extract the pkg_resources module and generate a wheel from it.
+    // clean it up by deleting all the python-specific pyc files
+    // and removing them from the RECORD, then pack the module into a wheel.
+    // We can then use the wheel to install it into virtpys just like a normal package.
+    // The pkg_resources RECORD file doesn't conform to the spec (of course).
+    // It is missing hashes and filesizes for *.pyc files, so we need to filter those
+    // out before even constructing the WheelRecord.
+    let python_version = python_version(global_python)?;
+    fs_err::create_dir_all(&wheel_dir)?;
+    let tmp_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), "generate_pkg_resources_whl")?;
+    let venv_dir = tmp_dir.path().join(".venv");
+    check_status(
+        std::process::Command::new(global_python)
+            .args(&["-m", "venv"])
+            .arg(&venv_dir)
+            .stdout(std::process::Stdio::null()),
+    )?;
+    let site_packages = venv_site_packages(
+        Path::from_path(&venv_dir).expect(INVALID_UTF8_PATH),
+        python_version,
+    );
+    let pack_dir = tmp_dir.path().join("packme");
+    fs_err::create_dir_all(&pack_dir)?;
+    for dir in ["pkg_resources", "pkg_resources-0.0.0.dist-info"] {
+        fs_err::rename(site_packages.join(dir), pack_dir.join(dir))?;
+    }
+
+    for entry in walkdir::WalkDir::new(&pack_dir).contents_first(true) {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type().is_file() {
+            if path.extension() == Some("pyc".as_ref()) {
+                fs_err::remove_file(path)?;
+            }
+        } else if entry.file_type().is_dir() {
+            if path.ends_with("__pycache__") {
+                // they must be empty by now
+                fs_err::remove_dir(path)?;
+            }
+        }
+    }
+
+    let record_path = PathBuf::try_from(
+        pack_dir
+            .join("pkg_resources-0.0.0.dist-info")
+            .join("RECORD"),
+    )?;
+    let record = WheelRecord::from_file_ignoring_pyc(&record_path)?;
+    record.save_to_file(&record_path)?;
+
+    check_status(
+        std::process::Command::new(global_python)
+            .args(&["-m", "wheel", "pack"])
+            .arg(pack_dir)
+            .arg("--dest-dir")
+            .arg(tmp_dir.path()),
+    )?;
+    fs_err::rename(tmp_dir.path().join(wheel_name), wheel_dir.join(wheel_name))?;
+    Ok(())
+}
+
+pub(crate) fn add_package_resources(
+    proj_dirs: &ProjectDirs,
+    options: Options,
+    virtpy: &Virtpy,
+) -> EResult<()> {
+    let pkg_res_wheel = package_resources_wheel(proj_dirs, &virtpy.global_python()?)?;
+    virtpy.add_dependency_from_file(proj_dirs, &pkg_res_wheel, options)
 }
 
 fn canonicalize(path: &Path) -> EResult<PathBuf> {
