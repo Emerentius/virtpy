@@ -1,6 +1,11 @@
 # virtpy
 
-virtpy creates Python [venv](https://docs.python.org/3/library/venv.html)s where all the dependencies are symlinked in from a central store. Dependencies that are used in multiple venvs are only stored once on disk. This makes each individual virtpy environment very lightweight.
+virtpy creates Python [venv](https://docs.python.org/3/library/venv.html)s where all the dependencies are symlinked in from a central store. 
+Dependencies that are used in multiple venvs are only stored once on disk. 
+This makes each individual virtpy environment very lightweight.
+
+As a side effect, creation of virtpys and installation of packages is significantly faster.
+This is especially true for repeat installs, but it remains the case for the first install.
 
 The name stands for <b>virt</b>ual <b>py</b>thon and is subject to change. The entire project is an early prototype. Expect bugs and crashes.
 
@@ -8,22 +13,53 @@ The name stands for <b>virt</b>ual <b>py</b>thon and is subject to change. The e
 * Python3.8+  
   with
   * a modern-ish pip version
-  * the `wheel` module available globally for python.
+  * the `wheel` module available globally for python.  
     It should be installed for every python version you intend to use with virtpy. It is not strictly required, but needed
     for installing non-wheel packages by converting them into wheels first.
-* [Poetry](https://github.com/python-poetry/poetry)
+* [Poetry](https://github.com/python-poetry/poetry)  
   Virtpy does not manage dependencies or download packages. It can currently only be used in conjunction with poetry.
 
-# Create and Add Dependencies
+# How to use
+The tool's core subcommands are:
+```
+virtpy new [TARGET_PATH]
+virtpy add WHEEL_PACKAGE_PATH
+virtpy remove PACKAGE
+```
 
-`virtpy new [VENV_PATH]` creates a new barebones venv at `VENV_PATH` or at '.venv' in the current directory, if no path is given.  
+It's easiest to use virtpys together with [poetry](https://python-poetry.org/) in which case you don't use `add` or `remove` directly.
 
-This venv can be used with `poetry`. `poetry add`, `poetry install` and `poetry remove` all work thanks to a shim. Poetry itself uses pip to install or remove packages and `virtpy` adds a pseudo `pip` package that redirects the commands to `virtpy`.
+## Create virtual environment
+`virtpy new [TARGET_PATH]`  
+This creates a new virtpy.
+It works like `python3 -m venv [TARGET_PATH]`.
+You can then use `poetry` with the generated environment and it will work as if it were a regular venv.
+You have to create the environment yourself.
+If you let poetry do it, it will generate a regular venv.
 
-This forms the core functionality of this tool.
+## Add / Remove dependencies
+It's easiest to use poetry. `poetry add`, `poetry remove` and `poetry install` all work transparently.
+
+Packages can also be added or removed manually via
+* `virtpy add WHEEL_PACKAGE_PATH`  
+  Installs the package from the given wheel file.
+  Dependencies are not installed.
+  Nothing is downloaded and no dependency resolution is done.
+  It works like `python3 -m pip install --no-deps WHEEL_PACKAGE_PATH`.
+* `virtpy remove PACKAGE`
+  Removes the PACKAGE from the virtpy.  
+  No dependency resolution is done and dependent packages will remain.
+
 
 # Install python executables in isolated environments
-`virtpy install PACKAGE` installs `PACKAGE` into a virtpy in a central location and places executables inside `virtpy path bin` which you can add to your `PATH`.
+Two subcommands build on top of the core `virtpy` functionality to install packages with executables
+into isolated environments, making their executables available globally.
+```
+virtpy install PACKAGE
+virtpy uninstall PACKAGE
+```
+The executables are placed in the directory returned by `virtpy path bin`.
+You must add this directory to your PATH yourself.
 
 This is similar to [pipx](https://pypi.org/project/pipx/), but it uses `virtpy`s for isolation insted of regular venvs.
 It's currently integrated into `virtpy` but is planned to be separated into its own tool or at least subcommand.
