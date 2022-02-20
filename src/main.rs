@@ -53,14 +53,13 @@ enum Command {
         #[structopt(long)]
         without_package_resources: bool,
     },
-    /// Add dependency to virtpy
-    // TODO: adopt behavior of internal-use-only add-from-file
-    // Add {
-    //     requirements: PathBuf,
-    //     #[structopt(long)]
-    //     virtpy_path: Option<PathBuf>,
-    // },
-    /// Remove dependency from virtpy
+    /// Add package to virtpy from wheel file
+    Add {
+        file: PathBuf,
+        #[structopt(long)]
+        virtpy_path: Option<PathBuf>,
+    },
+    /// Remove package from virtpy
     Remove {
         distributions: Vec<String>,
         #[structopt(long)]
@@ -79,20 +78,14 @@ enum Command {
         python: String,
     },
     /// Delete the virtpy of a previously installed executable package
-    Uninstall {
-        package: Vec<String>,
-    },
-    /// Add the pkg_resources module to the virtpy.
-    /// Subcommand will be deleted again in the future.
-    // TODO: delete again
-    AddPackageResources {
-        #[structopt(long)]
-        virtpy_path: Option<PathBuf>,
-    },
+    Uninstall { package: Vec<String> },
     /// Print paths where various files are stored
     Path(PathCmd),
+    /// Get info about or modify the internal package store
     InternalStore(InternalStoreCmd),
+    /// Helper commands for internal use, e.g. by the pip shim.
     InternalUseOnly(InternalUseOnly),
+    /// List paths of all virtpys
     ListAll,
 }
 
@@ -128,8 +121,20 @@ enum InternalStoreCmd {
 
 #[derive(StructOpt)]
 enum InternalUseOnly {
+    /// Install the wheel file into the given virtpy
     AddFromFile { virtpy: PathBuf, file: PathBuf },
+    /// Return path to globally available python executable of the same version as used in virtpy
+    ///
+    /// On systems where the venv executable is symlinked, it will return the linked one.
+    /// Otherwise, it will search for the executable by version which might return a different one.
     GlobalPython { virtpy: PathBuf },
+    /// Add the pkg_resources module to the virtpy
+    /// Subcommand will be deleted again in the future.
+    // TODO: delete again
+    AddPackageResources {
+        #[structopt(long)]
+        virtpy_path: Option<PathBuf>,
+    },
 }
 
 #[derive(StructOpt)]
@@ -349,27 +354,10 @@ fn main() -> EResult<()> {
     proj_dirs.create_dirs()?;
 
     match opt.cmd {
-        // Command::Add {
-        //     requirements,
-        //     virtpy_path,
-        // } => {
-        //     fn add_requirements(
-        //         proj_dirs: &ProjectDirs,
-        //         virtpy_path: Option<PathBuf>,
-        //         options: Options,
-        //         requirements: PathBuf,
-        //     ) -> EResult<()> {
-        //         let virtpy = Virtpy::from_existing(path_to_virtpy(&virtpy_path))?;
-        //         let requirements = fs_err::read_to_string(requirements)?;
-        //         let requirements = python::requirements::read_requirements_txt(&requirements);
-
-        //         virtpy.add_dependencies(proj_dirs, requirements, options)?;
-        //         Ok(())
-        //     }
-
-        //     add_requirements(&proj_dirs, virtpy_path, options, requirements)
-        //         .wrap_err("failed to add requirements")?;
-        // }
+        Command::Add { file, virtpy_path } => {
+            let virtpy = virtpy_path.unwrap_or_else(|| PathBuf::from(DEFAULT_VIRTPY_PATH));
+            add_from_file(&proj_dirs, options, virtpy, file)?;
+        }
         Command::Remove {
             distributions,
             virtpy_path,
@@ -447,7 +435,7 @@ fn main() -> EResult<()> {
                 bail!("some uninstalls failed");
             }
         }
-        Command::AddPackageResources { virtpy_path } => {
+        Command::InternalUseOnly(InternalUseOnly::AddPackageResources { virtpy_path }) => {
             let path = virtpy_path.unwrap_or_else(|| PathBuf::from(DEFAULT_VIRTPY_PATH));
             let virtpy = Virtpy::from_existing(&path)?;
             venv::add_package_resources(&proj_dirs, options, &virtpy)?;
@@ -472,7 +460,7 @@ fn main() -> EResult<()> {
             internal_store::print_verify_store(&proj_dirs);
         }
         Command::InternalUseOnly(InternalUseOnly::AddFromFile { virtpy, file }) => {
-            Virtpy::from_existing(&virtpy)?.add_dependency_from_file(&proj_dirs, &file, options)?;
+            add_from_file(&proj_dirs, options, virtpy, file)?;
         }
         Command::InternalUseOnly(InternalUseOnly::GlobalPython { virtpy }) => {
             println!("{}", Virtpy::from_existing(&virtpy)?.global_python()?);
@@ -500,6 +488,15 @@ fn main() -> EResult<()> {
     }
 
     Ok(())
+}
+
+fn add_from_file(
+    proj_dirs: &ProjectDirs,
+    options: Options,
+    virtpy: PathBuf,
+    file: PathBuf,
+) -> EResult<()> {
+    Ok(Virtpy::from_existing(&virtpy)?.add_dependency_from_file(proj_dirs, &file, options)?)
 }
 
 enum InstalledStatus {
