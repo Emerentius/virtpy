@@ -1116,7 +1116,9 @@ fn generate_pkg_resources_wheel(
             .arg("--dest-dir")
             .arg(tmp_dir.path()),
     )?;
-    fs_err::rename(tmp_dir.path().join(wheel_name), wheel_dir.join(wheel_name))?;
+    fs_err::rename(tmp_dir.path().join(wheel_name), wheel_dir.join(wheel_name))
+        // If another process already placed it there in the meantime, that's fine too
+        .or_else(ignore_target_exists)?;
     Ok(())
 }
 
