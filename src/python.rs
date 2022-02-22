@@ -226,7 +226,7 @@ pub(crate) fn generate_executable(
 
     #[cfg(windows)]
     {
-        _generate_windows_executable(dest, shebang, code, site_packages)
+        _generate_windows_executable(dest, &shebang, code, site_packages)
     }
 }
 
