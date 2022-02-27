@@ -134,7 +134,6 @@ pub(crate) fn print_verify_store(ctx: &Ctx) {
 
 pub(crate) fn print_stats(
     ctx: &Ctx,
-
     human_readable: bool,
     use_binary_si_prefix: bool,
 ) -> EResult<()> {
@@ -670,8 +669,8 @@ impl std::ops::DerefMut for FileLockGuard {
 
 // Usable only for our own installation from wheel files
 pub(crate) fn register_new_distribution(
-    distrib: Distribution,
     ctx: &Ctx,
+    distrib: Distribution,
     python_version: PythonVersion,
     tmp_dir: tempdir::TempDir,
 ) -> EResult<()> {
@@ -731,8 +730,8 @@ pub(crate) fn register_new_distribution(
 }
 
 pub(crate) fn wheel_is_already_registered(
-    distribution: &Distribution,
     ctx: &Ctx,
+    distribution: &Distribution,
     python_version: PythonVersion,
 ) -> EResult<bool> {
     let mut stored_distributions = StoredDistributions::load(ctx)?;

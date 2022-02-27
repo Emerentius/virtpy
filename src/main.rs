@@ -500,7 +500,6 @@ enum InstalledStatus {
 
 fn install_executable_package(
     ctx: &Ctx,
-
     package: &str,
     force: bool,
     allow_prereleases: bool,

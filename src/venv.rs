@@ -228,7 +228,7 @@ impl Virtpy {
         let distribution =
             Distribution::from_package_name(file.file_name().unwrap(), file_hash).unwrap();
 
-        if !wheel_is_already_registered(&distribution, ctx, self.python_version)? {
+        if !wheel_is_already_registered(ctx, &distribution, self.python_version)? {
             install_and_register_distribution_from_file(
                 ctx,
                 file,
@@ -519,7 +519,6 @@ fn link_distributions_into_virtpy(
 fn link_single_requirement_into_virtpy(
     ctx: &Ctx,
     virtpy: &Virtpy,
-
     distrib: &StoredDistribution,
     site_packages: &Path,
 ) -> EResult<()> {
@@ -541,13 +540,13 @@ fn link_single_requirement_into_virtpy(
                 .unwrap();
 
             link_files_from_record_into_virtpy(
+                ctx,
                 &dist_info_path,
                 virtpy,
                 site_packages,
-                ctx,
                 &distrib.distribution,
             );
-            install_executables(distrib, virtpy, ctx, None)?;
+            install_executables(ctx, distrib, virtpy, None)?;
         }
         StoredDistributionType::FromWheel => {
             let record_dir = ctx.proj_dirs.records().join(distrib.distribution.as_csv());
@@ -556,13 +555,13 @@ fn link_single_requirement_into_virtpy(
             let mut record = WheelRecord::from_file(record_path)?;
 
             link_files_from_record_into_virtpy_new(
+                ctx,
                 &mut record,
                 virtpy,
                 site_packages,
-                ctx,
                 &distrib.distribution,
             )?;
-            install_executables(distrib, virtpy, ctx, Some(&mut record))?;
+            install_executables(ctx, distrib, virtpy, Some(&mut record))?;
 
             // ========== This code can be extracted into a fn for "add file with X content to Y path and record it"
             // Add the hash of the installed wheel to the metadata so we can find out
@@ -593,10 +592,10 @@ fn link_single_requirement_into_virtpy(
 }
 
 fn link_files_from_record_into_virtpy(
+    ctx: &Ctx,
     dist_info_path: &PathBuf,
     virtpy: &Virtpy,
     site_packages: &Path,
-    ctx: &Ctx,
     distribution: &Distribution,
 ) {
     for record in records(&dist_info_path.join("RECORD"), true)
@@ -665,10 +664,10 @@ fn link_file_into_virtpy(
 }
 
 fn link_files_from_record_into_virtpy_new(
+    ctx: &Ctx,
     record: &mut WheelRecord,
     virtpy: &Virtpy,
     site_packages: &Path,
-    ctx: &Ctx,
     distribution: &Distribution,
 ) -> EResult<()> {
     let data_dir = distribution.data_dir_name();
@@ -843,9 +842,9 @@ fn _create_bare_venv(python_path: &Path, path: &Path, prompt: &str) -> EResult<(
 }
 
 fn install_executables(
+    ctx: &Ctx,
     stored_distrib: &StoredDistribution,
     virtpy: &Virtpy,
-    ctx: &Ctx,
     mut wheel_record: Option<&mut WheelRecord>, // only record when unpacking wheels ourselves
 ) -> Result<(), color_eyre::Report> {
     let entrypoints = stored_distrib.entrypoints(ctx).unwrap_or_default();
@@ -1002,7 +1001,7 @@ fn install_and_register_distribution_from_file(
 
             let python = crate::python::detection::detect_from_version(python_version)?;
             let (wheel_path, tmp_dir) =
-                crate::python::convert_to_wheel(&python, ctx, distrib_path)?;
+                crate::python::convert_to_wheel(ctx, &python, distrib_path)?;
 
             if ctx.options.verbose >= 2 {
                 println!("wheel file placed at {wheel_path}");
@@ -1014,7 +1013,7 @@ fn install_and_register_distribution_from_file(
     assert!(distrib_path.extension().unwrap() == "whl");
     crate::python::wheel::unpack_wheel(&distrib_path, tmp_dir.path())?;
 
-    crate::internal_store::register_new_distribution(distribution, ctx, python_version, tmp_dir)?;
+    crate::internal_store::register_new_distribution(ctx, distribution, python_version, tmp_dir)?;
 
     Ok(())
 }
@@ -1027,7 +1026,7 @@ fn package_resources_wheel(ctx: &Ctx, global_python: &Path) -> EResult<PathBuf> 
     let target = wheel_dir.join(wheel_name);
 
     if !target.exists() {
-        generate_pkg_resources_wheel(global_python, wheel_dir, ctx, wheel_name)?;
+        generate_pkg_resources_wheel(ctx, global_python, wheel_dir, wheel_name)?;
     }
 
     Ok(target)
@@ -1035,9 +1034,9 @@ fn package_resources_wheel(ctx: &Ctx, global_python: &Path) -> EResult<PathBuf> 
 
 // Generate pkg_resources wheel and store it in our data directory for later use.
 fn generate_pkg_resources_wheel(
+    ctx: &Ctx,
     global_python: &camino::Utf8Path,
     wheel_dir: camino::Utf8PathBuf,
-    ctx: &Ctx,
     wheel_name: &str,
 ) -> EResult<()> {
     // Create a venv WITH pip. This will also install setuptools and pkg_resources.

@@ -413,18 +413,18 @@ fn _hash_of_reader_sha256(mut reader: impl std::io::Read) -> impl AsRef<[u8]> {
 // The TempDir needs to be preserved until the wheel has been used or copied elsewhere as it'll be
 // deleted with the TempDir.
 pub(crate) fn convert_to_wheel(
-    python: &Path,
     ctx: &Ctx,
+    python: &Path,
     distrib_path: impl AsRef<Path>,
 ) -> EResult<(PathBuf, tempdir::TempDir)> {
     let path = distrib_path.as_ref();
-    _convert_to_wheel(python, ctx, path)
+    _convert_to_wheel(ctx, python, path)
         .wrap_err_with(|| eyre!("failed to convert file to wheel: {path}"))
 }
 
 fn _convert_to_wheel(
-    python: &Path,
     ctx: &Ctx,
+    python: &Path,
     distrib_path: &Path,
 ) -> EResult<(PathBuf, tempdir::TempDir)> {
     let output_dir = tempdir::TempDir::new_in(ctx.proj_dirs.tmp(), "convert_to_wheel")?;
