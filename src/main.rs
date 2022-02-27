@@ -175,6 +175,12 @@ fn _check_output(cmd: &mut std::process::Command) -> EResult<Vec<u8>> {
     Ok(output.stdout)
 }
 
+// Context pattern
+struct Ctx {
+    proj_dirs: ProjectDirs,
+    options: Options,
+}
+
 // toplevel options
 #[derive(Copy, Clone)]
 pub(crate) struct Options {
@@ -325,9 +331,9 @@ fn path_to_virtpy(path_override: &Option<PathBuf>) -> &Path {
         .unwrap_or_else(|| DEFAULT_VIRTPY_PATH.as_ref())
 }
 
-fn shim_info(proj_dirs: &ProjectDirs) -> EResult<ShimInfo> {
+fn shim_info(ctx: &Ctx) -> EResult<ShimInfo> {
     Ok(ShimInfo {
-        proj_dirs,
+        proj_dirs: &ctx.proj_dirs,
         virtpy_exe: PathBuf::try_from(
             std::env::current_exe().wrap_err("failed to find the running executable's path")?,
         )?,
@@ -353,10 +359,12 @@ fn main() -> EResult<()> {
     };
     proj_dirs.create_dirs()?;
 
+    let ctx = Ctx { proj_dirs, options };
+
     match opt.cmd {
         Command::Add { file, virtpy_path } => {
             let virtpy = virtpy_path.unwrap_or_else(|| PathBuf::from(DEFAULT_VIRTPY_PATH));
-            add_from_file(&proj_dirs, options, virtpy, file)?;
+            add_from_file(&ctx, virtpy, file)?;
         }
         Command::Remove {
             distributions,
@@ -373,17 +381,13 @@ fn main() -> EResult<()> {
         } => {
             let path = path.unwrap_or_else(|| PathBuf::from(DEFAULT_VIRTPY_PATH));
 
-            let shim_info = (!without_pip_shim)
-                .then(|| shim_info(&proj_dirs))
-                .transpose()?;
+            let shim_info = (!without_pip_shim).then(|| shim_info(&ctx)).transpose()?;
             let virtpy = python::detection::detect(&python)
-                .and_then(|python_path| {
-                    Virtpy::create(&proj_dirs, &python_path, &path, None, shim_info)
-                })
+                .and_then(|python_path| Virtpy::create(&ctx, &python_path, &path, None, shim_info))
                 .wrap_err("failed to create virtpy")?;
 
             if !without_package_resources {
-                add_package_resources(&proj_dirs, options, &virtpy)?;
+                add_package_resources(&ctx, &virtpy)?;
             }
         }
         Command::Install {
@@ -395,14 +399,8 @@ fn main() -> EResult<()> {
             let mut any_errors = false;
             for package in package {
                 println!("installing {package}...");
-                match install_executable_package(
-                    &proj_dirs,
-                    options,
-                    &package,
-                    force,
-                    allow_prereleases,
-                    &python,
-                ) {
+                match install_executable_package(&ctx, &package, force, allow_prereleases, &python)
+                {
                     Ok(InstalledStatus::NewlyInstalled) => println!("installed {package}."),
                     Ok(InstalledStatus::AlreadyInstalled) => {
                         println!("package is already installed.")
@@ -421,7 +419,7 @@ fn main() -> EResult<()> {
         Command::Uninstall { package } => {
             let mut any_errors = false;
             for package in package {
-                match delete_executable_virtpy(&proj_dirs, &package)
+                match delete_executable_virtpy(&ctx, &package)
                     .wrap_err(eyre!("failed to uninstall {package}"))
                 {
                     Ok(()) => println!("uninstalled {package}."),
@@ -438,36 +436,37 @@ fn main() -> EResult<()> {
         Command::InternalUseOnly(InternalUseOnly::AddPackageResources { virtpy_path }) => {
             let path = virtpy_path.unwrap_or_else(|| PathBuf::from(DEFAULT_VIRTPY_PATH));
             let virtpy = Virtpy::from_existing(&path)?;
-            venv::add_package_resources(&proj_dirs, options, &virtpy)?;
+            venv::add_package_resources(&ctx, &virtpy)?;
         }
         Command::InternalStore(InternalStoreCmd::Gc { remove }) => {
-            internal_store::collect_garbage(&proj_dirs, remove, options)?;
+            internal_store::collect_garbage(&ctx, remove)?;
         }
         Command::Path(PathCmd::Bin) | Command::Path(PathCmd::Executables) => {
-            println!("{}", proj_dirs.executables());
+            println!("{}", ctx.proj_dirs.executables());
         }
         Command::Path(PathCmd::Storage) => {
-            println!("{}", proj_dirs.data());
+            println!("{}", ctx.proj_dirs.data());
         }
         Command::InternalStore(InternalStoreCmd::Stats {
             bytes,
             binary_prefix,
         }) => {
             let human_readable = !bytes;
-            internal_store::print_stats(&proj_dirs, options, human_readable, binary_prefix)?;
+            internal_store::print_stats(&ctx, human_readable, binary_prefix)?;
         }
         Command::InternalStore(InternalStoreCmd::Verify) => {
-            internal_store::print_verify_store(&proj_dirs);
+            internal_store::print_verify_store(&ctx);
         }
         Command::InternalUseOnly(InternalUseOnly::AddFromFile { virtpy, file }) => {
-            add_from_file(&proj_dirs, options, virtpy, file)?;
+            add_from_file(&ctx, virtpy, file)?;
         }
         Command::InternalUseOnly(InternalUseOnly::GlobalPython { virtpy }) => {
             println!("{}", Virtpy::from_existing(&virtpy)?.global_python()?);
         }
         Command::ListAll => {
             // TODO: error handling
-            let link_locations = proj_dirs
+            let link_locations = ctx
+                .proj_dirs
                 .virtpys()
                 .read_dir()?
                 .map(|entry| entry.unwrap())
@@ -490,13 +489,8 @@ fn main() -> EResult<()> {
     Ok(())
 }
 
-fn add_from_file(
-    proj_dirs: &ProjectDirs,
-    options: Options,
-    virtpy: PathBuf,
-    file: PathBuf,
-) -> EResult<()> {
-    Ok(Virtpy::from_existing(&virtpy)?.add_dependency_from_file(proj_dirs, &file, options)?)
+fn add_from_file(ctx: &Ctx, virtpy: PathBuf, file: PathBuf) -> EResult<()> {
+    Ok(Virtpy::from_existing(&virtpy)?.add_dependency_from_file(ctx, &file)?)
 }
 
 enum InstalledStatus {
@@ -505,20 +499,20 @@ enum InstalledStatus {
 }
 
 fn install_executable_package(
-    proj_dirs: &ProjectDirs,
-    options: Options,
+    ctx: &Ctx,
+
     package: &str,
     force: bool,
     allow_prereleases: bool,
     python: &str,
 ) -> EResult<InstalledStatus> {
-    let package_folder = proj_dirs.package_folder(package);
+    let package_folder = ctx.proj_dirs.package_folder(package);
 
     let python_path = python::detection::detect(python)?;
 
     if package_folder.exists() {
         if force {
-            delete_executable_virtpy(proj_dirs, package)?;
+            delete_executable_virtpy(ctx, package)?;
         } else {
             return Ok(InstalledStatus::AlreadyInstalled);
         }
@@ -526,17 +520,17 @@ fn install_executable_package(
 
     check_poetry_available()?;
 
-    let tmp_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), &format!("install_{package}"))?;
+    let tmp_dir = tempdir::TempDir::new_in(ctx.proj_dirs.tmp(), &format!("install_{package}"))?;
     let tmp_path = PathBuf::try_from(tmp_dir.path().to_owned())
         .expect(INVALID_UTF8_PATH)
         .join(".venv");
 
     let virtpy = Virtpy::create(
-        proj_dirs,
+        ctx,
         &python_path,
         &package_folder,
         None,
-        Some(shim_info(proj_dirs)?),
+        Some(shim_info(ctx)?),
     )?;
 
     // if anything goes wrong, try to delete the incomplete installation
@@ -555,7 +549,7 @@ fn install_executable_package(
     if allow_prereleases {
         cmd.arg("--allow-prereleases");
     }
-    match options.verbose {
+    match ctx.options.verbose {
         // poetry uses -v for normal output
         // -vv for verbose
         // -vvv for debug
@@ -585,9 +579,9 @@ fn install_executable_package(
         .dist_info(package)
         .map(internal_store::stored_distribution_of_installed_dist)?;
 
-    let executables = distrib.executable_names(proj_dirs)?;
+    let executables = distrib.executable_names(ctx)?;
     let exe_dir = virtpy.executables();
-    let target_dir = proj_dirs.executables();
+    let target_dir = ctx.proj_dirs.executables();
     for mut exe in executables {
         if cfg!(windows) {
             exe.push_str(".exe");
@@ -604,15 +598,15 @@ fn is_not_found(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::NotFound
 }
 
-fn delete_executable_virtpy(proj_dirs: &ProjectDirs, package: &str) -> EResult<()> {
-    let virtpy_path = proj_dirs.package_folder(package);
+fn delete_executable_virtpy(ctx: &Ctx, package: &str) -> EResult<()> {
+    let virtpy_path = ctx.proj_dirs.package_folder(package);
     let virtpy = Virtpy::from_existing(&virtpy_path)?;
     virtpy.delete()?;
 
     // delete_global_package_executables
     // Executables in the binary directory are just symlinks.
     // The virtpy deletion has broken some of them, just need to find and delete them.
-    for entry in proj_dirs.executables().read_dir()? {
+    for entry in ctx.proj_dirs.executables().read_dir()? {
         let entry = entry?;
         let target = fs_err::read_link(entry.path())?;
         // TODO: switch to .try_exists() when stable
@@ -755,12 +749,16 @@ mod test {
 
     use super::*;
 
-    pub(crate) fn test_proj_dirs() -> ProjectDirs {
+    pub(crate) fn test_ctx() -> Ctx {
         let target = Path::new(env!("CARGO_MANIFEST_DIR"));
         let test_proj_dir = target.join("test_cache");
         let proj_dirs = ProjectDirs::from_path(test_proj_dir);
         proj_dirs.create_dirs().unwrap();
-        proj_dirs
+
+        Ctx {
+            proj_dirs,
+            options: Options { verbose: 0 },
+        }
     }
 
     #[test]
@@ -770,7 +768,7 @@ mod test {
 
     #[test]
     fn test_install_uninstall() -> EResult<()> {
-        let proj_dirs = test_proj_dirs();
+        let ctx = test_ctx();
 
         let packages = [
             ("tuna", false),
@@ -792,7 +790,9 @@ mod test {
 
             let base_cmd = || -> EResult<_> {
                 let mut cmd = assert_cmd::Command::from_std(cargo_run.command());
-                cmd.arg("--project-dir").arg(proj_dirs.data()).arg("-vv");
+                cmd.arg("--project-dir")
+                    .arg(ctx.proj_dirs.data())
+                    .arg("-vv");
                 Ok(cmd)
             };
 
@@ -807,14 +807,14 @@ mod test {
 
             install_cmd.ok()?;
             assert_ne!(
-                proj_dirs._executables_list(),
+                ctx.proj_dirs._executables_list(),
                 Vec::<String>::new(),
                 "{package}"
             );
 
             uninstall_cmd.ok()?;
             assert_eq!(
-                proj_dirs._executables_list(),
+                ctx.proj_dirs._executables_list(),
                 Vec::<String>::new(),
                 "{package}"
             );

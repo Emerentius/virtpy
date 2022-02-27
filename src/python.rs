@@ -1,5 +1,5 @@
-use crate::{check_output, check_status, is_not_found, relative_path, EResult, Path};
-use crate::{PathBuf, ProjectDirs};
+use crate::PathBuf;
+use crate::{check_output, check_status, is_not_found, relative_path, Ctx, EResult, Path};
 use eyre::eyre;
 use eyre::Context;
 
@@ -414,20 +414,20 @@ fn _hash_of_reader_sha256(mut reader: impl std::io::Read) -> impl AsRef<[u8]> {
 // deleted with the TempDir.
 pub(crate) fn convert_to_wheel(
     python: &Path,
-    proj_dirs: &ProjectDirs,
+    ctx: &Ctx,
     distrib_path: impl AsRef<Path>,
 ) -> EResult<(PathBuf, tempdir::TempDir)> {
     let path = distrib_path.as_ref();
-    _convert_to_wheel(python, proj_dirs, path)
+    _convert_to_wheel(python, ctx, path)
         .wrap_err_with(|| eyre!("failed to convert file to wheel: {path}"))
 }
 
 fn _convert_to_wheel(
     python: &Path,
-    proj_dirs: &ProjectDirs,
+    ctx: &Ctx,
     distrib_path: &Path,
 ) -> EResult<(PathBuf, tempdir::TempDir)> {
-    let output_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), "convert_to_wheel")?;
+    let output_dir = tempdir::TempDir::new_in(ctx.proj_dirs.tmp(), "convert_to_wheel")?;
 
     check_status(
         std::process::Command::new(python)

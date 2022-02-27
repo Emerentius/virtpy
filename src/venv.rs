@@ -12,13 +12,12 @@ use crate::python::{
     generate_executable, python_version, records, Distribution, DistributionHash, EntryPoint,
     FileHash, PythonVersion,
 };
-use crate::{check_output, ignore_target_doesnt_exist, DEFAULT_VIRTPY_PATH};
+use crate::{check_output, ignore_target_doesnt_exist, Ctx, DEFAULT_VIRTPY_PATH};
 use crate::{
     check_status, delete_virtpy_backing, dist_info_matches_package, executables_path,
     ignore_target_exists, is_not_found, python_path, relative_path, remove_leading_parent_dirs,
-    symlink_dir, symlink_file, EResult, Options, Path, PathBuf, ProjectDirs, ShimInfo,
-    StoredDistribution, StoredDistributionType, CENTRAL_METADATA, DIST_HASH_FILE,
-    INVALID_UTF8_PATH, LINK_METADATA,
+    symlink_dir, symlink_file, EResult, Path, PathBuf, ShimInfo, StoredDistribution,
+    StoredDistributionType, CENTRAL_METADATA, DIST_HASH_FILE, INVALID_UTF8_PATH, LINK_METADATA,
 };
 use eyre::{eyre, Context};
 use fs_err::PathExt;
@@ -173,7 +172,7 @@ impl VirtpyBacking {
 
 impl Virtpy {
     pub(crate) fn create(
-        project_dirs: &ProjectDirs,
+        ctx: &Ctx,
         python_path: &Path,
         path: &Path,
         prompt: Option<String>,
@@ -190,7 +189,7 @@ impl Virtpy {
                 .take(12)
                 .map(|byte| byte as char)
                 .collect::<String>();
-            project_dirs.virtpys().join(id)
+            ctx.proj_dirs.virtpys().join(id)
         });
 
         let central_path = random_path_gen
@@ -224,27 +223,21 @@ impl Virtpy {
         .wrap_err_with(|| eyre!("the virtpy `{virtpy_link}` is broken, please recreate it.",))
     }
 
-    pub(crate) fn add_dependency_from_file(
-        &self,
-        proj_dirs: &ProjectDirs,
-        file: &Path,
-        options: Options,
-    ) -> EResult<()> {
+    pub(crate) fn add_dependency_from_file(&self, ctx: &Ctx, file: &Path) -> EResult<()> {
         let file_hash = DistributionHash::from_file(file)?;
         let distribution =
             Distribution::from_package_name(file.file_name().unwrap(), file_hash).unwrap();
 
-        if !wheel_is_already_registered(&distribution, proj_dirs, self.python_version)? {
+        if !wheel_is_already_registered(&distribution, ctx, self.python_version)? {
             install_and_register_distribution_from_file(
-                proj_dirs,
+                ctx,
                 file,
                 distribution.clone(),
                 self.python_version,
-                options,
             )?;
         }
 
-        link_distributions_into_virtpy(proj_dirs, self, vec![distribution], options)
+        link_distributions_into_virtpy(ctx, self, vec![distribution])
             .wrap_err("failed to add packages to virtpy")
     }
 
@@ -480,17 +473,16 @@ fn virtpy_link_status(virtpy_link_path: &Path) -> EResult<VirtpyStatus> {
 }
 
 fn link_distributions_into_virtpy(
-    proj_dirs: &ProjectDirs,
+    ctx: &Ctx,
     virtpy: &Virtpy,
     distributions: Vec<Distribution>,
-    options: Options,
 ) -> EResult<()> {
     // Link files into the backing virtpy so that when new top-level directories are
     // created, they are guaranteed to be on the same harddrive.
     // Symlinks for the new dirs are generated after all the files have been liked in.
     let site_packages = virtpy.virtpy_backing().site_packages();
 
-    let stored_distributions = StoredDistributions::load(proj_dirs)?;
+    let stored_distributions = StoredDistributions::load(ctx)?;
     let existing_deps = stored_distributions
         .0
         .get(&virtpy.python_version.as_string_without_patch())
@@ -509,20 +501,14 @@ fn link_distributions_into_virtpy(
                     "failed to find dist_info for distribution: {} {}",
                     distribution.name, distribution.version
                 );
-                if options.verbose >= 2 {
+                if ctx.options.verbose >= 2 {
                     println!("hash: {:#?}", distribution.sha);
                 }
                 continue;
             }
         };
 
-        link_single_requirement_into_virtpy(
-            proj_dirs,
-            virtpy,
-            options,
-            stored_distrib,
-            &site_packages,
-        )?;
+        link_single_requirement_into_virtpy(ctx, virtpy, stored_distrib, &site_packages)?;
     }
 
     ensure_toplevel_symlinks_exist(&virtpy.backing, virtpy.location())?;
@@ -531,19 +517,22 @@ fn link_distributions_into_virtpy(
 }
 
 fn link_single_requirement_into_virtpy(
-    proj_dirs: &ProjectDirs,
+    ctx: &Ctx,
     virtpy: &Virtpy,
-    options: Options,
+
     distrib: &StoredDistribution,
     site_packages: &Path,
 ) -> EResult<()> {
     match distrib.installed_via {
         StoredDistributionType::FromPip => {
-            let dist_info_path = proj_dirs.dist_infos().join(distrib.distribution.as_csv());
+            let dist_info_path = ctx
+                .proj_dirs
+                .dist_infos()
+                .join(distrib.distribution.as_csv());
 
             let dist_info_foldername = distrib.distribution.dist_info_name();
             let target = site_packages.join(&dist_info_foldername);
-            if options.verbose >= 1 {
+            if ctx.options.verbose >= 1 {
                 println!("symlinking dist info from {dist_info_path} to {target}");
             }
 
@@ -555,13 +544,13 @@ fn link_single_requirement_into_virtpy(
                 &dist_info_path,
                 virtpy,
                 site_packages,
-                proj_dirs,
+                ctx,
                 &distrib.distribution,
             );
-            install_executables(distrib, virtpy, proj_dirs, None)?;
+            install_executables(distrib, virtpy, ctx, None)?;
         }
         StoredDistributionType::FromWheel => {
-            let record_dir = proj_dirs.records().join(distrib.distribution.as_csv());
+            let record_dir = ctx.proj_dirs.records().join(distrib.distribution.as_csv());
             let record_path = record_dir.join("RECORD");
 
             let mut record = WheelRecord::from_file(record_path)?;
@@ -570,10 +559,10 @@ fn link_single_requirement_into_virtpy(
                 &mut record,
                 virtpy,
                 site_packages,
-                proj_dirs,
+                ctx,
                 &distrib.distribution,
             )?;
-            install_executables(distrib, virtpy, proj_dirs, Some(&mut record))?;
+            install_executables(distrib, virtpy, ctx, Some(&mut record))?;
 
             // ========== This code can be extracted into a fn for "add file with X content to Y path and record it"
             // Add the hash of the installed wheel to the metadata so we can find out
@@ -607,7 +596,7 @@ fn link_files_from_record_into_virtpy(
     dist_info_path: &PathBuf,
     virtpy: &Virtpy,
     site_packages: &Path,
-    proj_dirs: &ProjectDirs,
+    ctx: &Ctx,
     distribution: &Distribution,
 ) {
     for record in records(&dist_info_path.join("RECORD"), true)
@@ -645,17 +634,17 @@ fn link_files_from_record_into_virtpy(
                 dest
             }
         };
-        link_file_into_virtpy(proj_dirs, &record.hash, dest, distribution);
+        link_file_into_virtpy(ctx, &record.hash, dest, distribution);
     }
 }
 
 fn link_file_into_virtpy(
-    proj_dirs: &ProjectDirs,
+    ctx: &Ctx,
     filehash: &FileHash,
     dest: PathBuf,
     distribution: &Distribution,
 ) {
-    let src = proj_dirs.package_file(&filehash);
+    let src = ctx.proj_dirs.package_file(&filehash);
     fs_err::hard_link(&src, &dest)
         .or_else(|err| {
             if err.kind() == std::io::ErrorKind::AlreadyExists {
@@ -679,7 +668,7 @@ fn link_files_from_record_into_virtpy_new(
     record: &mut WheelRecord,
     virtpy: &Virtpy,
     site_packages: &Path,
-    proj_dirs: &ProjectDirs,
+    ctx: &Ctx,
     distribution: &Distribution,
 ) -> EResult<()> {
     let data_dir = distribution.data_dir_name();
@@ -710,9 +699,9 @@ fn link_files_from_record_into_virtpy_new(
                 let is_executable = subdir == "scripts";
                 record.path = relative_path(site_packages, &dest)?;
                 if !is_executable {
-                    link_file_into_virtpy(proj_dirs, &record.hash, dest, distribution);
+                    link_file_into_virtpy(ctx, &record.hash, dest, distribution);
                 } else {
-                    let src = proj_dirs.package_file(&record.hash);
+                    let src = ctx.proj_dirs.package_file(&record.hash);
 
                     // First, read the file as bytes to check if it starts with the
                     // magic number, i.e. the shebang "#!python".
@@ -746,14 +735,14 @@ fn link_files_from_record_into_virtpy_new(
                             &virtpy.site_packages(),
                         )?;
                     } else {
-                        link_file_into_virtpy(proj_dirs, &record.hash, dest, distribution);
+                        link_file_into_virtpy(ctx, &record.hash, dest, distribution);
                     }
                 }
             }
             Err(_) => {
                 let dest = site_packages.join(&record.path);
                 ensure_dir_exists(&dest);
-                link_file_into_virtpy(proj_dirs, &record.hash, dest, distribution);
+                link_file_into_virtpy(ctx, &record.hash, dest, distribution);
             }
         };
     }
@@ -856,10 +845,10 @@ fn _create_bare_venv(python_path: &Path, path: &Path, prompt: &str) -> EResult<(
 fn install_executables(
     stored_distrib: &StoredDistribution,
     virtpy: &Virtpy,
-    proj_dirs: &ProjectDirs,
+    ctx: &Ctx,
     mut wheel_record: Option<&mut WheelRecord>, // only record when unpacking wheels ourselves
 ) -> Result<(), color_eyre::Report> {
-    let entrypoints = stored_distrib.entrypoints(proj_dirs).unwrap_or_default();
+    let entrypoints = stored_distrib.entrypoints(ctx).unwrap_or_default();
     for entrypoint in entrypoints {
         let executables_path = virtpy.executables();
         let err = || eyre!("failed to install executable {}", entrypoint.name);
@@ -998,25 +987,24 @@ print(json.dumps(paths))"#
 }
 
 fn install_and_register_distribution_from_file(
-    proj_dirs: &ProjectDirs,
+    ctx: &Ctx,
     distrib_path: &Path,
     distribution: Distribution,
     python_version: crate::python::PythonVersion,
-    options: Options,
 ) -> EResult<()> {
-    let tmp_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), "virtpy_wheel")?;
+    let tmp_dir = tempdir::TempDir::new_in(ctx.proj_dirs.tmp(), "virtpy_wheel")?;
     let (distrib_path, _wheel_tmp_dir) = match distrib_path.extension().unwrap() {
         "whl" => (distrib_path.to_owned(), None),
         _ => {
-            if options.verbose >= 2 {
+            if ctx.options.verbose >= 2 {
                 println!("converting to wheel: {distrib_path}");
             }
 
             let python = crate::python::detection::detect_from_version(python_version)?;
             let (wheel_path, tmp_dir) =
-                crate::python::convert_to_wheel(&python, proj_dirs, distrib_path)?;
+                crate::python::convert_to_wheel(&python, ctx, distrib_path)?;
 
-            if options.verbose >= 2 {
+            if ctx.options.verbose >= 2 {
                 println!("wheel file placed at {wheel_path}");
             }
 
@@ -1026,26 +1014,20 @@ fn install_and_register_distribution_from_file(
     assert!(distrib_path.extension().unwrap() == "whl");
     crate::python::wheel::unpack_wheel(&distrib_path, tmp_dir.path())?;
 
-    crate::internal_store::register_new_distribution(
-        options,
-        distribution,
-        proj_dirs,
-        python_version,
-        tmp_dir,
-    )?;
+    crate::internal_store::register_new_distribution(distribution, ctx, python_version, tmp_dir)?;
 
     Ok(())
 }
 
 // Returns path of pkg_resources wheel.
 // Generates the wheel, if it isn't cached already.
-fn package_resources_wheel(proj_dirs: &ProjectDirs, global_python: &Path) -> EResult<PathBuf> {
-    let wheel_dir = proj_dirs.data().join("wheels");
+fn package_resources_wheel(ctx: &Ctx, global_python: &Path) -> EResult<PathBuf> {
+    let wheel_dir = ctx.proj_dirs.data().join("wheels");
     let wheel_name = "pkg_resources-0.0.0-py2.py3-none-any.whl";
     let target = wheel_dir.join(wheel_name);
 
     if !target.exists() {
-        generate_pkg_resources_wheel(global_python, wheel_dir, proj_dirs, wheel_name)?;
+        generate_pkg_resources_wheel(global_python, wheel_dir, ctx, wheel_name)?;
     }
 
     Ok(target)
@@ -1055,7 +1037,7 @@ fn package_resources_wheel(proj_dirs: &ProjectDirs, global_python: &Path) -> ERe
 fn generate_pkg_resources_wheel(
     global_python: &camino::Utf8Path,
     wheel_dir: camino::Utf8PathBuf,
-    proj_dirs: &ProjectDirs,
+    ctx: &Ctx,
     wheel_name: &str,
 ) -> EResult<()> {
     // Create a venv WITH pip. This will also install setuptools and pkg_resources.
@@ -1068,7 +1050,7 @@ fn generate_pkg_resources_wheel(
     // out before even constructing the WheelRecord.
     let python_version = python_version(global_python)?;
     fs_err::create_dir_all(&wheel_dir)?;
-    let tmp_dir = tempdir::TempDir::new_in(proj_dirs.tmp(), "generate_pkg_resources_whl")?;
+    let tmp_dir = tempdir::TempDir::new_in(ctx.proj_dirs.tmp(), "generate_pkg_resources_whl")?;
     let venv_dir = tmp_dir.path().join(".venv");
     check_status(
         std::process::Command::new(global_python)
@@ -1122,13 +1104,9 @@ fn generate_pkg_resources_wheel(
     Ok(())
 }
 
-pub(crate) fn add_package_resources(
-    proj_dirs: &ProjectDirs,
-    options: Options,
-    virtpy: &Virtpy,
-) -> EResult<()> {
-    let pkg_res_wheel = package_resources_wheel(proj_dirs, &virtpy.global_python()?)?;
-    virtpy.add_dependency_from_file(proj_dirs, &pkg_res_wheel, options)
+pub(crate) fn add_package_resources(ctx: &Ctx, virtpy: &Virtpy) -> EResult<()> {
+    let pkg_res_wheel = package_resources_wheel(ctx, &virtpy.global_python()?)?;
+    virtpy.add_dependency_from_file(ctx, &pkg_res_wheel)
 }
 
 fn canonicalize(path: &Path) -> EResult<PathBuf> {
@@ -1146,14 +1124,14 @@ mod test {
     use camino::Utf8PathBuf;
 
     use super::*;
-    use crate::{python::detection::detect, test::test_proj_dirs};
+    use crate::{python::detection::detect, test::test_ctx};
 
     #[test]
     fn get_install_paths() -> EResult<()> {
-        let proj_dirs = test_proj_dirs();
+        let ctx = test_ctx();
         let tmp_dir = tempdir::TempDir::new("virtpy_test")?;
         let virtpy_path: Utf8PathBuf = tmp_dir.path().join("install_paths_test").try_into()?;
-        let virtpy = Virtpy::create(&proj_dirs, &detect("3")?, &virtpy_path, None, None)?;
+        let virtpy = Virtpy::create(&ctx, &detect("3")?, &virtpy_path, None, None)?;
         let install_paths = virtpy.install_paths()?;
         let required_keys = ["purelib", "platlib", "headers", "scripts", "data"]
             .iter()
