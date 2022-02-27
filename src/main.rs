@@ -89,6 +89,24 @@ enum Command {
     ListAll,
 }
 
+#[allow(unused)]
+#[derive(PartialEq, Eq)]
+pub(crate) enum Platform {
+    Unix,
+    Windows,
+}
+
+pub(crate) fn platform() -> Platform {
+    #[cfg(unix)]
+    {
+        Platform::Unix
+    }
+    #[cfg(windows)]
+    {
+        Platform::Windows
+    }
+}
+
 #[derive(StructOpt)]
 enum InternalStoreCmd {
     /// Find virtpys that have been moved or deleted and unneeded files in the central store.
@@ -582,9 +600,10 @@ fn install_executable_package(
     let exe_dir = virtpy.executables();
     let target_dir = ctx.proj_dirs.executables();
     for mut exe in executables {
-        if cfg!(windows) {
-            exe.push_str(".exe");
-        };
+        match crate::platform() {
+            Platform::Unix => {}
+            Platform::Windows => exe.push_str(".exe"),
+        }
         symlink_file(exe_dir.join(&exe), target_dir.join(&exe))?;
     }
 

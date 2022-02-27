@@ -41,32 +41,29 @@ fn find_python_by_version(major: u32, minor: Option<u32>) -> EResult<PathBuf> {
         Some(minor) => format!("{major}.{minor}"),
         None => major.to_string(),
     };
-    #[cfg(unix)]
-    {
-        find_executable_in_path(&format!("python{version}"))
-    }
+    match crate::platform() {
+        crate::Platform::Unix => find_executable_in_path(&format!("python{version}")),
+        crate::Platform::Windows => {
+            use color_eyre::section::{Section, SectionExt};
+            let mut cmd = std::process::Command::new("py");
+            cmd.args(&[
+                &format!("-{version}"),
+                "-c",
+                "import sys; print(sys.executable)",
+            ]);
 
-    #[cfg(windows)]
-    {
-        use color_eyre::section::{Section, SectionExt};
-        let mut cmd = std::process::Command::new("py");
-        cmd.args(&[
-            &format!("-{version}"),
-            "-c",
-            "import sys; print(sys.executable)",
-        ]);
+            let output = cmd.output()?;
 
-        let output = cmd.output()?;
-
-        let stdout = String::from_utf8(output.stdout)?;
-        let path = Path::new(stdout.trim_end());
-        if path.exists() {
-            Ok(path.to_path_buf())
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-            Err(eyre!("can't find python version {}", version)
-                .section(stdout.header("stdout"))
-                .section(stderr.header("stderr")))
+            let stdout = String::from_utf8(output.stdout)?;
+            let path = Path::new(stdout.trim_end());
+            if path.exists() {
+                Ok(path.to_path_buf())
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+                Err(eyre!("can't find python version {}", version)
+                    .section(stdout.header("stdout"))
+                    .section(stderr.header("stderr")))
+            }
         }
     }
 }
@@ -88,7 +85,10 @@ fn find_executable_in_path(executable: impl AsRef<Path>) -> EResult<PathBuf> {
         .transpose()?;
     let path = match (path, std::env::var_os("VIRTUAL_ENV")) {
         (Some(path), Some(venv_path)) => {
-            let path_sep = if cfg!(windows) { ";" } else { ":" };
+            let path_sep = match crate::platform() {
+                crate::Platform::Unix => ":",
+                crate::Platform::Windows => ";",
+            };
             let venv_path = PathBuf::try_from(StdPathBuf::from(venv_path))
                 .wrap_err("venv PATH is not valid utf8")?;
             let executables_dir = executables_path(&venv_path);

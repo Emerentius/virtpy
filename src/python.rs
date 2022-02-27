@@ -219,14 +219,13 @@ pub(crate) fn generate_executable(
     site_packages: &Path,
 ) -> EResult<RecordEntry> {
     let shebang = format!("#!{python_path}");
-    #[cfg(unix)]
-    {
-        _generate_executable(dest, format!("{shebang}\n{code}").as_bytes(), site_packages)
-    }
-
-    #[cfg(windows)]
-    {
-        _generate_windows_executable(dest, &shebang, code, site_packages)
+    match crate::platform() {
+        crate::Platform::Unix => {
+            _generate_executable(dest, format!("{shebang}\n{code}").as_bytes(), site_packages)
+        }
+        crate::Platform::Windows => {
+            _generate_windows_executable(dest, &shebang, code, site_packages)
+        }
     }
 }
 
