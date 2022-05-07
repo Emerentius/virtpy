@@ -304,12 +304,14 @@ impl ProjectDirs {
     fn installed_distributions(&self) -> impl Iterator<Item = StoredDistribution> + '_ {
         self.dist_infos()
             .read_dir()
-            .unwrap()
+            .into_iter()
+            .flatten()
             .map(|e| (e.unwrap(), StoredDistributionType::FromPip))
             .chain(
                 self.records()
                     .read_dir()
-                    .unwrap()
+                    .into_iter()
+                    .flatten()
                     .map(|e| (e.unwrap(), StoredDistributionType::FromWheel)),
             )
             .map(|(dist_info_entry, installed_via)| StoredDistribution {
