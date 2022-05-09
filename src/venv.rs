@@ -380,8 +380,7 @@ impl Virtpy {
     // Returns the path of the python installation on which this
     // this virtpy builds
     pub(crate) fn global_python(&self) -> EResult<PathBuf> {
-        #[cfg(unix)]
-        {
+        if cfg!(unix) {
             let python = self.python();
             let link = &self.link;
             let python: PathBuf =
@@ -390,11 +389,8 @@ impl Virtpy {
                 )?)
                 .expect(INVALID_UTF8_PATH);
             Ok(python)
-        }
-
-        #[cfg(windows)]
-        {
-            let version = python_version(&self.python())?;
+        } else {
+            let version = python_version(&self.location())?;
             crate::python::detection::detect(&version.as_string_without_patch())
         }
     }
