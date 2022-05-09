@@ -1126,53 +1126,53 @@ setup(
     Ok(())
 }
 
-// Try to package the pkg_resources module using the wheel package.
-// Requires that the pkg_resources has been installed as a valid wheel, i.e. there
-// needs to be dist-info directory with the necessary data.
-// This is the case in older python versions but not in newer ones.
-fn pack_pkg_resources_wheel(
-    tmp_dir: &TempDir,
-    site_packages: &Path,
-    global_python: &Path,
-) -> EResult<()> {
-    let pack_dir = tmp_dir.path().join("packme");
-    fs_err::create_dir_all(&pack_dir)?;
-    for dir in ["pkg_resources", "pkg_resources-0.0.0.dist-info"] {
-        fs_err::rename(site_packages.join(dir), pack_dir.join(dir))?;
-    }
+// // Try to package the pkg_resources module using the wheel package.
+// // Requires that the pkg_resources has been installed as a valid wheel, i.e. there
+// // needs to be dist-info directory with the necessary data.
+// // This is the case in older python versions but not in newer ones.
+// fn pack_pkg_resources_wheel(
+//     tmp_dir: &TempDir,
+//     site_packages: &Path,
+//     global_python: &Path,
+// ) -> EResult<()> {
+//     let pack_dir = tmp_dir.path().join("packme");
+//     fs_err::create_dir_all(&pack_dir)?;
+//     for dir in ["pkg_resources", "pkg_resources-0.0.0.dist-info"] {
+//         fs_err::rename(site_packages.join(dir), pack_dir.join(dir))?;
+//     }
 
-    for entry in walkdir::WalkDir::new(&pack_dir).contents_first(true) {
-        let entry = entry?;
-        let path = entry.path();
-        if entry.file_type().is_file() {
-            if path.extension() == Some("pyc".as_ref()) {
-                fs_err::remove_file(path)?;
-            }
-        } else if entry.file_type().is_dir() {
-            if path.ends_with("__pycache__") {
-                // they must be empty by now
-                fs_err::remove_dir(path)?;
-            }
-        }
-    }
+//     for entry in walkdir::WalkDir::new(&pack_dir).contents_first(true) {
+//         let entry = entry?;
+//         let path = entry.path();
+//         if entry.file_type().is_file() {
+//             if path.extension() == Some("pyc".as_ref()) {
+//                 fs_err::remove_file(path)?;
+//             }
+//         } else if entry.file_type().is_dir() {
+//             if path.ends_with("__pycache__") {
+//                 // they must be empty by now
+//                 fs_err::remove_dir(path)?;
+//             }
+//         }
+//     }
 
-    let record_path = PathBuf::try_from(
-        pack_dir
-            .join("pkg_resources-0.0.0.dist-info")
-            .join("RECORD"),
-    )?;
-    let record = WheelRecord::from_file_ignoring_pyc(&record_path)?;
-    record.save_to_file(&record_path)?;
+//     let record_path = PathBuf::try_from(
+//         pack_dir
+//             .join("pkg_resources-0.0.0.dist-info")
+//             .join("RECORD"),
+//     )?;
+//     let record = WheelRecord::from_file_ignoring_pyc(&record_path)?;
+//     record.save_to_file(&record_path)?;
 
-    check_status(
-        Command::new(global_python)
-            .args(&["-m", "wheel", "pack"])
-            .arg(pack_dir)
-            .arg("--dest-dir")
-            .arg(tmp_dir.path()),
-    )?;
-    Ok(())
-}
+//     check_status(
+//         Command::new(global_python)
+//             .args(&["-m", "wheel", "pack"])
+//             .arg(pack_dir)
+//             .arg("--dest-dir")
+//             .arg(tmp_dir.path()),
+//     )?;
+//     Ok(())
+// }
 
 pub(crate) fn python_version(venv: &Path) -> EResult<PythonVersion> {
     let mut ini = configparser::ini::Ini::new();

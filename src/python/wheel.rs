@@ -337,9 +337,9 @@ impl WheelRecord {
         Self::_from_file(record.as_ref(), false)
     }
 
-    pub(crate) fn from_file_ignoring_pyc(record: impl AsRef<Path>) -> EResult<Self> {
-        Self::_from_file(record.as_ref(), true)
-    }
+    // pub(crate) fn from_file_ignoring_pyc(record: impl AsRef<Path>) -> EResult<Self> {
+    //     Self::_from_file(record.as_ref(), true)
+    // }
 
     fn _from_file(record: &Path, ignore_pyc_files: bool) -> EResult<Self> {
         csv::ReaderBuilder::new()
