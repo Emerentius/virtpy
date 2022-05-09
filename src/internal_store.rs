@@ -14,6 +14,7 @@ use crate::{
     python::wheel::{RecordEntry, WheelRecord},
     EResult, Path, PathBuf, INVALID_UTF8_PATH,
 };
+use std::collections::HashSet;
 use std::{
     collections::HashMap,
     io::{BufReader, Seek},
@@ -32,6 +33,13 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> EResult<()> {
             Err(err) => println!("failed to check {path}: {err}"),
         };
     }
+
+    let mut store_dependencies = StoreDependencies::current(ctx);
+    store_dependencies.remove_virtpy_dependencies(
+        danglers
+            .iter()
+            .map(|(backing_path, _)| VirtpyBacking::from_existing(backing_path.clone())),
+    );
 
     if !danglers.is_empty() {
         println!("found {} missing virtpys.", danglers.len());
@@ -53,7 +61,12 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> EResult<()> {
     }
 
     {
-        let unused_dists = unused_distributions(ctx).collect::<Vec<_>>();
+        let unused_dists = store_dependencies
+            .dist_virtpys
+            .iter()
+            .filter(|(_, dependents)| dependents.is_empty())
+            .map(|(dist, _)| dist)
+            .collect_vec();
         if !unused_dists.is_empty() {
             println!("found {} modules without users.", unused_dists.len());
 
@@ -72,9 +85,9 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> EResult<()> {
                     // Remove distribution from list of installed distributions, for all
                     // python versions.
                     // Save after each attempted removal in case a bug causes the removal to fail prematurely
-                    let hash = dist.distribution.sha;
+                    let hash = &dist.distribution.sha;
                     for python_specific_stored_distribs in stored_distribs.0.values_mut() {
-                        python_specific_stored_distribs.remove(&hash);
+                        python_specific_stored_distribs.remove(hash);
                     }
                     stored_distribs
                         .save()
@@ -87,7 +100,12 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> EResult<()> {
     }
 
     {
-        let unused_package_files = unused_package_files(ctx).collect::<Vec<_>>();
+        let unused_package_files = store_dependencies
+            .file_dists
+            .iter()
+            .filter(|(_, dependents)| dependents.is_empty())
+            .map(|(file, _)| ctx.proj_dirs.package_file(&file))
+            .collect_vec();
         if !unused_package_files.is_empty() {
             println!(
                 "found {} package files without distribution dependents.",
@@ -107,6 +125,128 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> EResult<()> {
         }
     }
     Ok(())
+}
+
+type VirtpyDists = HashMap<VirtpyBacking, HashSet<StoredDistribution>>;
+type DistVirtpys = HashMap<StoredDistribution, HashSet<VirtpyBacking>>;
+
+type DistFiles = HashMap<StoredDistribution, HashSet<RecordEntry>>;
+type FileDists = HashMap<FileHash, HashSet<StoredDistribution>>;
+
+/// Graph of all dependencies and reverse dependencies.
+/// Modifying this has NO effect on the actual store.
+struct StoreDependencies {
+    /// Virtpy to Distributions used
+    virtpy_dists: VirtpyDists,
+    // Distribution -> Virtpys using it
+    dist_virtpys: DistVirtpys,
+    // Distribution -> Files part of it
+    dist_files: DistFiles,
+    // Files -> Distributions containing it
+    file_dists: FileDists,
+}
+
+impl StoreDependencies {
+    // Remove all dependencies from graph, recursively.
+    // That means, if none of the still existing virtpys depends on a distribution,
+    // its files are also removed from the dependency tree.
+    fn remove_virtpy_dependencies(&mut self, virtpys: impl IntoIterator<Item = VirtpyBacking>) {
+        for virtpy in virtpys {
+            if let Some(virtpy_dists) = self.virtpy_dists.remove(&virtpy) {
+                for dist_used in virtpy_dists {
+                    self.dist_virtpys
+                        .get_mut(&dist_used)
+                        .unwrap()
+                        .remove(&virtpy);
+                }
+            }
+        }
+
+        for (dist, virtpy_deps) in &self.dist_virtpys {
+            if virtpy_deps.is_empty() {
+                let dist_files = self.dist_files.remove(dist).unwrap();
+                for file in dist_files {
+                    self.file_dists.get_mut(&file.hash).unwrap().remove(dist);
+                }
+            }
+        }
+    }
+
+    fn current(ctx: &Ctx) -> StoreDependencies {
+        // For the cases of dependent mappings (distribution -> virtpy using it, dist file -> distribution containing it)
+        // we add all cases without dependencies first.
+        // We would otherwise miss orphaned entities.
+        let mut virtpy_dists = VirtpyDists::new();
+        let mut dist_virtpys: DistVirtpys = ctx
+            .proj_dirs
+            .installed_distributions()
+            .map(|dist| (dist, <_>::default()))
+            .collect();
+        let mut dist_files = DistFiles::new();
+        let mut file_dists: FileDists = package_files(ctx)
+            .map(|filehash| (filehash, <_>::default()))
+            .collect();
+
+        for virtpy_path in ctx
+            .proj_dirs
+            .virtpys()
+            .read_dir()
+            .unwrap()
+            .map(Result::unwrap)
+        {
+            let backing = VirtpyBacking::from_existing(
+                virtpy_path.path().try_into().expect(INVALID_UTF8_PATH),
+            );
+            let distributions: HashSet<_> = distributions_used(&backing).collect();
+            for dist in &distributions {
+                dist_virtpys
+                    .entry(dist.clone())
+                    .or_default()
+                    .insert(backing.clone());
+            }
+            virtpy_dists.insert(backing, distributions);
+        }
+
+        for dist in dist_virtpys.keys() {
+            let records: HashSet<_> = dist
+                .records(ctx)
+                .unwrap()
+                .map(Result::unwrap)
+                .flat_map(RecordEntry::try_from)
+                // .filter(|record| {
+                //     // FIXME: files with ../../
+                //     ctx.proj_dirs.package_file(&record.hash).exists()
+                // })
+                .collect();
+
+            for record in &records {
+                file_dists
+                    .entry(record.hash.clone())
+                    .or_default()
+                    .insert(dist.clone());
+            }
+
+            dist_files.insert(dist.clone(), records);
+        }
+
+        StoreDependencies {
+            virtpy_dists,
+            dist_virtpys,
+            dist_files,
+            file_dists,
+        }
+    }
+}
+
+fn package_files(ctx: &Ctx) -> impl Iterator<Item = FileHash> {
+    ctx.proj_dirs
+        .package_files()
+        .read_dir()
+        .unwrap()
+        .map(Result::unwrap)
+        .map(|entry| {
+            FileHash::from_filename(&PathBuf::try_from(entry.path()).expect(INVALID_UTF8_PATH))
+        })
 }
 
 pub(crate) fn print_verify_store(ctx: &Ctx) {
@@ -205,35 +345,6 @@ pub(crate) fn print_stats(
     Ok(())
 }
 
-fn file_dependents(
-    ctx: &Ctx,
-    distribution_files: &HashMap<StoredDistribution, (Vec<RecordEntry>, u64)>,
-) -> HashMap<FileHash, Vec<StoredDistribution>> {
-    let mut dependents = HashMap::new();
-
-    for file in ctx
-        .proj_dirs
-        .package_files()
-        .read_dir()
-        .unwrap()
-        .map(Result::unwrap)
-        .map(|dir_entry| PathBuf::try_from(dir_entry.path()).expect(INVALID_UTF8_PATH))
-    {
-        let hash = FileHash::from_filename(&file);
-        dependents.entry(hash).or_default();
-    }
-
-    for (distribution, (records, _)) in distribution_files.iter() {
-        for record in records {
-            dependents
-                .entry(record.hash.clone())
-                .or_insert_with(Vec::new)
-                .push(distribution.clone());
-        }
-    }
-    dependents
-}
-
 // return value: path to virtpy
 fn distributions_dependents(ctx: &Ctx) -> HashMap<StoredDistribution, Vec<PathBuf>> {
     let mut distributions_dependents = HashMap::new();
@@ -253,7 +364,7 @@ fn distributions_dependents(ctx: &Ctx) -> HashMap<StoredDistribution, Vec<PathBu
         .map(|entry| PathBuf::try_from(entry.path()).expect(INVALID_UTF8_PATH))
     {
         let virtpy_dirs = VirtpyBacking::from_existing(virtpy_path.clone());
-        for distr in distributions_used(virtpy_dirs) {
+        for distr in distributions_used(&virtpy_dirs) {
             // if the data directory is in a consistent state, the keys are guaranteed to exist already
             debug_assert!(distributions_dependents.contains_key(&distr));
             distributions_dependents
@@ -290,7 +401,7 @@ fn files_of_distribution(ctx: &Ctx) -> HashMap<StoredDistribution, (Vec<RecordEn
         .collect()
 }
 
-fn distributions_used(virtpy_dirs: VirtpyBacking) -> impl Iterator<Item = StoredDistribution> {
+fn distributions_used(virtpy_dirs: &VirtpyBacking) -> impl Iterator<Item = StoredDistribution> {
     virtpy_dirs
         .dist_infos()
         .filter(|dist_info_path| {
@@ -339,24 +450,6 @@ fn _stored_distribution_of_installed_dist(dist_info_path: &Path) -> StoredDistri
             }
         }
     }
-}
-
-fn unused_distributions(ctx: &Ctx) -> impl Iterator<Item = StoredDistribution> + '_ {
-    let distribution_dependents = distributions_dependents(ctx);
-    distribution_dependents
-        .into_iter()
-        .filter(|(_, dependents)| dependents.is_empty())
-        .map(|(distribution, _)| distribution)
-}
-
-fn unused_package_files(ctx: &Ctx) -> impl Iterator<Item = PathBuf> {
-    let distribution_files = files_of_distribution(ctx);
-    let file_dependents = file_dependents(ctx, &distribution_files);
-    let package_files = ctx.proj_dirs.package_files();
-    file_dependents
-        .into_iter()
-        .filter(|(_, dependents)| dependents.is_empty())
-        .map(move |(file, _)| package_files.join(file))
 }
 
 fn register_distribution_files_of_wheel(

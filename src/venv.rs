@@ -9,8 +9,8 @@ use crate::python::wheel::{
     is_path_of_executable, normalized_distribution_name_for_wheel, RecordEntry, WheelRecord,
 };
 use crate::python::{
-    generate_executable, python_version, records, Distribution, DistributionHash, EntryPoint,
-    FileHash, PythonVersion,
+    generate_executable, records, Distribution, DistributionHash, EntryPoint, FileHash,
+    PythonVersion,
 };
 use crate::{check_output, ignore_target_doesnt_exist, Ctx, DEFAULT_VIRTPY_PATH};
 use crate::{
@@ -26,6 +26,8 @@ use rand::Rng;
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::Path as StdPath;
+use std::process::Command;
+use tempdir::TempDir;
 
 /// A venv in the central store.
 /// When we are installing files into this venv, we hardlink them from the shared storage.
@@ -38,6 +40,7 @@ use std::path::Path as StdPath;
 /// down directories. The backing venvs give them this directory structure.
 /// The virtpys out in the filesystem that a user is interacting with contain symlinks to the
 /// backing venv.
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub(crate) struct VirtpyBacking {
     location: PathBuf,
     python_version: PythonVersion,
@@ -164,7 +167,7 @@ impl VirtpyPathsPrivate for Virtpy {}
 impl VirtpyBacking {
     pub(crate) fn from_existing(location: PathBuf) -> Self {
         Self {
-            python_version: python_version(&python_path(&location)).unwrap(),
+            python_version: python_version(&location).unwrap(),
             location,
         }
     }
@@ -217,7 +220,7 @@ impl Virtpy {
             VirtpyStatus::Ok { matching_virtpy } => Ok(Virtpy {
                 link: canonicalize(virtpy_link)?,
                 backing: matching_virtpy,
-                python_version: python_version(&python_path(virtpy_link))?,
+                python_version: python_version(&virtpy_link)?,
             }),
         }
         .wrap_err_with(|| eyre!("the virtpy `{virtpy_link}` is broken, please recreate it.",))
@@ -811,13 +814,13 @@ fn _create_virtpy(
     }
 
     let checked_virtpy = Virtpy {
-        link: path,
-        backing: central_path,
         // Not all users of this function may need the python version, but it's
         // cheap to get and simpler to just always query.
         // Could be easily replaced with a token-struct that could be converted
         // to a full Virtpy on demand.
-        python_version: python_version(python_path)?,
+        python_version: python_version(&central_path)?,
+        link: path,
+        backing: central_path,
     };
     if let Some(shim_info) = with_pip_shim {
         add_pip_shim(&checked_virtpy, shim_info).wrap_err("failed to add pip shim")?;
@@ -828,7 +831,7 @@ fn _create_virtpy(
 
 fn _create_bare_venv(python_path: &Path, path: &Path, prompt: &str) -> EResult<()> {
     check_status(
-        std::process::Command::new(python_path)
+        Command::new(python_path)
             .args(&["-m", "venv", "--without-pip", "--prompt", prompt])
             .arg(&path)
             .stdout(std::process::Stdio::null()),
@@ -973,9 +976,7 @@ print(json.dumps(paths))"#
             get_paths("nt")
         };
 
-        let output = check_output(
-            std::process::Command::new(python_path.as_ref()).args(&["-c", &get_paths]),
-        )?;
+        let output = check_output(Command::new(python_path.as_ref()).args(&["-c", &get_paths]))?;
 
         Ok(InstallPaths(serde_json::from_str(&output)?))
     }
@@ -1018,14 +1019,10 @@ fn install_and_register_distribution_from_file(
 // Generates the wheel, if it isn't cached already.
 fn package_resources_wheel(ctx: &Ctx, global_python: &Path) -> EResult<PathBuf> {
     let wheel_dir = ctx.proj_dirs.data().join("wheels");
-    let wheel_name = "pkg_resources-0.0.0-py2.py3-none-any.whl";
-    let target = wheel_dir.join(wheel_name);
-
-    if !target.exists() {
-        generate_pkg_resources_wheel(ctx, global_python, wheel_dir, wheel_name)?;
+    match find_wheel(&wheel_dir)? {
+        Some(path) => Ok(path),
+        None => generate_pkg_resources_wheel(ctx, global_python, wheel_dir),
     }
-
-    Ok(target)
 }
 
 // Generate pkg_resources wheel and store it in our data directory for later use.
@@ -1033,8 +1030,7 @@ fn generate_pkg_resources_wheel(
     ctx: &Ctx,
     global_python: &camino::Utf8Path,
     wheel_dir: camino::Utf8PathBuf,
-    wheel_name: &str,
-) -> EResult<()> {
+) -> EResult<PathBuf> {
     // Create a venv WITH pip. This will also install setuptools and pkg_resources.
     // We can extract the pkg_resources module and generate a wheel from it.
     // clean it up by deleting all the python-specific pyc files
@@ -1043,20 +1039,102 @@ fn generate_pkg_resources_wheel(
     // The pkg_resources RECORD file doesn't conform to the spec (of course).
     // It is missing hashes and filesizes for *.pyc files, so we need to filter those
     // out before even constructing the WheelRecord.
-    let python_version = python_version(global_python)?;
     fs_err::create_dir_all(&wheel_dir)?;
     let tmp_dir = tempdir::TempDir::new_in(ctx.proj_dirs.tmp(), "generate_pkg_resources_whl")?;
     let venv_dir = tmp_dir.path().join(".venv");
     check_status(
-        std::process::Command::new(global_python)
+        Command::new(global_python)
             .args(&["-m", "venv"])
             .arg(&venv_dir)
             .stdout(std::process::Stdio::null()),
     )?;
+    let python_version = python_version(Path::from_path(&venv_dir).expect(INVALID_UTF8_PATH))?;
     let site_packages = venv_site_packages(
         Path::from_path(&venv_dir).expect(INVALID_UTF8_PATH),
         python_version,
     );
+
+    // old
+    //pack_pkg_resources_wheel(&tmp_dir, &site_packages, global_python)?;
+
+    // new
+    create_pkg_resources_wheel(&tmp_dir, &site_packages, global_python)?;
+
+    let tmp_dir_path = Path::from_path(tmp_dir.path()).expect(INVALID_UTF8_PATH);
+    let wheel_path =
+        find_wheel(tmp_dir_path)?.ok_or_else(|| eyre!("no pkg_resources wheel generated"))?;
+    let wheel_name = wheel_path.file_name().unwrap();
+
+    let target = wheel_dir.join(&wheel_name);
+
+    fs_err::rename(tmp_dir.path().join(&wheel_name), &target)
+        // If another process already placed it there in the meantime, that's fine too
+        .or_else(ignore_target_exists)?;
+    Ok(target)
+}
+
+fn find_wheel(dir: &Path) -> EResult<Option<PathBuf>> {
+    Ok(glob::glob(&format!("{dir}/*.whl"))?
+        .next()
+        .transpose()?
+        .map(|p| p.try_into().expect(INVALID_UTF8_PATH)))
+}
+
+// Generate a wheel from just the pkg_resources directory. This ignores
+// a dist-info directory, if it exists. That also means it works without needing one
+// and python3.10 on Ubuntu 22.04 doesn't create a dist-info directory.
+fn create_pkg_resources_wheel(
+    tmp_dir: &TempDir,
+    site_packages: &Path,
+    global_python: &Path,
+) -> EResult<()> {
+    fs_err::rename(
+        site_packages.join("pkg_resources"),
+        tmp_dir.path().join("pkg_resources"),
+    )?;
+    // Create a setup.py to describe the package.
+    // This or some other config describing the build is required for `pip wheel`.
+    //
+    // setup.py is considered a legacy tool to define the build process
+    // but the new one (pyproject.toml) isn't supported in setuptools yet.
+    // Support was added in setuptools v61, but it's still experimental and
+    // the latest version of setuptools in the latest version of Ubuntu for
+    // python3.10 is even older (v59) as of 2022-05-09.
+    // We could possibly define a setup.cfg as well, but that is also a legacy
+    // tool now, just a newer one.
+    // setup.py is still common enough that it will likely continue to work
+    // for a long time.
+    fs_err::write(
+        tmp_dir.path().join("setup.py"),
+        r#"from setuptools import setup, find_packages
+
+setup(
+    name = "pkg_resources",
+    version = "0.0.0",
+    packages = find_packages(),
+)
+"#,
+    )?;
+    check_output(
+        Command::new(global_python)
+            .args(&["-m", "pip", "wheel"])
+            .arg(tmp_dir.path())
+            .arg("--wheel-dir")
+            .arg(tmp_dir.path()),
+    )?;
+
+    Ok(())
+}
+
+// Try to package the pkg_resources module using the wheel package.
+// Requires that the pkg_resources has been installed as a valid wheel, i.e. there
+// needs to be dist-info directory with the necessary data.
+// This is the case in older python versions but not in newer ones.
+fn pack_pkg_resources_wheel(
+    tmp_dir: &TempDir,
+    site_packages: &Path,
+    global_python: &Path,
+) -> EResult<()> {
     let pack_dir = tmp_dir.path().join("packme");
     fs_err::create_dir_all(&pack_dir)?;
     for dir in ["pkg_resources", "pkg_resources-0.0.0.dist-info"] {
@@ -1087,16 +1165,34 @@ fn generate_pkg_resources_wheel(
     record.save_to_file(&record_path)?;
 
     check_status(
-        std::process::Command::new(global_python)
+        Command::new(global_python)
             .args(&["-m", "wheel", "pack"])
             .arg(pack_dir)
             .arg("--dest-dir")
             .arg(tmp_dir.path()),
     )?;
-    fs_err::rename(tmp_dir.path().join(wheel_name), wheel_dir.join(wheel_name))
-        // If another process already placed it there in the meantime, that's fine too
-        .or_else(ignore_target_exists)?;
     Ok(())
+}
+
+pub(crate) fn python_version(venv: &Path) -> EResult<PythonVersion> {
+    let mut ini = configparser::ini::Ini::new();
+    ini.load(venv.join("pyvenv.cfg"))
+        .map_err(|err_string| eyre!("couldn't load pyvenv.cfg for venv at {venv}: {err_string}"))?;
+    let version = ini
+        .get("default", "version")
+        .ok_or_else(|| eyre!("pyvenv.cfg contains no version key"))?;
+    let (_, major, minor, patch) = lazy_regex::regex_captures!(r"(\d+)\.(\d+)\.(\d+)", &version)
+        .ok_or_else(|| eyre!("failed to read python version from {version:?}"))?;
+
+    let parse_num = |num: &str| {
+        num.parse::<i32>()
+            .wrap_err_with(|| eyre!("failed to parse number: \"{num:?}\""))
+    };
+    Ok(PythonVersion {
+        major: parse_num(major)?,
+        minor: parse_num(minor)?,
+        patch: parse_num(patch)?,
+    })
 }
 
 pub(crate) fn add_package_resources(ctx: &Ctx, virtpy: &Virtpy) -> EResult<()> {
