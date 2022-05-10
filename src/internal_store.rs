@@ -286,25 +286,18 @@ pub(crate) fn print_stats(
         .map(|entry| entry.metadata().unwrap().len())
         .sum();
 
-    let distribution_files = files_of_distribution(ctx);
-    let distribution_dependents = distributions_dependents(ctx);
+    let deps = StoreDependencies::current(ctx);
+    let mut distribution_sizes = HashMap::<_, u64>::new();
+    for (dist, files) in &deps.dist_files {
+        distribution_sizes.insert(dist.clone(), files.iter().map(|file| file.filesize).sum());
+    }
 
-    let total_size_with_duplicates = distribution_dependents
-        .iter()
-        .map(|(distr, dependents)| {
-            Ok(distribution_files
-                .get(distr)
-                .ok_or_else(|| {
-                    eyre::eyre!(
-                        "no entry for distribution {},{:?}",
-                        distr.distribution.as_csv(),
-                        distr.installed_via
-                    )
-                })?
-                .1
-                * dependents.len() as u64)
-        })
-        .sum::<EResult<u64>>()?;
+    let total_size_with_duplicates = deps
+        .virtpy_dists
+        .values()
+        .flatten()
+        .map(|dists| distribution_sizes[dists])
+        .sum();
 
     let readable_size = |size| match human_readable {
         true => bytesize::to_string(size, use_binary_si_prefix),
@@ -323,7 +316,7 @@ pub(crate) fn print_stats(
 
     if ctx.options.verbose >= 1 {
         println!();
-        for (distr, dependents) in distribution_dependents {
+        for (distr, dependents) in deps.dist_virtpys {
             println!(
                 "{:30} {} dependents    ({})",
                 format_args!("{} {}", distr.distribution.name, distr.distribution.version,),
@@ -332,7 +325,8 @@ pub(crate) fn print_stats(
             );
             if ctx.options.verbose >= 2 {
                 for dependent in dependents {
-                    let link_location = virtpy_link_location(&dependent).unwrap();
+                    let dependent = dependent.location();
+                    let link_location = virtpy_link_location(dependent).unwrap();
                     print!("    {link_location}");
                     if ctx.options.verbose >= 3 {
                         print!("  =>  {dependent}");
@@ -343,62 +337,6 @@ pub(crate) fn print_stats(
         }
     }
     Ok(())
-}
-
-// return value: path to virtpy
-fn distributions_dependents(ctx: &Ctx) -> HashMap<StoredDistribution, Vec<PathBuf>> {
-    let mut distributions_dependents = HashMap::new();
-
-    // Add all distributions to map without dependencies.
-    // Orphaned distributions would otherwise be missed.
-    for distr in ctx.proj_dirs.installed_distributions() {
-        distributions_dependents.entry(distr).or_default();
-    }
-
-    for virtpy_path in ctx
-        .proj_dirs
-        .virtpys()
-        .read_dir()
-        .unwrap()
-        .map(Result::unwrap)
-        .map(|entry| PathBuf::try_from(entry.path()).expect(INVALID_UTF8_PATH))
-    {
-        let virtpy_dirs = VirtpyBacking::from_existing(virtpy_path.clone());
-        for distr in distributions_used(&virtpy_dirs) {
-            // if the data directory is in a consistent state, the keys are guaranteed to exist already
-            debug_assert!(distributions_dependents.contains_key(&distr));
-            distributions_dependents
-                .entry(distr)
-                .or_insert_with(Vec::new)
-                .push(virtpy_path.clone());
-        }
-    }
-
-    distributions_dependents
-}
-
-// Find distributions in $DATA_DIR/dist-infos/ and read their files from their RECORD file.
-// Also computes the total size of all distribution files
-fn files_of_distribution(ctx: &Ctx) -> HashMap<StoredDistribution, (Vec<RecordEntry>, u64)> {
-    ctx.proj_dirs
-        .installed_distributions()
-        .map(|distribution| {
-            let records = distribution
-                .records(ctx)
-                .unwrap()
-                .map(Result::unwrap)
-                .flat_map(RecordEntry::try_from)
-                .filter(|record| {
-                    // FIXME: files with ../../
-                    ctx.proj_dirs.package_file(&record.hash).exists()
-                })
-                .collect::<Vec<_>>();
-
-            let total_size = records.iter().map(|record| record.filesize).sum::<u64>();
-            assert_ne!(total_size, 0);
-            (distribution, (records, total_size))
-        })
-        .collect()
 }
 
 fn distributions_used(virtpy_dirs: &VirtpyBacking) -> impl Iterator<Item = StoredDistribution> {
