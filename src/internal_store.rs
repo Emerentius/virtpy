@@ -1,5 +1,5 @@
 use eyre::{ensure, eyre, WrapErr};
-use fs_err::File;
+use fs_err::{File, PathExt};
 use itertools::Itertools;
 
 use crate::python::wheel::MaybeRecordEntry;
@@ -21,40 +21,30 @@ use std::{
 };
 
 pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> EResult<()> {
-    let mut danglers = vec![];
-    for virtpy in ctx.proj_dirs.virtpys().read_dir().unwrap() {
-        let virtpy = virtpy.unwrap();
-        assert!(virtpy.file_type().unwrap().is_dir());
-        let path: PathBuf = virtpy.path().try_into().expect(INVALID_UTF8_PATH);
-
-        match virtpy_status(&path) {
-            Ok(VirtpyBackingStatus::Ok { .. }) => (),
-            Ok(VirtpyBackingStatus::Orphaned { link }) => danglers.push((path, link)),
-            Err(err) => println!("failed to check {path}: {err}"),
-        };
+    let (danglers, errors): (Vec<_>, Vec<_>) = dangling_virtpys(ctx).partition_result();
+    for (virtpy, err) in errors {
+        let path = virtpy.location();
+        println!("failed to check {path}: {err}");
     }
 
     let mut store_dependencies = StoreDependencies::current(ctx);
-    store_dependencies.remove_virtpy_dependencies(
-        danglers
-            .iter()
-            .map(|(backing_path, _)| VirtpyBacking::from_existing(backing_path.clone())),
-    );
+    store_dependencies
+        .remove_virtpy_dependencies(danglers.iter().map(|(virtpy, _)| virtpy.clone()));
 
     if !danglers.is_empty() {
         println!("found {} missing virtpys.", danglers.len());
 
         if remove {
             for (backing, link) in danglers {
-                debug_assert!(
-                    virtpy_link_target(&link).map_or(true, |link_target| link_target != backing)
-                );
-                delete_virtpy_backing(&backing).unwrap();
+                debug_assert!(virtpy_link_target(&link)
+                    .map_or(true, |link_target| link_target != backing.location()));
+                delete_virtpy_backing(backing.location()).unwrap();
             }
         } else {
             println!("If you've moved some of these, recreate new ones in their place as they'll break when the orphaned backing stores are deleted.\nRun `virtpy gc --remove` to delete orphans\n");
 
             for (target, virtpy_gone_awol) in danglers {
+                let target = target.location();
                 println!("{virtpy_gone_awol} => {target}");
             }
         }
@@ -127,6 +117,28 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> EResult<()> {
     Ok(())
 }
 
+fn dangling_virtpys(
+    ctx: &Ctx,
+) -> impl Iterator<Item = Result<(VirtpyBacking, PathBuf), (VirtpyBacking, eyre::Report)>> {
+    ctx.proj_dirs
+        .virtpys()
+        .read_dir()
+        .unwrap()
+        .filter_map(|virtpy| {
+            let virtpy = virtpy.unwrap();
+            assert!(virtpy.file_type().unwrap().is_dir());
+            let path: PathBuf = virtpy.path().try_into().expect(INVALID_UTF8_PATH);
+            let status = virtpy_status(&path);
+            let virtpy = VirtpyBacking::from_existing(path);
+
+            match status {
+                Ok(VirtpyBackingStatus::Ok { .. }) => None,
+                Ok(VirtpyBackingStatus::Orphaned { link }) => Some(Ok((virtpy, link))),
+                Err(err) => Some(Err((virtpy, err))),
+            }
+        })
+}
+
 type VirtpyDists = HashMap<VirtpyBacking, HashSet<StoredDistribution>>;
 type DistVirtpys = HashMap<StoredDistribution, HashSet<VirtpyBacking>>;
 
@@ -135,6 +147,7 @@ type FileDists = HashMap<FileHash, HashSet<StoredDistribution>>;
 
 /// Graph of all dependencies and reverse dependencies.
 /// Modifying this has NO effect on the actual store.
+#[derive(Clone)]
 struct StoreDependencies {
     /// Virtpy to Distributions used
     virtpy_dists: VirtpyDists,
@@ -287,6 +300,12 @@ pub(crate) fn print_stats(
         .sum();
 
     let deps = StoreDependencies::current(ctx);
+    //let (danglers, errors) = dangling_virtpys(ctx);
+    // let non_dangling_deps = {
+    //     let mut non_dangling = deps.clone();
+    //     non_dangling.remove_virtpy_dependencies(danglers.iter().map(|(virtpy, _)| virtpy.clone()));
+    // };
+
     let mut distribution_sizes = HashMap::<_, u64>::new();
     for (dist, files) in &deps.dist_files {
         distribution_sizes.insert(dist.clone(), files.iter().map(|file| file.filesize).sum());
