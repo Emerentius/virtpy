@@ -338,7 +338,7 @@ pub(crate) fn print_stats(
         for (distr, dependents) in deps.dist_virtpys {
             println!(
                 "{:30} {} dependents    ({})",
-                format_args!("{} {}", distr.distribution.name, distr.distribution.version,),
+                format!("{} {}", distr.distribution.name, distr.distribution.version,),
                 dependents.len(),
                 distr.distribution.sha
             );
