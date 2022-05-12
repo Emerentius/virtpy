@@ -17,8 +17,8 @@ use crate::{check_output, ignore_target_doesnt_exist, Ctx, DEFAULT_VIRTPY_PATH};
 use crate::{
     check_status, delete_virtpy_backing, dist_info_matches_package, executables_path,
     ignore_target_exists, is_not_found, python_path, relative_path, remove_leading_parent_dirs,
-    symlink_dir, symlink_file, EResult, Path, PathBuf, ShimInfo, StoredDistribution,
-    StoredDistributionType, CENTRAL_METADATA, DIST_HASH_FILE, LINK_METADATA,
+    symlink_dir, symlink_file, Path, PathBuf, ShimInfo, StoredDistribution, StoredDistributionType,
+    CENTRAL_METADATA, DIST_HASH_FILE, LINK_METADATA,
 };
 use eyre::{eyre, Context};
 use fs_err::PathExt;
@@ -73,7 +73,7 @@ pub(crate) trait VirtpyPaths {
         python_path(self.location())
     }
 
-    fn dist_info(&self, package: &str) -> EResult<PathBuf> {
+    fn dist_info(&self, package: &str) -> Result<PathBuf> {
         let package = &normalized_distribution_name_for_wheel(package);
         self.dist_infos()
             .find(|path| dist_info_matches_package(path, package))
@@ -99,12 +99,12 @@ pub(crate) trait VirtpyPaths {
         venv_site_packages(self.location(), self.python_version())
     }
 
-    fn set_metadata(&self, name: &str, value: &str) -> EResult<()> {
+    fn set_metadata(&self, name: &str, value: &str) -> Result<()> {
         fs_err::write(self.metadata_dir().join(name), value)?;
         Ok(())
     }
 
-    fn get_metadata(&self, name: &str) -> EResult<Option<String>> {
+    fn get_metadata(&self, name: &str) -> Result<Option<String>> {
         fs_err::read_to_string(self.metadata_dir().join(name))
             .map(Some)
             .or_else(|err| {
@@ -157,7 +157,7 @@ impl VirtpyPaths for Virtpy {
 }
 
 trait VirtpyPathsPrivate: VirtpyPaths {
-    fn install_paths(&self) -> EResult<InstallPaths> {
+    fn install_paths(&self) -> Result<InstallPaths> {
         InstallPaths::detect(self.python())
     }
 }
@@ -181,7 +181,7 @@ impl Virtpy {
         path: &Path,
         prompt: Option<String>,
         with_pip_shim: Option<ShimInfo>,
-    ) -> EResult<Virtpy> {
+    ) -> Result<Virtpy> {
         let mut rng = rand::thread_rng();
 
         // Generate a random id for the virtpy.
@@ -210,7 +210,7 @@ impl Virtpy {
         _create_virtpy(central_path, python_path, path, prompt, with_pip_shim)
     }
 
-    pub(crate) fn from_existing(virtpy_link: &Path) -> EResult<Self> {
+    pub(crate) fn from_existing(virtpy_link: &Path) -> Result<Self> {
         match virtpy_link_status(virtpy_link).wrap_err("failed to verify virtpy")? {
             VirtpyStatus::WrongLocation { should, .. } => {
                 Err(eyre!("virtpy copied or moved from {should}"))
@@ -227,7 +227,7 @@ impl Virtpy {
         .wrap_err_with(|| eyre!("the virtpy `{virtpy_link}` is broken, please recreate it.",))
     }
 
-    pub(crate) fn add_dependency_from_file(&self, ctx: &Ctx, file: &Path) -> EResult<()> {
+    pub(crate) fn add_dependency_from_file(&self, ctx: &Ctx, file: &Path) -> Result<()> {
         let file_hash = DistributionHash::from_file(file)?;
         let distribution =
             Distribution::from_package_name(file.file_name().unwrap(), file_hash).unwrap();
@@ -246,7 +246,7 @@ impl Virtpy {
     }
 
     // TODO: refactor
-    pub(crate) fn remove_dependencies(&self, dists_to_remove: HashSet<String>) -> EResult<()> {
+    pub(crate) fn remove_dependencies(&self, dists_to_remove: HashSet<String>) -> Result<()> {
         let dists_to_remove = dists_to_remove
             .into_iter()
             .map(|name| normalized_distribution_name_for_wheel(&name))
@@ -380,7 +380,7 @@ impl Virtpy {
 
     // Returns the path of the python installation on which this
     // this virtpy builds
-    pub(crate) fn global_python(&self) -> EResult<PathBuf> {
+    pub(crate) fn global_python(&self) -> Result<PathBuf> {
         if cfg!(unix) {
             let python = self.python();
             let link = &self.link;
@@ -398,11 +398,11 @@ impl Virtpy {
         }
     }
 
-    pub(crate) fn pip_shim_log(&self) -> EResult<Option<String>> {
+    pub(crate) fn pip_shim_log(&self) -> Result<Option<String>> {
         self.get_metadata("pip_shim.log")
     }
 
-    pub(crate) fn delete(self) -> EResult<()> {
+    pub(crate) fn delete(self) -> Result<()> {
         fs_err::remove_dir_all(self.location())?;
         delete_virtpy_backing(&self.backing)?;
         Ok(())
@@ -451,7 +451,7 @@ enum VirtpyStatus {
     },
 }
 
-fn virtpy_link_status(virtpy_link_path: &Path) -> EResult<VirtpyStatus> {
+fn virtpy_link_status(virtpy_link_path: &Path) -> Result<VirtpyStatus> {
     let supposed_location = virtpy_link_supposed_location(virtpy_link_path)
         .wrap_err("failed to read original location of virtpy")?;
     if !paths_match(virtpy_link_path.as_ref(), supposed_location.as_ref()).unwrap() {
@@ -475,7 +475,7 @@ fn link_distributions_into_virtpy(
     ctx: &Ctx,
     virtpy: &Virtpy,
     distributions: Vec<Distribution>,
-) -> EResult<()> {
+) -> Result<()> {
     // Link files into the backing virtpy so that when new top-level directories are
     // created, they are guaranteed to be on the same harddrive.
     // Symlinks for the new dirs are generated after all the files have been liked in.
@@ -520,7 +520,7 @@ fn link_single_requirement_into_virtpy(
     virtpy: &Virtpy,
     distrib: &StoredDistribution,
     site_packages: &Path,
-) -> EResult<()> {
+) -> Result<()> {
     match distrib.installed_via {
         StoredDistributionType::FromPip => {
             let dist_info_path = ctx
@@ -668,7 +668,7 @@ fn link_files_from_record_into_virtpy_new(
     virtpy: &Virtpy,
     site_packages: &Path,
     distribution: &Distribution,
-) -> EResult<()> {
+) -> Result<()> {
     let data_dir = distribution.data_dir_name();
     // The install paths are not automatically canonicalized.
     // If they are determined through the python in the virtpy link,
@@ -748,7 +748,7 @@ fn link_files_from_record_into_virtpy_new(
     Ok(())
 }
 
-fn ensure_toplevel_symlinks_exist(backing_location: &Path, virtpy_location: &Path) -> EResult<()> {
+fn ensure_toplevel_symlinks_exist(backing_location: &Path, virtpy_location: &Path) -> Result<()> {
     for entry in backing_location.read_dir()? {
         let entry = entry?;
         let entry_path = entry.utf8_path();
@@ -783,7 +783,7 @@ fn _create_virtpy(
     path: &Path,
     prompt: &str,
     with_pip_shim: Option<ShimInfo>,
-) -> EResult<Virtpy> {
+) -> Result<Virtpy> {
     _create_bare_venv(python_path, &central_path, prompt)?;
 
     fs_err::create_dir(path)?;
@@ -828,7 +828,7 @@ fn _create_virtpy(
     Ok(checked_virtpy)
 }
 
-fn _create_bare_venv(python_path: &Path, path: &Path, prompt: &str) -> EResult<()> {
+fn _create_bare_venv(python_path: &Path, path: &Path, prompt: &str) -> Result<()> {
     check_status(
         Command::new(python_path)
             .args(&["-m", "venv", "--without-pip", "--prompt", prompt])
@@ -860,7 +860,7 @@ fn install_executables(
     Ok(())
 }
 
-fn add_pip_shim(virtpy: &Virtpy, shim_info: ShimInfo<'_>) -> EResult<()> {
+fn add_pip_shim(virtpy: &Virtpy, shim_info: ShimInfo<'_>) -> Result<()> {
     let target_path = virtpy.site_packages().join("pip");
     let shim_zip = include_bytes!("../pip_shim/pip_shim.zip");
     let mut archive = zip::read::ZipArchive::new(std::io::Cursor::new(shim_zip))
@@ -912,7 +912,7 @@ pub(crate) enum VirtpyBackingStatus {
     },
 }
 
-pub(crate) fn virtpy_status(virtpy_path: &Path) -> EResult<VirtpyBackingStatus> {
+pub(crate) fn virtpy_status(virtpy_path: &Path) -> Result<VirtpyBackingStatus> {
     let link_location = virtpy_link_location(virtpy_path)
         .wrap_err("failed to read location of corresponding virtpy")?;
 
@@ -950,7 +950,7 @@ pub(crate) fn virtpy_status(virtpy_path: &Path) -> EResult<VirtpyBackingStatus> 
 struct InstallPaths(HashMap<String, PathBuf>);
 
 impl InstallPaths {
-    fn detect(python_path: impl AsRef<Path>) -> EResult<Self> {
+    fn detect(python_path: impl AsRef<Path>) -> Result<Self> {
         let get_paths = |sys_name| {
             format!(
                 r#"import json
@@ -986,7 +986,7 @@ fn install_and_register_distribution_from_file(
     distrib_path: &Path,
     distribution: Distribution,
     python_version: crate::python::PythonVersion,
-) -> EResult<()> {
+) -> Result<()> {
     let tmp_dir = tempdir::TempDir::new_in(ctx.proj_dirs.tmp(), "virtpy_wheel")?;
     let (distrib_path, _wheel_tmp_dir) = match distrib_path.extension().unwrap() {
         "whl" => (distrib_path.to_owned(), None),
@@ -1016,7 +1016,7 @@ fn install_and_register_distribution_from_file(
 
 // Returns path of pkg_resources wheel.
 // Generates the wheel, if it isn't cached already.
-fn package_resources_wheel(ctx: &Ctx, global_python: &Path) -> EResult<PathBuf> {
+fn package_resources_wheel(ctx: &Ctx, global_python: &Path) -> Result<PathBuf> {
     let wheel_dir = ctx.proj_dirs.data().join("wheels");
     match find_wheel(&wheel_dir)? {
         Some(path) => Ok(path),
@@ -1029,7 +1029,7 @@ fn generate_pkg_resources_wheel(
     ctx: &Ctx,
     global_python: &camino::Utf8Path,
     wheel_dir: camino::Utf8PathBuf,
-) -> EResult<PathBuf> {
+) -> Result<PathBuf> {
     // Create a venv WITH pip. This will also install setuptools and pkg_resources.
     // We can extract the pkg_resources module and generate a wheel from it.
     // clean it up by deleting all the python-specific pyc files
@@ -1069,7 +1069,7 @@ fn generate_pkg_resources_wheel(
     Ok(target)
 }
 
-fn find_wheel(dir: &Path) -> EResult<Option<PathBuf>> {
+fn find_wheel(dir: &Path) -> Result<Option<PathBuf>> {
     glob::glob(&format!("{dir}/*.whl"))?
         .next()
         .map(|res| res?.try_into_utf8_pathbuf())
@@ -1083,7 +1083,7 @@ fn create_pkg_resources_wheel(
     tmp_dir: &TempDir,
     site_packages: &Path,
     global_python: &Path,
-) -> EResult<()> {
+) -> Result<()> {
     fs_err::rename(
         site_packages.join("pkg_resources"),
         tmp_dir.path().join("pkg_resources"),
@@ -1130,7 +1130,7 @@ setup(
 //     tmp_dir: &TempDir,
 //     site_packages: &Path,
 //     global_python: &Path,
-// ) -> EResult<()> {
+// ) -> Result<()> {
 //     let pack_dir = tmp_dir.path().join("packme");
 //     fs_err::create_dir_all(&pack_dir)?;
 //     for dir in ["pkg_resources", "pkg_resources-0.0.0.dist-info"] {
@@ -1170,7 +1170,7 @@ setup(
 //     Ok(())
 // }
 
-pub(crate) fn python_version(venv: &Path) -> EResult<PythonVersion> {
+pub(crate) fn python_version(venv: &Path) -> Result<PythonVersion> {
     let mut ini = configparser::ini::Ini::new();
     ini.load(venv.join("pyvenv.cfg"))
         .map_err(|err_string| eyre!("couldn't load pyvenv.cfg for venv at {venv}: {err_string}"))?;
@@ -1191,18 +1191,18 @@ pub(crate) fn python_version(venv: &Path) -> EResult<PythonVersion> {
     })
 }
 
-pub(crate) fn add_package_resources(ctx: &Ctx, virtpy: &Virtpy) -> EResult<()> {
+pub(crate) fn add_package_resources(ctx: &Ctx, virtpy: &Virtpy) -> Result<()> {
     let pkg_res_wheel = package_resources_wheel(ctx, &virtpy.global_python()?)?;
     virtpy.add_dependency_from_file(ctx, &pkg_res_wheel)
 }
 
-fn canonicalize(path: &Path) -> EResult<PathBuf> {
+fn canonicalize(path: &Path) -> Result<PathBuf> {
     Ok(PathBuf::try_from(
         path.as_std_path().fs_err_canonicalize()?,
     )?)
 }
 
-fn paths_match(virtpy: &StdPath, link_target: &StdPath) -> EResult<bool> {
+fn paths_match(virtpy: &StdPath, link_target: &StdPath) -> Result<bool> {
     Ok(virtpy.fs_err_canonicalize()? == link_target.fs_err_canonicalize()?)
 }
 
@@ -1214,7 +1214,7 @@ mod test {
     use crate::{python::detection::detect, test::test_ctx};
 
     #[test]
-    fn get_install_paths() -> EResult<()> {
+    fn get_install_paths() -> Result<()> {
         let ctx = test_ctx();
         let tmp_dir = tempdir::TempDir::new("virtpy_test")?;
         let virtpy_path: Utf8PathBuf = tmp_dir.path().join("install_paths_test").try_into()?;

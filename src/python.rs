@@ -1,8 +1,7 @@
 use crate::prelude::*;
 use crate::PathBuf;
-use crate::{check_status, is_not_found, relative_path, Ctx, EResult, Path};
-use eyre::eyre;
-use eyre::Context;
+use crate::{check_status, is_not_found, relative_path, Ctx, Path};
+use eyre::{eyre, Context};
 
 use self::wheel::{MaybeRecordEntry, RecordEntry};
 
@@ -58,14 +57,14 @@ impl AsRef<Path> for FileHash {
 }
 
 impl DistributionHash {
-    pub(crate) fn from_file(path: &Path) -> EResult<Self> {
+    pub(crate) fn from_file(path: &Path) -> Result<Self> {
         let hash = hash_of_file_sha256_base16(path)?;
         Ok(Self(format!("sha256={hash}")))
     }
 }
 
 impl FileHash {
-    pub(crate) fn from_file(path: &Path) -> EResult<Self> {
+    pub(crate) fn from_file(path: &Path) -> Result<Self> {
         let hash = hash_of_file_sha256_base64(path)?;
         Ok(Self::from_hash(hash))
     }
@@ -184,7 +183,7 @@ if __name__ == '__main__':
         dest: &Path,
         python_path: &Path,
         site_packages: &Path,
-    ) -> EResult<RecordEntry> {
+    ) -> Result<RecordEntry> {
         let dest = match dest.is_dir() {
             true => dest.join(&self.name),
             false => dest.to_owned(),
@@ -199,7 +198,7 @@ pub(crate) fn generate_executable(
     python_path: &Path,
     code: &str,
     site_packages: &Path,
-) -> EResult<RecordEntry> {
+) -> Result<RecordEntry> {
     let shebang = format!("#!{python_path}");
     match crate::platform() {
         crate::Platform::Unix => {
@@ -216,7 +215,7 @@ fn _generate_windows_executable(
     shebang: &str,
     code: &str,
     site_packages: &Path,
-) -> EResult<RecordEntry> {
+) -> Result<RecordEntry> {
     // Generate .exe wrappers for python scripts.
     // This uses the same launcher as the python module "distlib", which is what pip uses
     // to generate exe wrappers.
@@ -237,7 +236,7 @@ fn _generate_windows_executable(
     _generate_executable(&dest.with_extension("exe"), &wrapper, site_packages)
 }
 
-fn _generate_executable(dest: &Path, bytes: &[u8], site_packages: &Path) -> EResult<RecordEntry> {
+fn _generate_executable(dest: &Path, bytes: &[u8], site_packages: &Path) -> Result<RecordEntry> {
     let mut opts = fs_err::OpenOptions::new();
     // create_new causes failure if the target already exists
     opts.write(true).create_new(true);
@@ -305,7 +304,7 @@ impl Distribution {
         format!("{}-{}.data", self.name, self.version)
     }
 
-    pub(crate) fn from_package_name(filename: &str, hash: DistributionHash) -> EResult<Self> {
+    pub(crate) fn from_package_name(filename: &str, hash: DistributionHash) -> Result<Self> {
         // TODO: use a better parser
         let (_, name, version) =
             lazy_regex::regex_captures!(r"^([^-]+)-([^-]+)-.*\.whl$", filename)
@@ -354,7 +353,7 @@ pub(crate) fn entrypoints(path: &Path) -> Option<Vec<EntryPoint>> {
     Some(entrypoints)
 }
 
-fn hash_of_file_sha256_base64(path: &Path) -> EResult<String> {
+fn hash_of_file_sha256_base64(path: &Path) -> Result<String> {
     let hash = _hash_of_file_sha256(path)?;
     Ok(base64::encode_config(
         hash.as_ref(),
@@ -362,7 +361,7 @@ fn hash_of_file_sha256_base64(path: &Path) -> EResult<String> {
     ))
 }
 
-fn hash_of_file_sha256_base16(path: &Path) -> EResult<String> {
+fn hash_of_file_sha256_base16(path: &Path) -> Result<String> {
     let hash = _hash_of_file_sha256(path)?;
     Ok(base16::encode_lower(hash.as_ref()))
 }
@@ -372,7 +371,7 @@ fn hash_of_reader_sha256_base64(reader: impl std::io::Read) -> String {
     base64::encode_config(hash.as_ref(), base64::URL_SAFE_NO_PAD)
 }
 
-fn _hash_of_file_sha256(path: &Path) -> EResult<impl AsRef<[u8]>> {
+fn _hash_of_file_sha256(path: &Path) -> Result<impl AsRef<[u8]>> {
     let file = fs_err::File::open(path)?;
     // significant speed improvement, but not huge
     let file = std::io::BufReader::new(file);
@@ -397,7 +396,7 @@ pub(crate) fn convert_to_wheel(
     ctx: &Ctx,
     python: &Path,
     distrib_path: impl AsRef<Path>,
-) -> EResult<(PathBuf, tempdir::TempDir)> {
+) -> Result<(PathBuf, tempdir::TempDir)> {
     let path = distrib_path.as_ref();
     _convert_to_wheel(ctx, python, path)
         .wrap_err_with(|| eyre!("failed to convert file to wheel: {path}"))
@@ -407,7 +406,7 @@ fn _convert_to_wheel(
     ctx: &Ctx,
     python: &Path,
     distrib_path: &Path,
-) -> EResult<(PathBuf, tempdir::TempDir)> {
+) -> Result<(PathBuf, tempdir::TempDir)> {
     let output_dir = tempdir::TempDir::new_in(ctx.proj_dirs.tmp(), "convert_to_wheel")?;
 
     check_status(
@@ -515,7 +514,7 @@ mod test {
     }
 
     #[test]
-    fn read_prerelease_version_correctly() -> EResult<()> {
+    fn read_prerelease_version_correctly() -> Result<()> {
         let hash = DistributionHash("sha256=foobar".to_string());
         let req = Distribution::from_package_name("black-21.7b0-py3-none-any.whl", hash.clone())?;
         assert_eq!(

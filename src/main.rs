@@ -24,9 +24,6 @@ pub(crate) use fs_err::os::unix::fs::symlink as symlink_file;
 #[cfg(windows)]
 pub(crate) use fs_err::os::windows::fs::symlink_file;
 
-// defining it as an alias allows rust-analyzer to suggest importing it
-// unlike a `use foo as bar` import.
-type EResult<T> = eyre::Result<T>;
 type Path = Utf8Path;
 type PathBuf = Utf8PathBuf;
 
@@ -175,16 +172,16 @@ const LINK_METADATA: &str = "virtpy_link_metadata";
 // name of file we add to .dist-info dir containing the distribution's hash
 const DIST_HASH_FILE: &str = "DISTRIBUTION_HASH";
 
-fn check_output(cmd: &mut std::process::Command) -> EResult<String> {
+fn check_output(cmd: &mut std::process::Command) -> Result<String> {
     String::from_utf8(_check_output(cmd)?)
         .wrap_err_with(|| eyre!("output isn't valid utf8 for {cmd:?}"))
 }
 
-fn check_status(cmd: &mut std::process::Command) -> EResult<()> {
+fn check_status(cmd: &mut std::process::Command) -> Result<()> {
     _check_output(cmd).map(drop)
 }
 
-fn _check_output(cmd: &mut std::process::Command) -> EResult<Vec<u8>> {
+fn _check_output(cmd: &mut std::process::Command) -> Result<Vec<u8>> {
     let output = cmd.output()?;
     ensure!(output.status.success(), {
         let error = String::from_utf8_lossy(&output.stderr);
@@ -347,7 +344,7 @@ fn path_to_virtpy(path_override: &Option<PathBuf>) -> &Path {
         .unwrap_or_else(|| DEFAULT_VIRTPY_PATH.as_ref())
 }
 
-fn shim_info(ctx: &Ctx) -> EResult<ShimInfo> {
+fn shim_info(ctx: &Ctx) -> Result<ShimInfo> {
     Ok(ShimInfo {
         proj_dirs: &ctx.proj_dirs,
         virtpy_exe: PathBuf::try_from(
@@ -356,7 +353,7 @@ fn shim_info(ctx: &Ctx) -> EResult<ShimInfo> {
     })
 }
 
-fn main() -> EResult<()> {
+fn main() -> Result<()> {
     color_eyre::install()?;
 
     let opt = Opt::from_args();
@@ -505,7 +502,7 @@ fn main() -> EResult<()> {
     Ok(())
 }
 
-fn add_from_file(ctx: &Ctx, virtpy: PathBuf, file: PathBuf) -> EResult<()> {
+fn add_from_file(ctx: &Ctx, virtpy: PathBuf, file: PathBuf) -> Result<()> {
     Ok(Virtpy::from_existing(&virtpy)?.add_dependency_from_file(ctx, &file)?)
 }
 
@@ -520,7 +517,7 @@ fn install_executable_package(
     force: bool,
     allow_prereleases: bool,
     python: &str,
-) -> EResult<InstalledStatus> {
+) -> Result<InstalledStatus> {
     let package_folder = ctx.proj_dirs.package_folder(package);
 
     let python_path = python::detection::detect(python)?;
@@ -612,7 +609,7 @@ fn is_not_found(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::NotFound
 }
 
-fn delete_executable_virtpy(ctx: &Ctx, package: &str) -> EResult<()> {
+fn delete_executable_virtpy(ctx: &Ctx, package: &str) -> Result<()> {
     let virtpy_path = ctx.proj_dirs.package_folder(package);
     let virtpy = Virtpy::from_existing(&virtpy_path)?;
     virtpy.delete()?;
@@ -651,13 +648,13 @@ pub(crate) struct ShimInfo<'a> {
     virtpy_exe: PathBuf,
 }
 
-fn check_poetry_available() -> EResult<()> {
+fn check_poetry_available() -> Result<()> {
     pathsearch::find_executable_in_path("poetry")
         .map(drop)
         .ok_or_else(|| eyre!("this command requires poetry to be installed and on the PATH. (https://github.com/python-poetry/poetry)"))
 }
 
-fn init_temporary_poetry_project(path: &StdPath) -> EResult<()> {
+fn init_temporary_poetry_project(path: &StdPath) -> Result<()> {
     check_status(
         std::process::Command::new("poetry")
             .current_dir(&path)
@@ -695,11 +692,11 @@ fn dist_info_matches_package(dist_info: &Path, package: &str) -> bool {
 // Returns a relative path that can be joined onto `base` to get `path`.
 // `base` and `path` must be both be absolute or both relative.
 // May not return a valid result, if `base` contains symlinks.
-fn relative_path(base: impl AsRef<Path>, path: impl AsRef<Path>) -> EResult<PathBuf> {
+fn relative_path(base: impl AsRef<Path>, path: impl AsRef<Path>) -> Result<PathBuf> {
     _relative_path(base.as_ref(), path.as_ref())
 }
 
-fn _relative_path(base: &Path, path: &Path) -> EResult<PathBuf> {
+fn _relative_path(base: &Path, path: &Path) -> Result<PathBuf> {
     ensure!(
         base.is_absolute() && path.is_absolute() || base.is_relative() && path.is_relative(),
         "paths need to be both relative or both absolute: {base:?}, {path:?}",
@@ -776,12 +773,12 @@ mod test {
     }
 
     #[test]
-    fn test_check_poetry_available() -> EResult<()> {
+    fn test_check_poetry_available() -> Result<()> {
         check_poetry_available()
     }
 
     #[test]
-    fn test_install_uninstall() -> EResult<()> {
+    fn test_install_uninstall() -> Result<()> {
         let ctx = test_ctx();
 
         let packages = [
@@ -802,7 +799,7 @@ mod test {
         for &(package, allow_prereleases) in &packages {
             println!("testing install of {package}");
 
-            let base_cmd = || -> EResult<_> {
+            let base_cmd = || -> Result<_> {
                 let mut cmd = assert_cmd::Command::from_std(cargo_run.command());
                 cmd.arg("--project-dir")
                     .arg(ctx.proj_dirs.data())

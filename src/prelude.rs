@@ -3,6 +3,8 @@ use eyre::eyre;
 
 const INVALID_UTF8_PATH: &str = "path is not valid utf8";
 
+pub(crate) use eyre::Result;
+
 pub trait ToUtf8Path<'a> {
     fn to_utf8_path(self) -> &'a Utf8Path;
     fn try_to_utf8_path(self) -> eyre::Result<&'a Utf8Path>;

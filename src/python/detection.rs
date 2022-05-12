@@ -2,11 +2,11 @@ use eyre::{bail, eyre, WrapErr};
 use itertools::Itertools;
 use std::path::PathBuf as StdPathBuf;
 
+use crate::executables_path;
 use crate::prelude::*;
-use crate::{executables_path, EResult};
 use crate::{Path, PathBuf};
 
-pub(crate) fn detect(python: &str) -> EResult<PathBuf> {
+pub(crate) fn detect(python: &str) -> Result<PathBuf> {
     let path = Path::new(&python);
 
     // If `python` is definitely a path, use it, if it exists.
@@ -30,14 +30,14 @@ pub(crate) fn detect(python: &str) -> EResult<PathBuf> {
     find_executable_in_path(python)
 }
 
-pub(crate) fn detect_from_version(python_version: super::PythonVersion) -> EResult<PathBuf> {
+pub(crate) fn detect_from_version(python_version: super::PythonVersion) -> Result<PathBuf> {
     find_python_by_version(
         python_version.major.try_into().unwrap(),
         Some(python_version.minor.try_into().unwrap()),
     )
 }
 
-fn find_python_by_version(major: u32, minor: Option<u32>) -> EResult<PathBuf> {
+fn find_python_by_version(major: u32, minor: Option<u32>) -> Result<PathBuf> {
     let version = match minor {
         Some(minor) => format!("{major}.{minor}"),
         None => major.to_string(),
@@ -69,7 +69,7 @@ fn find_python_by_version(major: u32, minor: Option<u32>) -> EResult<PathBuf> {
     }
 }
 
-fn find_executable_in_path(executable: impl AsRef<Path>) -> EResult<PathBuf> {
+fn find_executable_in_path(executable: impl AsRef<Path>) -> Result<PathBuf> {
     let executable = executable.as_ref();
 
     // If we're in an activated venv, the PATH has been modified
@@ -121,13 +121,13 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_detect() -> EResult<()> {
+    fn test_detect() -> Result<()> {
         detect("3").map(drop)
     }
 
     #[cfg(unix)]
     #[test]
-    fn test_detect_by_number_and_by_name() -> EResult<()> {
+    fn test_detect_by_number_and_by_name() -> Result<()> {
         let python3_path = detect("python3")?;
         let python3_path2 = detect("3")?;
 
@@ -137,7 +137,7 @@ mod test {
 
     #[cfg(unix)]
     #[test]
-    fn test_detect_with_minor_version() -> EResult<()> {
+    fn test_detect_with_minor_version() -> Result<()> {
         // assuming you have python3 installed because this is 2020+.
 
         let python3_path = detect("python3")?;

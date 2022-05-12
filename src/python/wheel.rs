@@ -1,3 +1,4 @@
+use crate::prelude::*;
 use camino::Utf8Path;
 use eyre::{bail, eyre, WrapErr};
 use std::{
@@ -8,7 +9,6 @@ use std::{
 };
 
 use super::FileHash;
-use crate::EResult;
 use crate::{Path, PathBuf};
 
 // This implements a wheel installer following the specification here:
@@ -20,7 +20,7 @@ use crate::{Path, PathBuf};
 // linked above.
 // https://www.python.org/dev/peps/pep-0491/#pep-deferral
 
-pub(crate) fn unpack_wheel(wheel: &Path, dest: &StdPath) -> EResult<()> {
+pub(crate) fn unpack_wheel(wheel: &Path, dest: &StdPath) -> Result<()> {
     let mut archive = zip::ZipArchive::new(fs_err::File::open(wheel)?)?;
 
     let wheel_name = wheel
@@ -40,7 +40,7 @@ pub(crate) fn unpack_wheel(wheel: &Path, dest: &StdPath) -> EResult<()> {
 pub(crate) fn verify_wheel_contents(
     install_folder: &Path,
     wheel_record: &WheelRecord,
-) -> EResult<()> {
+) -> Result<()> {
     for entry in &wheel_record.files {
         let path = install_folder.join(&entry.path);
         let hash = FileHash::from_file(&path)?;
@@ -56,7 +56,7 @@ pub(crate) fn verify_wheel_contents(
     Ok(())
 }
 
-fn check_version_support(wheel_name: &str, metadata: WheelMetadata) -> EResult<()> {
+fn check_version_support(wheel_name: &str, metadata: WheelMetadata) -> Result<()> {
     match metadata.version.support_status() {
         WheelVersionSupport::SupportedButNewer(supported_version) => println!("Warning: wheel {wheel_name} uses a compatible, but newer version than supported: wheel format version: {}, newest supported: {supported_version}", metadata.version),
         WheelVersionSupport::Unsupported => bail!("wheel uses unsupported version {}", metadata.version),
@@ -68,7 +68,7 @@ fn check_version_support(wheel_name: &str, metadata: WheelMetadata) -> EResult<(
 fn parse_wheel_metadata<R: Read + Seek>(
     wheel_name: &str,
     wheel_archive: &mut zip::ZipArchive<R>,
-) -> EResult<WheelMetadata> {
+) -> Result<WheelMetadata> {
     let dist_info_name = wheel_dist_info_path(wheel_name)?;
     let wheel_version_file = format!("{dist_info_name}/WHEEL");
     let mut wheel_version_file = wheel_archive
@@ -80,7 +80,7 @@ fn parse_wheel_metadata<R: Read + Seek>(
     WheelMetadata::from_str(&wheel_metadata)
 }
 
-fn wheel_dist_info_path(wheel_name: &str) -> EResult<String> {
+fn wheel_dist_info_path(wheel_name: &str) -> Result<String> {
     let (idx, _) = wheel_name.char_indices().filter(|&(_, ch)| ch == '-')
     .nth(1).ok_or_else(|| eyre!("deformed wheel name, could not determine distribition and version from wheel name {wheel_name}"))?;
 
@@ -104,7 +104,7 @@ impl WheelFormatVersion {
     // All newest versions that are supported per major number.
     const SUPPORTED: &'static [WheelFormatVersion] = &[WheelFormatVersion { major: 1, minor: 0 }];
 
-    fn from_str(version: &str) -> EResult<Self> {
+    fn from_str(version: &str) -> Result<Self> {
         let (_, major, minor) = lazy_regex::regex_captures!(r"^(\d+)\.(\d+)$", version)
             .ok_or_else(|| {
                 eyre!("version does not match format $MAJOR_NUM.$MINOR_NUM: {version}")
@@ -166,7 +166,7 @@ impl Display for WheelFormatVersion {
 }
 
 impl WheelMetadata {
-    fn from_str(metadata: &str) -> EResult<Self> {
+    fn from_str(metadata: &str) -> Result<Self> {
         // First, read all key-value pairs so we can collect all tags into a vec and also detect duplicates.
         // Unknown keys are ignored. They may be from a newer wheel format version.
         let mut key_values: HashMap<_, Vec<_>> = HashMap::new();
@@ -325,7 +325,7 @@ impl From<RecordEntry> for MaybeRecordEntry {
 }
 
 impl WheelRecord {
-    // fn from_str(record: &str) -> EResult<Self> {
+    // fn from_str(record: &str) -> Result<Self> {
     //     let reader = csv::ReaderBuilder::new()
     //         .has_headers(false)
     //         .from_reader(record.as_bytes());
@@ -333,15 +333,15 @@ impl WheelRecord {
     //     Self::_from_csv_reader(reader)
     // }
 
-    pub(crate) fn from_file(record: impl AsRef<Path>) -> EResult<Self> {
+    pub(crate) fn from_file(record: impl AsRef<Path>) -> Result<Self> {
         Self::_from_file(record.as_ref(), false)
     }
 
-    // pub(crate) fn from_file_ignoring_pyc(record: impl AsRef<Path>) -> EResult<Self> {
+    // pub(crate) fn from_file_ignoring_pyc(record: impl AsRef<Path>) -> Result<Self> {
     //     Self::_from_file(record.as_ref(), true)
     // }
 
-    fn _from_file(record: &Path, ignore_pyc_files: bool) -> EResult<Self> {
+    fn _from_file(record: &Path, ignore_pyc_files: bool) -> Result<Self> {
         csv::ReaderBuilder::new()
             .has_headers(false)
             .from_path(record)
@@ -350,13 +350,13 @@ impl WheelRecord {
             .wrap_err_with(|| eyre!("failed to read record from {record:?}"))
     }
 
-    pub(crate) fn save_to_file(&self, dest: impl AsRef<Path>) -> EResult<()> {
+    pub(crate) fn save_to_file(&self, dest: impl AsRef<Path>) -> Result<()> {
         let dest = dest.as_ref();
         self._save_to_file(dest)
             .wrap_err_with(|| eyre!("failed to save record to {dest:?}"))
     }
 
-    fn _save_to_file(&self, dest: &Path) -> EResult<()> {
+    fn _save_to_file(&self, dest: &Path) -> Result<()> {
         let mut writer = csv::WriterBuilder::new()
             .has_headers(false)
             .from_path(dest)?;
@@ -376,7 +376,7 @@ impl WheelRecord {
     fn _from_csv_reader<R: std::io::Read>(
         reader: csv::Reader<R>,
         ignore_pyc_files: bool,
-    ) -> EResult<Self> {
+    ) -> Result<Self> {
         let files = reader
             .into_records()
             .map(|record| record.and_then(|rec| rec.deserialize(None)))
@@ -400,7 +400,7 @@ impl WheelRecord {
         Ok(Self { files, record_path })
     }
 
-    fn _to_writer<W: std::io::Write>(&self, writer: &mut csv::Writer<W>) -> EResult<()> {
+    fn _to_writer<W: std::io::Write>(&self, writer: &mut csv::Writer<W>) -> Result<()> {
         for entry in &self.files {
             writer.serialize(entry)?;
         }
@@ -420,7 +420,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn can_unpack_wheel() -> EResult<()> {
+    fn can_unpack_wheel() -> Result<()> {
         let tmp_dir = tempdir::TempDir::new("virtpy_wheel_unpack_test")?;
         unpack_wheel(
             "test_files/wheels/result-0.6.0-py3-none-any.whl".as_ref(),
@@ -430,7 +430,7 @@ mod test {
     }
 
     #[test]
-    fn can_parse_wheel_metadata_from_zip() -> EResult<()> {
+    fn can_parse_wheel_metadata_from_zip() -> Result<()> {
         let wheel_name = "result-0.6.0-py3-none-any.whl";
         let wheel = Path::new("test_files/wheels/").join(wheel_name);
         let mut archive = zip::ZipArchive::new(fs_err::File::open(wheel)?)?;
@@ -441,7 +441,7 @@ mod test {
     }
 
     #[test]
-    fn can_parse_wheel_metadata() -> EResult<()> {
+    fn can_parse_wheel_metadata() -> Result<()> {
         // TODO: add check for correctness of read metadata
         // Some of the files contain CRLF line endings, some LF.
         // Both must work.
@@ -455,7 +455,7 @@ mod test {
     }
 
     #[test]
-    fn read_record() -> EResult<()> {
+    fn read_record() -> Result<()> {
         for f in Path::new("test_files/wheel_records").read_dir()? {
             let f = f?;
             WheelRecord::from_file(PathBuf::from_path_buf(f.path()).unwrap())?;

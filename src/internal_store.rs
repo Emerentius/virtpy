@@ -13,7 +13,7 @@ use crate::Ctx;
 use crate::{
     delete_virtpy_backing, package_info_from_dist_info_dirname,
     python::wheel::{RecordEntry, WheelRecord},
-    EResult, Path, PathBuf,
+    Path, PathBuf, Result,
 };
 use std::collections::HashSet;
 use std::{
@@ -21,7 +21,7 @@ use std::{
     io::{BufReader, Seek},
 };
 
-pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> EResult<()> {
+pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> Result<()> {
     let (danglers, errors): (Vec<_>, Vec<_>) = dangling_virtpys(ctx).partition_result();
     for (virtpy, err) in errors {
         let path = virtpy.location();
@@ -286,7 +286,7 @@ pub(crate) fn print_stats(
     ctx: &Ctx,
     human_readable: bool,
     use_binary_si_prefix: bool,
-) -> EResult<()> {
+) -> Result<()> {
     let total_size: u64 = ctx
         .proj_dirs
         .package_files()
@@ -412,7 +412,7 @@ fn register_distribution_files_of_wheel(
     wheel_record: WheelRecord,
     distribution: &Distribution,
     stored_distributions: &mut HashMap<DistributionHash, StoredDistribution>,
-) -> EResult<()> {
+) -> Result<()> {
     let stored_distrib = StoredDistribution {
         distribution: distribution.clone(),
         installed_via: StoredDistributionType::FromWheel,
@@ -545,7 +545,7 @@ impl StoredDistribution {
         base.join(self.distribution.as_csv())
     }
 
-    fn records(&self, ctx: &Ctx) -> EResult<Box<dyn Iterator<Item = EResult<MaybeRecordEntry>>>> {
+    fn records(&self, ctx: &Ctx) -> Result<Box<dyn Iterator<Item = Result<MaybeRecordEntry>>>> {
         let record = self.dist_info_file(ctx, "RECORD").unwrap();
         Ok(match self.installed_via {
             StoredDistributionType::FromPip => {
@@ -629,15 +629,15 @@ impl StoredDistributions {
         Some(new_format_stored_distribs)
     }
 
-    pub(crate) fn load(ctx: &Ctx) -> EResult<Self> {
+    pub(crate) fn load(ctx: &Ctx) -> Result<Self> {
         Self::load_from(ctx.proj_dirs.installed_distributions_log())
     }
 
-    pub(crate) fn load_from(path: impl AsRef<Path>) -> EResult<Self> {
+    pub(crate) fn load_from(path: impl AsRef<Path>) -> Result<Self> {
         Self::_load_from(path.as_ref())
     }
 
-    fn _load_from(path: &Path) -> EResult<Self> {
+    fn _load_from(path: &Path) -> Result<Self> {
         let file = fs_err::OpenOptions::new()
             .create(true)
             .read(true)
@@ -665,11 +665,11 @@ impl StoredDistributions {
         Ok(Self(distribs, lock))
     }
 
-    fn save(&self) -> EResult<()> {
+    fn save(&self) -> Result<()> {
         self._save().wrap_err("failed to save stored distributions")
     }
 
-    fn _save(&self) -> EResult<()> {
+    fn _save(&self) -> Result<()> {
         let mut file = &self.1.file;
         // Truncate file, then write to it.
         file.seek(std::io::SeekFrom::Start(0))?;
@@ -682,7 +682,7 @@ impl StoredDistributions {
 // TODO: Find a good crate for this that also offers locking with timeouts and
 //       a lock that contains the pid of the process holding it, so it can be
 //       detected if the locking process is dead.
-fn lock_file(file: fs_err::File) -> EResult<FileLockGuard> {
+fn lock_file(file: fs_err::File) -> Result<FileLockGuard> {
     use fs2::FileExt;
     file.file().lock_exclusive()?;
     Ok(FileLockGuard { file })
@@ -720,7 +720,7 @@ pub(crate) fn register_new_distribution(
     distrib: Distribution,
     python_version: PythonVersion,
     tmp_dir: tempdir::TempDir,
-) -> EResult<()> {
+) -> Result<()> {
     if ctx.options.verbose >= 2 {
         println!(
             "    New distribution: {}=={}, {}",
@@ -780,7 +780,7 @@ pub(crate) fn wheel_is_already_registered(
     ctx: &Ctx,
     distribution: &Distribution,
     python_version: PythonVersion,
-) -> EResult<bool> {
+) -> Result<bool> {
     let mut stored_distributions = StoredDistributions::load(ctx)?;
 
     let stored_distrib = StoredDistribution {
@@ -844,7 +844,7 @@ mod test {
     // That's why they are forced to run in series.
     #[test]
     #[serial_test::serial(installed_distribs)]
-    fn can_load_old_stored_distribs() -> EResult<()> {
+    fn can_load_old_stored_distribs() -> Result<()> {
         let old_file = fs_err::File::open("test_files/old_installed_distributions.json")?;
         let old_stored_distribs = StoredDistributions::try_load_old(BufReader::new(old_file))
             .ok_or_else(|| eyre!("failed to load old stored dstributions"))?;
@@ -858,7 +858,7 @@ mod test {
 
     #[test]
     #[serial_test::serial(installed_distribs)]
-    fn loading_old_and_new_stored_distribs_identical() -> EResult<()> {
+    fn loading_old_and_new_stored_distribs_identical() -> Result<()> {
         let old = StoredDistributions::load_from("test_files/old_installed_distributions.json")?;
         let new = StoredDistributions::load_from("test_files/new_installed_distributions.json")?;
         assert_eq!(old, new);
