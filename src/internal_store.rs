@@ -1,5 +1,6 @@
+use crate::prelude::*;
 use eyre::{ensure, eyre, WrapErr};
-use fs_err::{File, PathExt};
+use fs_err::File;
 use itertools::Itertools;
 
 use crate::python::wheel::MaybeRecordEntry;
@@ -12,7 +13,7 @@ use crate::Ctx;
 use crate::{
     delete_virtpy_backing, package_info_from_dist_info_dirname,
     python::wheel::{RecordEntry, WheelRecord},
-    EResult, Path, PathBuf, INVALID_UTF8_PATH,
+    EResult, Path, PathBuf,
 };
 use std::collections::HashSet;
 use std::{
@@ -127,7 +128,7 @@ fn dangling_virtpys(
         .filter_map(|virtpy| {
             let virtpy = virtpy.unwrap();
             assert!(virtpy.file_type().unwrap().is_dir());
-            let path: PathBuf = virtpy.path().try_into().expect(INVALID_UTF8_PATH);
+            let path = virtpy.utf8_path();
             let status = virtpy_status(&path);
             let virtpy = VirtpyBacking::from_existing(path);
 
@@ -207,9 +208,7 @@ impl StoreDependencies {
             .unwrap()
             .map(Result::unwrap)
         {
-            let backing = VirtpyBacking::from_existing(
-                virtpy_path.path().try_into().expect(INVALID_UTF8_PATH),
-            );
+            let backing = VirtpyBacking::from_existing(virtpy_path.utf8_path());
             let distributions: HashSet<_> = distributions_used(&backing).collect();
             for dist in &distributions {
                 dist_virtpys
@@ -257,9 +256,7 @@ fn package_files(ctx: &Ctx) -> impl Iterator<Item = FileHash> {
         .read_dir()
         .unwrap()
         .map(Result::unwrap)
-        .map(|entry| {
-            FileHash::from_filename(&PathBuf::try_from(entry.path()).expect(INVALID_UTF8_PATH))
-        })
+        .map(|entry| FileHash::from_filename(&entry.utf8_path()))
 }
 
 pub(crate) fn print_verify_store(ctx: &Ctx) {
@@ -273,7 +270,7 @@ pub(crate) fn print_verify_store(ctx: &Ctx) {
         .map(Result::unwrap)
     {
         // the path is also the hash
-        let path: PathBuf = file.path().try_into().expect(INVALID_UTF8_PATH);
+        let path = file.utf8_path();
         let base64_hash = FileHash::from_file(&path).unwrap();
         if base64_hash != FileHash::from_filename(&path) {
             println!("doesn't match hash: {path}, hash = {base64_hash}");
@@ -731,7 +728,7 @@ pub(crate) fn register_new_distribution(
         );
     }
 
-    let install_folder = Path::from_path(tmp_dir.path()).expect(INVALID_UTF8_PATH);
+    let install_folder = tmp_dir.utf8_path();
     let src_dist_info = install_folder.join(distrib.dist_info_name());
     let wheel_record = crate::python::wheel::WheelRecord::from_file(&src_dist_info.join("RECORD"))
         .wrap_err("couldn't get dist-info/RECORD")?;

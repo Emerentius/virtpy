@@ -1,3 +1,4 @@
+use crate::prelude::*;
 use crate::PathBuf;
 use crate::{check_status, is_not_found, relative_path, Ctx, EResult, Path};
 use eyre::eyre;
@@ -427,17 +428,8 @@ fn _convert_to_wheel(
         .path()
         .read_dir()?
         .collect::<Result<Vec<_>, _>>()?;
-    match output_files.len() {
-        1 => {
-            let wheel_path = output_files
-                .into_iter()
-                .next()
-                .unwrap()
-                .path()
-                .try_into()
-                .expect(crate::INVALID_UTF8_PATH);
-            Ok((wheel_path, output_dir))
-        }
+    match output_files.as_slice() {
+        [wheel_file] => Ok((wheel_file.utf8_path(), output_dir)),
         _ => Err(eyre!("wheel generation created more than one file")),
     }
 }

@@ -3,10 +3,12 @@ use eyre::bail;
 use eyre::{ensure, eyre, WrapErr};
 use internal_store::{StoredDistribution, StoredDistributionType};
 use itertools::Itertools;
+use prelude::*;
 use std::path::Path as StdPath;
 use structopt::StructOpt;
 
 mod internal_store;
+pub(crate) mod prelude;
 mod python;
 pub(crate) mod venv;
 
@@ -170,8 +172,6 @@ const INSTALLED_DISTRIBUTIONS: &str = "installed_distributions.json";
 const CENTRAL_METADATA: &str = "virtpy_central_metadata";
 const LINK_METADATA: &str = "virtpy_link_metadata";
 
-const INVALID_UTF8_PATH: &str = "path is not valid utf8";
-
 // name of file we add to .dist-info dir containing the distribution's hash
 const DIST_HASH_FILE: &str = "DISTRIBUTION_HASH";
 
@@ -217,11 +217,7 @@ pub(crate) struct ProjectDirs {
 impl ProjectDirs {
     fn new() -> Option<Self> {
         directories::ProjectDirs::from("", "", "virtpy").map(|proj_dirs| Self {
-            data_dir: proj_dirs
-                .data_dir()
-                .to_owned()
-                .try_into()
-                .expect(INVALID_UTF8_PATH),
+            data_dir: proj_dirs.data_dir().to_owned().into_utf8_pathbuf(),
         })
     }
 
@@ -540,9 +536,7 @@ fn install_executable_package(
     check_poetry_available()?;
 
     let tmp_dir = tempdir::TempDir::new_in(ctx.proj_dirs.tmp(), &format!("install_{package}"))?;
-    let tmp_path = PathBuf::try_from(tmp_dir.path().to_owned())
-        .expect(INVALID_UTF8_PATH)
-        .join(".venv");
+    let tmp_path = tmp_dir.utf8_path().join(".venv");
 
     let virtpy = Virtpy::create(
         ctx,

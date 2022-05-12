@@ -5,6 +5,7 @@
 //! 2. The backing venv in a central location to which (1) contains symlinks to
 
 use crate::internal_store::{wheel_is_already_registered, StoredDistributions};
+use crate::prelude::*;
 use crate::python::wheel::{
     is_path_of_executable, normalized_distribution_name_for_wheel, RecordEntry, WheelRecord,
 };
@@ -17,7 +18,7 @@ use crate::{
     check_status, delete_virtpy_backing, dist_info_matches_package, executables_path,
     ignore_target_exists, is_not_found, python_path, relative_path, remove_leading_parent_dirs,
     symlink_dir, symlink_file, EResult, Path, PathBuf, ShimInfo, StoredDistribution,
-    StoredDistributionType, CENTRAL_METADATA, DIST_HASH_FILE, INVALID_UTF8_PATH, LINK_METADATA,
+    StoredDistributionType, CENTRAL_METADATA, DIST_HASH_FILE, LINK_METADATA,
 };
 use eyre::{eyre, Context};
 use fs_err::PathExt;
@@ -86,7 +87,7 @@ pub(crate) trait VirtpyPaths {
                 .unwrap()
                 .map(Result::unwrap)
                 .map(|dir_entry| dir_entry.path())
-                .map(|std_path| PathBuf::from_path_buf(std_path).expect(INVALID_UTF8_PATH))
+                .map(<_>::into_utf8_pathbuf)
                 .filter(|path| {
                     path.file_name()
                         .map_or(false, |fn_| fn_.ends_with(".dist-info"))
@@ -264,10 +265,7 @@ impl Virtpy {
             if !filetype.is_dir() {
                 continue;
             }
-            let dirname = dir_entry
-                .file_name()
-                .into_string()
-                .expect(INVALID_UTF8_PATH);
+            let dirname = dir_entry.utf8_file_name();
 
             if dirname.ends_with(".dist-info") {
                 dist_infos.push(dirname);
@@ -386,11 +384,13 @@ impl Virtpy {
         if cfg!(unix) {
             let python = self.python();
             let link = &self.link;
-            let python: PathBuf =
-                PathBuf::try_from(python.as_std_path().fs_err_canonicalize().wrap_err_with(
-                    || eyre!("failed to find path of the global python used by virtpy at {link}"),
-                )?)
-                .expect(INVALID_UTF8_PATH);
+            let python = python
+                .as_std_path()
+                .fs_err_canonicalize()
+                .wrap_err_with(|| {
+                    eyre!("failed to find path of the global python used by virtpy at {link}")
+                })?
+                .try_into_utf8_pathbuf()?;
             Ok(python)
         } else {
             let version = python_version(&self.location())?;
@@ -751,8 +751,8 @@ fn link_files_from_record_into_virtpy_new(
 fn ensure_toplevel_symlinks_exist(backing_location: &Path, virtpy_location: &Path) -> EResult<()> {
     for entry in backing_location.read_dir()? {
         let entry = entry?;
-        let entry_path: PathBuf = entry.path().try_into().expect(INVALID_UTF8_PATH);
-        let entry_name = entry_path.file_name().unwrap(); // guaranteed to exist
+        let entry_path = entry.utf8_path();
+        let entry_name = entry.utf8_file_name();
 
         if entry_name == CENTRAL_METADATA {
             continue;
@@ -790,11 +790,10 @@ fn _create_virtpy(
     let path = canonicalize(path)?;
     ensure_toplevel_symlinks_exist(&central_path, &path)?;
 
-    let abs_path: PathBuf = path
+    let abs_path = path
         .as_std_path()
         .fs_err_canonicalize()?
-        .try_into()
-        .expect(INVALID_UTF8_PATH);
+        .try_into_utf8_pathbuf()?;
     {
         let metadata_dir = central_path.join(CENTRAL_METADATA);
         fs_err::create_dir(&metadata_dir)?;
@@ -1041,18 +1040,15 @@ fn generate_pkg_resources_wheel(
     // out before even constructing the WheelRecord.
     fs_err::create_dir_all(&wheel_dir)?;
     let tmp_dir = tempdir::TempDir::new_in(ctx.proj_dirs.tmp(), "generate_pkg_resources_whl")?;
-    let venv_dir = tmp_dir.path().join(".venv");
+    let venv_dir = tmp_dir.try_utf8_path()?.join(".venv");
     check_status(
         Command::new(global_python)
             .args(&["-m", "venv"])
             .arg(&venv_dir)
             .stdout(std::process::Stdio::null()),
     )?;
-    let python_version = python_version(Path::from_path(&venv_dir).expect(INVALID_UTF8_PATH))?;
-    let site_packages = venv_site_packages(
-        Path::from_path(&venv_dir).expect(INVALID_UTF8_PATH),
-        python_version,
-    );
+    let python_version = python_version(&venv_dir)?;
+    let site_packages = venv_site_packages(&venv_dir, python_version);
 
     // old
     //pack_pkg_resources_wheel(&tmp_dir, &site_packages, global_python)?;
@@ -1060,7 +1056,7 @@ fn generate_pkg_resources_wheel(
     // new
     create_pkg_resources_wheel(&tmp_dir, &site_packages, global_python)?;
 
-    let tmp_dir_path = Path::from_path(tmp_dir.path()).expect(INVALID_UTF8_PATH);
+    let tmp_dir_path = tmp_dir.try_utf8_path()?;
     let wheel_path =
         find_wheel(tmp_dir_path)?.ok_or_else(|| eyre!("no pkg_resources wheel generated"))?;
     let wheel_name = wheel_path.file_name().unwrap();
@@ -1074,10 +1070,10 @@ fn generate_pkg_resources_wheel(
 }
 
 fn find_wheel(dir: &Path) -> EResult<Option<PathBuf>> {
-    Ok(glob::glob(&format!("{dir}/*.whl"))?
+    glob::glob(&format!("{dir}/*.whl"))?
         .next()
-        .transpose()?
-        .map(|p| p.try_into().expect(INVALID_UTF8_PATH)))
+        .map(|res| res?.try_into_utf8_pathbuf())
+        .transpose()
 }
 
 // Generate a wheel from just the pkg_resources directory. This ignores

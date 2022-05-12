@@ -2,7 +2,8 @@ use eyre::{bail, eyre, WrapErr};
 use itertools::Itertools;
 use std::path::PathBuf as StdPathBuf;
 
-use crate::{executables_path, EResult, INVALID_UTF8_PATH};
+use crate::prelude::*;
+use crate::{executables_path, EResult};
 use crate::{Path, PathBuf};
 
 pub(crate) fn detect(python: &str) -> EResult<PathBuf> {
@@ -103,7 +104,7 @@ fn find_executable_in_path(executable: impl AsRef<Path>) -> EResult<PathBuf> {
 
     let exe_path = _find_executable_in_custom_path(executable, path.map(std::ffi::OsString::from))
         .ok_or_else(|| eyre!("couldn't find python executable `{executable}` in PATH"))?;
-    exe_path.try_into().wrap_err(INVALID_UTF8_PATH)
+    exe_path.try_into_utf8_pathbuf()
 }
 
 // TODO: maybe we can upstream this?
