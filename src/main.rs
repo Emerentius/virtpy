@@ -468,7 +468,7 @@ fn main() -> Result<()> {
             internal_store::print_stats(&ctx, human_readable, binary_prefix)?;
         }
         Command::InternalStore(InternalStoreCmd::Verify) => {
-            internal_store::print_verify_store(&ctx);
+            internal_store::print_verify_store(&ctx)?;
         }
         Command::InternalUseOnly(InternalUseOnly::AddFromFile { virtpy, file }) => {
             add_from_file(&ctx, virtpy, file)?;

@@ -182,8 +182,8 @@ impl WheelMetadata {
             key_values.entry(key).or_default().push(value);
         }
 
-        let get_unique_optional = |key| match key_values.get(key) {
-            Some(x) if x.len() == 1 => Ok(Some(x[0].to_owned())),
+        let get_unique_optional = |key| match key_values.get(key).map(|v| v.as_slice()) {
+            Some(&[value]) => Ok(Some(value.to_owned())),
             Some(_) => Err(eyre!("multiple key-value pairs for key {key}")),
             None => Ok(None),
         };

@@ -864,7 +864,7 @@ fn add_pip_shim(virtpy: &Virtpy, shim_info: ShimInfo<'_>) -> Result<()> {
     let target_path = virtpy.site_packages().join("pip");
     let shim_zip = include_bytes!("../pip_shim/pip_shim.zip");
     let mut archive = zip::read::ZipArchive::new(std::io::Cursor::new(shim_zip))
-        .expect("internal error: invalid archive for pip shim");
+        .wrap_err("internal error: invalid archive for pip shim")?;
     archive
         .extract(&target_path)
         .wrap_err_with(|| eyre!("failed to extract pip shim archive to {target_path}"))?;

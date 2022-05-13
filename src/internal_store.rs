@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use eyre::{ensure, eyre, WrapErr};
-use fs_err::File;
+use fs_err::{File, PathExt};
 use itertools::Itertools;
 
 use crate::python::wheel::MaybeRecordEntry;
@@ -22,13 +22,13 @@ use std::{
 };
 
 pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> Result<()> {
-    let (danglers, errors): (Vec<_>, Vec<_>) = dangling_virtpys(ctx).partition_result();
+    let (danglers, errors): (Vec<_>, Vec<_>) = dangling_virtpys(ctx)?.partition_result();
     for (virtpy, err) in errors {
         let path = virtpy.location();
-        println!("failed to check {path}: {err}");
+        eprintln!("failed to check {path}: {err}");
     }
 
-    let mut store_dependencies = StoreDependencies::current(ctx);
+    let mut store_dependencies = StoreDependencies::current(ctx)?;
     store_dependencies
         .remove_virtpy_dependencies(danglers.iter().map(|(virtpy, _)| virtpy.clone()));
 
@@ -37,9 +37,12 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> Result<()> {
 
         if remove {
             for (backing, link) in danglers {
+                let backing_path = backing.location();
                 debug_assert!(virtpy_link_target(&link)
-                    .map_or(true, |link_target| link_target != backing.location()));
-                delete_virtpy_backing(backing.location()).unwrap();
+                    .map_or(true, |link_target| link_target != backing_path));
+                if let Err(err) = delete_virtpy_backing(backing_path) {
+                    eprintln!("failed to delete virtpy at {backing_path}: {err}")
+                }
             }
         } else {
             println!("If you've moved some of these, recreate new ones in their place as they'll break when the orphaned backing stores are deleted.\nRun `virtpy gc --remove` to delete orphans\n");
@@ -71,8 +74,6 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> Result<()> {
                     let Distribution { name, version, sha } = &dist.distribution;
                     println!("Removing {name} {version} ({sha})");
 
-                    let res = fs_err::remove_dir_all(path);
-
                     // Remove distribution from list of installed distributions, for all
                     // python versions.
                     // Save after each attempted removal in case a bug causes the removal to fail prematurely
@@ -84,7 +85,12 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> Result<()> {
                         .save()
                         .wrap_err("failed to save stored distributions")?;
 
-                    res.unwrap();
+                    if let Err(err) = fs_err::remove_dir_all(path) {
+                        eprintln!(
+                            "failed to delete all files of {}: {err}",
+                            dist.distribution.name_and_version()
+                        );
+                    }
                 }
             }
         }
@@ -110,7 +116,9 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> Result<()> {
                     if ctx.options.verbose >= 1 {
                         println!("Removing {file}");
                     }
-                    fs_err::remove_file(file).unwrap();
+                    if let Err(err) = fs_err::remove_file(&file) {
+                        eprintln!("failed to delete file {file}: {err}");
+                    }
                 }
             }
         }
@@ -120,11 +128,12 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> Result<()> {
 
 fn dangling_virtpys(
     ctx: &Ctx,
-) -> impl Iterator<Item = Result<(VirtpyBacking, PathBuf), (VirtpyBacking, eyre::Report)>> {
-    ctx.proj_dirs
+) -> Result<impl Iterator<Item = Result<(VirtpyBacking, PathBuf), (VirtpyBacking, eyre::Report)>>> {
+    Ok(ctx
+        .proj_dirs
         .virtpys()
         .read_dir()
-        .unwrap()
+        .wrap_err("failed to read virtpy dir")?
         .filter_map(|virtpy| {
             let virtpy = virtpy.unwrap();
             assert!(virtpy.file_type().unwrap().is_dir());
@@ -137,7 +146,7 @@ fn dangling_virtpys(
                 Ok(VirtpyBackingStatus::Orphaned { link }) => Some(Ok((virtpy, link))),
                 Err(err) => Some(Err((virtpy, err))),
             }
-        })
+        }))
 }
 
 type VirtpyDists = HashMap<VirtpyBacking, HashSet<StoredDistribution>>;
@@ -170,7 +179,7 @@ impl StoreDependencies {
                 for dist_used in virtpy_dists {
                     self.dist_virtpys
                         .get_mut(&dist_used)
-                        .unwrap()
+                        .expect("internal error: dist's dependents not in StoreDependencies")
                         .remove(&virtpy);
                 }
             }
@@ -178,15 +187,21 @@ impl StoreDependencies {
 
         for (dist, virtpy_deps) in &self.dist_virtpys {
             if virtpy_deps.is_empty() {
-                let dist_files = self.dist_files.remove(dist).unwrap();
+                let dist_files = self
+                    .dist_files
+                    .remove(dist)
+                    .expect("internal error: dist's files not in StoreDependencies");
                 for file in dist_files {
-                    self.file_dists.get_mut(&file.hash).unwrap().remove(dist);
+                    self.file_dists
+                        .get_mut(&file.hash)
+                        .expect("internal error: file's dependents not in StoreDependencies")
+                        .remove(dist);
                 }
             }
         }
     }
 
-    fn current(ctx: &Ctx) -> StoreDependencies {
+    fn current(ctx: &Ctx) -> Result<StoreDependencies> {
         // For the cases of dependent mappings (distribution -> virtpy using it, dist file -> distribution containing it)
         // we add all cases without dependencies first.
         // We would otherwise miss orphaned entities.
@@ -197,18 +212,12 @@ impl StoreDependencies {
             .map(|dist| (dist, <_>::default()))
             .collect();
         let mut dist_files = DistFiles::new();
-        let mut file_dists: FileDists = package_files(ctx)
-            .map(|filehash| (filehash, <_>::default()))
-            .collect();
+        let mut file_dists = package_files(ctx)?
+            .map_ok(|filehash| (filehash, <_>::default()))
+            .collect::<Result<FileDists, _>>()?;
 
-        for virtpy_path in ctx
-            .proj_dirs
-            .virtpys()
-            .read_dir()
-            .unwrap()
-            .map(Result::unwrap)
-        {
-            let backing = VirtpyBacking::from_existing(virtpy_path.utf8_path());
+        for virtpy_path in ctx.proj_dirs.virtpys().as_std_path().fs_err_read_dir()? {
+            let backing = VirtpyBacking::from_existing(virtpy_path?.utf8_path());
             let distributions: HashSet<_> = distributions_used(&backing).collect();
             for dist in &distributions {
                 dist_virtpys
@@ -221,9 +230,8 @@ impl StoreDependencies {
 
         for dist in dist_virtpys.keys() {
             let records: HashSet<_> = dist
-                .records(ctx)
-                .unwrap()
-                .map(Result::unwrap)
+                .records(ctx)?
+                .map(Result::unwrap) // won't be a result anymore when FromPip install method is removed
                 .flat_map(RecordEntry::try_from)
                 // .filter(|record| {
                 //     // FIXME: files with ../../
@@ -241,45 +249,53 @@ impl StoreDependencies {
             dist_files.insert(dist.clone(), records);
         }
 
-        StoreDependencies {
+        Ok(StoreDependencies {
             virtpy_dists,
             dist_virtpys,
             dist_files,
             file_dists,
-        }
+        })
     }
 }
 
-fn package_files(ctx: &Ctx) -> impl Iterator<Item = FileHash> {
-    ctx.proj_dirs
+fn package_files(ctx: &Ctx) -> Result<impl Iterator<Item = std::io::Result<FileHash>>> {
+    Ok(ctx
+        .proj_dirs
         .package_files()
-        .read_dir()
-        .unwrap()
-        .map(Result::unwrap)
-        .map(|entry| FileHash::from_filename(&entry.utf8_path()))
+        .as_std_path()
+        .fs_err_read_dir()?
+        .map_ok(|entry| FileHash::from_filename(&entry.utf8_path())))
 }
 
-pub(crate) fn print_verify_store(ctx: &Ctx) {
+pub(crate) fn print_verify_store(ctx: &Ctx) -> Result<()> {
     // TODO: if there are errors, link them back to their original distribution
     let mut any_error = false;
     for file in ctx
         .proj_dirs
         .package_files()
-        .read_dir()
-        .unwrap()
-        .map(Result::unwrap)
+        .as_std_path()
+        .fs_err_read_dir()?
     {
-        // the path is also the hash
-        let path = file.utf8_path();
-        let base64_hash = FileHash::from_file(&path).unwrap();
-        if base64_hash != FileHash::from_filename(&path) {
-            println!("doesn't match hash: {path}, hash = {base64_hash}");
+        if let Err(err) = file
+            .map_err(|err| eyre!("failed to read file: {err}"))
+            .and_then(|file| file.try_utf8_path())
+            .and_then(|path| {
+                let hash = FileHash::from_file(&path)?;
+                let filename_hash = FileHash::from_filename(&path);
+                match hash == filename_hash {
+                    true => Ok(()),
+                    false => Err(eyre!("doesn't match hash: {path}, hash = {hash}")),
+                }
+            })
+        {
             any_error = true;
+            eprintln!("{err}");
         }
     }
     if !any_error {
         println!("everything valid");
     }
+    Ok(())
 }
 
 pub(crate) fn print_stats(
@@ -287,16 +303,15 @@ pub(crate) fn print_stats(
     human_readable: bool,
     use_binary_si_prefix: bool,
 ) -> Result<()> {
-    let total_size: u64 = ctx
+    let total_size = ctx
         .proj_dirs
         .package_files()
-        .read_dir()
-        .unwrap()
-        .map(Result::unwrap)
-        .map(|entry| entry.metadata().unwrap().len())
-        .sum();
+        .as_std_path()
+        .fs_err_read_dir()?
+        .map(|entry| entry.and_then(|e| e.metadata()).map(|md| md.len()))
+        .sum::<Result<u64, _>>()?;
 
-    let deps = StoreDependencies::current(ctx);
+    let deps = StoreDependencies::current(ctx)?;
     //let (danglers, errors) = dangling_virtpys(ctx);
     // let non_dangling_deps = {
     //     let mut non_dangling = deps.clone();
@@ -342,12 +357,18 @@ pub(crate) fn print_stats(
             if ctx.options.verbose >= 2 {
                 for dependent in dependents {
                     let dependent = dependent.location();
-                    let link_location = virtpy_link_location(dependent).unwrap();
-                    print!("    {link_location}");
-                    if ctx.options.verbose >= 3 {
-                        print!("  =>  {dependent}");
+                    match virtpy_link_location(dependent) {
+                        Ok(link_location) => {
+                            print!("    {link_location}");
+                            if ctx.options.verbose >= 3 {
+                                print!("  =>  {dependent}");
+                            }
+                            println!();
+                        }
+                        Err(err) => {
+                            eprintln!("failed to read virpy location for {dependent}: {err}");
+                        }
                     }
-                    println!();
                 }
             }
         }
@@ -492,6 +513,15 @@ impl PartialEq for StoredDistributions {
 impl Eq for StoredDistributions {}
 
 impl StoredDistribution {
+    fn record_file(&self, ctx: &Ctx) -> Result<PathBuf> {
+        self.dist_info_file(ctx, "RECORD").ok_or_else(|| {
+            eyre!(
+                "couldn't find RECORD file for {}",
+                self.distribution.name_and_version()
+            )
+        })
+    }
+
     fn dist_info_file(&self, ctx: &Ctx, file: &str) -> Option<PathBuf> {
         match self.installed_via {
             StoredDistributionType::FromPip => {
@@ -546,7 +576,7 @@ impl StoredDistribution {
     }
 
     fn records(&self, ctx: &Ctx) -> Result<Box<dyn Iterator<Item = Result<MaybeRecordEntry>>>> {
-        let record = self.dist_info_file(ctx, "RECORD").unwrap();
+        let record = self.record_file(ctx)?;
         Ok(match self.installed_via {
             StoredDistributionType::FromPip => {
                 Box::new(records(&record, false)?.map(|rec| Ok(rec?)))
@@ -573,14 +603,14 @@ impl StoredDistribution {
             .collect::<Vec<_>>();
         let mut exes = entrypoint_exes.clone();
         if self.installed_via == StoredDistributionType::FromWheel {
-            let record = WheelRecord::from_file(self.dist_info_file(ctx, "RECORD").unwrap())?;
+            let record = WheelRecord::from_file(self.record_file(ctx)?)?;
             let mut data_exes = record.files;
             let script_path = PathBuf::from(self.distribution.data_dir_name()).join("scripts");
             data_exes.retain(|entry| entry.path.starts_with(&script_path));
 
             let data_exes = data_exes
                 .into_iter()
-                .map(|entry| entry.path.file_name().unwrap().to_owned())
+                .filter_map(|entry| entry.path.file_name().map(|s| s.to_owned()))
                 .collect_vec();
             let all_exes = entrypoint_exes.iter().chain(data_exes.iter());
             let duplicates = all_exes.duplicates().map(String::as_str).collect_vec();
@@ -648,7 +678,7 @@ impl StoredDistributions {
             .wrap_err("failed to open stored distributions log")?;
 
         let mut lock = lock_file(file)?;
-        if lock.metadata().unwrap().len() == 0 {
+        if lock.metadata()?.len() == 0 {
             // if it's empty, then deserializing it doesn't work
             return Ok(StoredDistributions(HashMap::new(), lock));
         }
