@@ -1,11 +1,13 @@
 # virtpy
 
-virtpy creates Python [venv](https://docs.python.org/3/library/venv.html)s where all the dependencies are symlinked in from a central store. 
-Dependencies that are used in multiple venvs are only stored once on disk. 
-This makes each individual virtpy environment very lightweight.
+virtpy creates lightweight Python [venv](https://docs.python.org/3/library/venv.html)s, quickly.
 
-As a side effect, creation of virtpys and installation of packages is significantly faster.
-This is especially true for repeat installs, but it remains the case for the first install.
+Dependencies that are used in multiple venvs are only stored once on disk. 
+Creating a venv and installing packages into one are both significantly faster.
+This is especially true for packages that are already installed into another virtpy, but
+it is also faster when you install a package for the first time.
+
+Internally, this is accomplished via symbolic links and a central store of all dependency's files.
 
 The name stands for <b>virt</b>ual <b>py</b>thon and is subject to change. The entire project is an early prototype. Expect bugs and crashes.
 
@@ -13,11 +15,11 @@ The name stands for <b>virt</b>ual <b>py</b>thon and is subject to change. The e
 * Python3.8+  
   with
   * a modern-ish pip version
-  * the `wheel` module available globally for python.  
-    It should be installed for every python version you intend to use with virtpy. It is not strictly required, but needed
+  * the `wheel` module available globally for python. (optional, but strongly recommended)  
+    It should be installed for every python version you intend to use with virtpy. It's used 
     for installing non-wheel packages by converting them into wheels first.
-* [Poetry](https://github.com/python-poetry/poetry)  
-  Virtpy does not manage dependencies or download packages. It can currently only be used in conjunction with poetry.
+* [Poetry](https://github.com/python-poetry/poetry) (optional, but strongly recommended)  
+  Virtpy does not manage dependencies or download packages. It will, however, work seamlessly with poetry after you've created a virtpy in your python project's directory.
 
 # How to use
 The tool's core subcommands are:
