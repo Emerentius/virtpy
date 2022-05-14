@@ -7,7 +7,8 @@
 use crate::internal_store::{wheel_is_already_registered, StoredDistributions};
 use crate::prelude::*;
 use crate::python::wheel::{
-    is_path_of_executable, normalized_distribution_name_for_wheel, RecordEntry, WheelRecord,
+    is_path_of_executable, normalized_distribution_name_for_wheel, CheckStrategy, RecordEntry,
+    WheelRecord,
 };
 use crate::python::{
     generate_executable, records, Distribution, DistributionHash, EntryPoint, FileHash,
@@ -20,6 +21,7 @@ use crate::{
     symlink_dir, symlink_file, Path, PathBuf, ShimInfo, StoredDistribution, StoredDistributionType,
     CENTRAL_METADATA, DIST_HASH_FILE, LINK_METADATA,
 };
+use clap::ArgEnum;
 use eyre::{eyre, Context};
 use fs_err::PathExt;
 use itertools::Itertools;
@@ -181,6 +183,7 @@ impl Virtpy {
         path: &Path,
         prompt: Option<String>,
         with_pip_shim: Option<ShimInfo>,
+        check_strategy: CheckStrategy,
     ) -> Result<Virtpy> {
         let mut rng = rand::thread_rng();
 
@@ -207,7 +210,9 @@ impl Virtpy {
             .as_deref()
             .or_else(|| path.file_name())
             .unwrap_or(DEFAULT_VIRTPY_PATH);
-        _create_virtpy(central_path, python_path, path, prompt, with_pip_shim)
+        let virtpy = _create_virtpy(central_path, python_path, path, prompt, with_pip_shim)?;
+        virtpy.set_check_strategy(check_strategy)?;
+        Ok(virtpy)
     }
 
     pub(crate) fn from_existing(virtpy_link: &Path) -> Result<Self> {
@@ -227,7 +232,12 @@ impl Virtpy {
         .wrap_err_with(|| eyre!("the virtpy `{virtpy_link}` is broken, please recreate it.",))
     }
 
-    pub(crate) fn add_dependency_from_file(&self, ctx: &Ctx, file: &Path) -> Result<()> {
+    pub(crate) fn add_dependency_from_file(
+        &self,
+        ctx: &Ctx,
+        file: &Path,
+        check_strategy: CheckStrategy,
+    ) -> Result<()> {
         let file_hash = DistributionHash::from_file(file)?;
         let distribution =
             Distribution::from_package_name(file.file_name().unwrap(), file_hash).unwrap();
@@ -238,6 +248,7 @@ impl Virtpy {
                 file,
                 distribution.clone(),
                 self.python_version,
+                check_strategy,
             )?;
         }
 
@@ -431,6 +442,16 @@ impl Virtpy {
     fn set_has_pip_shim(&self) {
         // TODO: bubble error up
         let _ = std::fs::write(self._pip_shim_flag_file(), "");
+    }
+
+    pub(crate) fn set_check_strategy(&self, strategy: CheckStrategy) -> std::io::Result<()> {
+        fs_err::write(
+            self.metadata_dir().join("wheel_check_strategy"),
+            strategy
+                .to_possible_value()
+                .expect("skipped value")
+                .get_name(),
+        )
     }
 }
 
@@ -986,6 +1007,7 @@ fn install_and_register_distribution_from_file(
     distrib_path: &Path,
     distribution: Distribution,
     python_version: crate::python::PythonVersion,
+    check_strategy: CheckStrategy,
 ) -> Result<()> {
     let tmp_dir = tempdir::TempDir::new_in(ctx.proj_dirs.tmp(), "virtpy_wheel")?;
     let (distrib_path, _wheel_tmp_dir) = match distrib_path.extension().unwrap() {
@@ -1009,7 +1031,26 @@ fn install_and_register_distribution_from_file(
     assert!(distrib_path.extension().unwrap() == "whl");
     crate::python::wheel::unpack_wheel(&distrib_path, tmp_dir.path())?;
 
-    crate::internal_store::register_new_distribution(ctx, distribution, python_version, tmp_dir)?;
+    let install_folder = tmp_dir.utf8_path();
+    let src_dist_info = install_folder.join(distribution.dist_info_name());
+    let mut wheel_record = WheelRecord::from_file(&src_dist_info.join("RECORD"))
+        .wrap_err("couldn't get dist-info/RECORD")?;
+
+    let wheel_checked = crate::python::wheel::verify_wheel_contents_or_repair(
+        install_folder,
+        &distribution,
+        &mut wheel_record,
+        check_strategy,
+    )?;
+
+    crate::internal_store::register_new_distribution(
+        ctx,
+        wheel_checked,
+        distribution,
+        python_version,
+        install_folder,
+        wheel_record,
+    )?;
 
     Ok(())
 }
@@ -1193,7 +1234,7 @@ pub(crate) fn python_version(venv: &Path) -> Result<PythonVersion> {
 
 pub(crate) fn add_package_resources(ctx: &Ctx, virtpy: &Virtpy) -> Result<()> {
     let pkg_res_wheel = package_resources_wheel(ctx, &virtpy.global_python()?)?;
-    virtpy.add_dependency_from_file(ctx, &pkg_res_wheel)
+    virtpy.add_dependency_from_file(ctx, &pkg_res_wheel, CheckStrategy::Repair)
 }
 
 fn canonicalize(path: &Path) -> Result<PathBuf> {
@@ -1218,7 +1259,14 @@ mod test {
         let ctx = test_ctx();
         let tmp_dir = tempdir::TempDir::new("virtpy_test")?;
         let virtpy_path: Utf8PathBuf = tmp_dir.path().join("install_paths_test").try_into()?;
-        let virtpy = Virtpy::create(&ctx, &detect("3")?, &virtpy_path, None, None)?;
+        let virtpy = Virtpy::create(
+            &ctx,
+            &detect("3")?,
+            &virtpy_path,
+            None,
+            None,
+            CheckStrategy::RejectInvalid,
+        )?;
         let install_paths = virtpy.install_paths()?;
         let required_keys = ["purelib", "platlib", "headers", "scripts", "data"]
             .iter()

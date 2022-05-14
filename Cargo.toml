@@ -7,7 +7,6 @@ readme = "README.md"
 license = "AGPL-3.0"
 
 [dependencies]
-structopt = "0.3.25"
 directories = "4.0.1"
 tempdir = "0.3.7"
 regex = "1.5.4"
@@ -34,6 +33,7 @@ bytesize = "1.1.0"
 thiserror = "1.0.30"
 configparser = "3.0.0"
 glob = "0.3.0"
+clap = { version = "3.1.18", features =["derive"] }
 
 [profile.release]
 debug = true

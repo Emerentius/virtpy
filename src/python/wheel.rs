@@ -1,6 +1,7 @@
 use crate::prelude::*;
 use camino::Utf8Path;
 use eyre::{bail, eyre, WrapErr};
+use fs_err::PathExt;
 use std::{
     collections::HashMap,
     fmt::Display,
@@ -32,27 +33,6 @@ pub(crate) fn unpack_wheel(wheel: &Path, dest: &StdPath) -> Result<()> {
     archive
         .extract(dest)
         .wrap_err_with(|| eyre!("failed to extract wheel to {dest:?}"))?;
-    Ok(())
-}
-
-// TODO: check that ALL files in the install folder are also mentioned in the RECORD
-#[allow(unused)]
-pub(crate) fn verify_wheel_contents(
-    install_folder: &Path,
-    wheel_record: &WheelRecord,
-) -> Result<()> {
-    for entry in &wheel_record.files {
-        let path = install_folder.join(&entry.path);
-        let hash = FileHash::from_file(&path)?;
-        if hash != entry.hash {
-            bail!(
-                "hash mismatch in package files: '{}', expected: {}, found: {hash}",
-                entry.path,
-                entry.hash,
-            );
-        }
-    }
-
     Ok(())
 }
 
@@ -243,7 +223,7 @@ pub(crate) fn is_path_of_executable(path: &Utf8Path) -> bool {
 /// The installed distributions retain the record and any files that are newly generated
 /// or moved to their target destinations from the data directory have to be added
 /// to the record by the installer (i.e. us).
-#[derive(PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, Debug, Hash, PartialOrd, Ord, Clone)]
 pub(crate) struct WheelRecord {
     // stored separately just so we can easily recreate the line for the RECORD itself
     // without making paths and filesizes optional for all other files.
@@ -413,9 +393,106 @@ impl WheelRecord {
     }
 }
 
+/// See verify_wheel_contents_or_repair() for additional info.
+#[derive(clap::ArgEnum, Clone, Copy)]
+pub(crate) enum CheckStrategy {
+    /// Assume the distribution contents are correct and update its metadata when incorrect.
+    /// This is in violation of the spec, but required because invalid wheels exist
+    /// in the wild and we can't let them corrupt our internal content addressed store.
+    Repair,
+    /// Return an error when the wheel's metadata doesn't match its contents, i.e.
+    /// when not all files are mentioned in the RECORD or their content's hashes don't match
+    /// the one one in the wheel's RECORD.
+    /// Correct behavior as per the spec:
+    /// https://packaging.python.org/en/latest/specifications/binary-distribution-format/#the-dist-info-directory
+    RejectInvalid,
+}
+
+/// Token
+pub(crate) struct WheelChecked;
+
+/// Check that the RECORD matches the wheel contents for an unpacked wheel distribution and repair it, if desired.
+///
+///
+/// As stated in the wheel format specification
+/// https:///packaging.python.org/en/latest/specifications/binary-distribution-format/#the-dist-info-directory
+///
+/// >During extraction, wheel installers verify all the hashes in RECORD against the file contents.
+/// Apart from RECORD and its signatures, installation will fail if any file in the archive is not both
+/// mentioned and correctly hashed in RECORD.
+///
+/// Pip, THE python package manager, neglected to implement this so now there are lots of invalid wheels
+/// in the wild and we have to deal with them. Why am I not surprised?
+///
+/// Given that our pip shim calls virtpy non-interactively, we can't inform the user and prompt
+/// whether they want to accept corrupted wheels.
+/// We can automatically fix the wheels by computing the correct hash. If we simply accepted
+/// files into the central store under whatever hash is in the RECORD, it would be trivial to maliciously
+/// create collisions and overwrite another distribution's files.
+pub(crate) fn verify_wheel_contents_or_repair(
+    // directory into which the distribution has been unpackaged
+    path: &Path,
+    distribution: &super::Distribution,
+    record: &mut WheelRecord,
+    check_strategy: CheckStrategy,
+) -> Result<WheelChecked> {
+    // TODO: ensure that no other virtpy install tries to install the same package at the same time.
+    //       Maybe we're already holding a lock?
+    let mut n_hash_updated = 0;
+    let mut n_filesize_updated = 0;
+    for entry in &mut record.files {
+        let filepath = path.join(&entry.path);
+        let filesize = filepath.as_std_path().fs_err_metadata()?.len();
+        let filehash = FileHash::from_file(&filepath)?;
+        let filesize_matches = filesize == entry.filesize;
+        let hash_matches = filehash == entry.hash;
+        match check_strategy {
+            CheckStrategy::Repair => {
+                // NOTE: As we're currently only supporting SHA256 file hashes, if the wheel record
+                //       uses a different hash than SHA256, this will replace it.
+                if !hash_matches {
+                    entry.hash = filehash;
+                    n_hash_updated += 1;
+                }
+                if !filesize_matches {
+                    entry.filesize = filesize;
+                    n_filesize_updated += 1;
+                }
+            }
+            CheckStrategy::RejectInvalid => {
+                eyre::ensure!(
+                    filesize_matches,
+                    "filesize doesn't match record: expected {}, got {filesize} for {}",
+                    entry.filesize,
+                    entry.path
+                );
+                eyre::ensure!(
+                    hash_matches,
+                    "filehash doesn't match record: expected {}, got {filehash} for {}",
+                    entry.hash,
+                    entry.path
+                );
+            }
+        }
+    }
+    if n_filesize_updated > 0 || n_hash_updated > 0 {
+        eprintln!(
+            "updated record for new package {}: {} filesize mismatches, {} hash mismatches",
+            distribution.name_and_version(),
+            n_filesize_updated,
+            n_hash_updated
+        );
+        record.save_to_file(path.join(&record.record_path))?;
+    }
+
+    Ok(WheelChecked)
+}
+
 #[cfg(test)]
 mod test {
     use eyre::eyre;
+
+    use crate::python::{Distribution, DistributionHash};
 
     use super::*;
 
@@ -461,6 +538,82 @@ mod test {
             WheelRecord::from_file(PathBuf::from_path_buf(f.path()).unwrap())?;
         }
         WheelRecord::from_file("test_files/RECORD")?;
+        Ok(())
+    }
+
+    #[test]
+    fn verify_and_repair_wheel() -> Result<()> {
+        // TODO: split this into multiple tests. It does too much.
+        let tmp_dir_valid = tempdir::TempDir::new("virtpy_valid_wheel_verification_test")?;
+        let tmp_dir_invalid = tempdir::TempDir::new("virtpy_invalid_wheel_verification_test")?;
+
+        let package_name = "wheel_test_package-0.1.0-py3-none-any.whl";
+        let valid_wheel =
+            Path::new("test_files/wheels/validity_check_valid_wheel").join(package_name);
+        let invalid_wheel =
+            Path::new("test_files/wheels/validity_check_invalid_wheel").join(package_name);
+
+        // we're not checking the hash, but a Distribution requires one
+        let hash = DistributionHash::from_file(&valid_wheel)?;
+        let dist = Distribution::from_package_name(package_name, hash)?;
+
+        unpack_wheel(valid_wheel.as_ref(), tmp_dir_valid.path())?;
+        unpack_wheel(invalid_wheel.as_ref(), tmp_dir_invalid.path())?;
+
+        let record_valid = WheelRecord::from_file(
+            tmp_dir_valid
+                .utf8_path()
+                .join(dist.dist_info_name())
+                .join("RECORD"),
+        )?;
+        let record_invalid = WheelRecord::from_file(
+            tmp_dir_invalid
+                .utf8_path()
+                .join(dist.dist_info_name())
+                .join("RECORD"),
+        )?;
+
+        assert_ne!(record_valid, record_invalid);
+
+        // Check that validity is correctly determined and
+        // that RejectInvalid doesn't modify the record.
+        let mut record_valid_copy = record_valid.clone();
+        verify_wheel_contents_or_repair(
+            tmp_dir_valid.utf8_path(),
+            &dist,
+            &mut record_valid_copy,
+            CheckStrategy::RejectInvalid,
+        )?;
+        assert_eq!(record_valid_copy, record_valid);
+
+        let mut record_invalid_copy = record_invalid.clone();
+        assert!(verify_wheel_contents_or_repair(
+            tmp_dir_invalid.utf8_path(),
+            &dist,
+            &mut record_invalid_copy,
+            CheckStrategy::RejectInvalid
+        )
+        .is_err());
+        assert_eq!(record_invalid_copy, record_invalid);
+
+        // Check that repair does nothing for valid and repairs the invalid record
+        // to match the valid one
+        verify_wheel_contents_or_repair(
+            tmp_dir_valid.utf8_path(),
+            &dist,
+            &mut record_valid_copy,
+            CheckStrategy::Repair,
+        )?;
+        assert_eq!(record_valid_copy, record_valid);
+
+        verify_wheel_contents_or_repair(
+            tmp_dir_invalid.utf8_path(),
+            &dist,
+            &mut record_invalid_copy,
+            CheckStrategy::Repair,
+        )?;
+        assert_eq!(record_invalid_copy, record_valid);
+
         Ok(())
     }
 }

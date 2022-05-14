@@ -190,6 +190,9 @@ def install_package_from_file(package_path: str) -> None:
     virtpy = virtpy_path()
     assert virtpy is not None
 
+    strategy = check_strategy(virtpy)
+    strategy_args = ["--check-strategy", strategy] if strategy is not None else []
+
     subprocess.run(
         [
             *virtpy_cmd(virtpy),
@@ -197,6 +200,7 @@ def install_package_from_file(package_path: str) -> None:
             "add-from-file",
             virtpy,
             package_path,
+            *strategy_args,
         ],
         check=True,
     )
@@ -219,3 +223,11 @@ def virtpy_cmd(venv_path: Union[str, pathlib.Path]) -> List[str]:
     virtpy_exe = open(os.path.join(metadata, "virtpy_exe")).read()
     proj_dir = open(os.path.join(metadata, "proj_dir")).read()
     return [virtpy_exe, "--project-dir", proj_dir]
+
+
+def check_strategy(venv_path: Union[str, pathlib.Path]) -> Optional[str]:
+    try:
+        metadata = os.path.join(venv_path, "virtpy_link_metadata")
+        return open(os.path.join(metadata, "wheel_check_strategy")).read().strip()
+    except FileNotFoundError:
+        return None
