@@ -50,12 +50,16 @@ enum Command {
         /// Don't add pkg_resources module that is usually installed into venvs alongside setuptools.
         #[clap(long)]
         without_package_resources: bool,
+        #[clap(flatten)]
+        check_strategy: CheckStrategy,
     },
     /// Add package to virtpy from wheel file
     Add {
         file: PathBuf,
         #[clap(long)]
         virtpy_path: Option<PathBuf>,
+        #[clap(flatten)]
+        check_strategy: CheckStrategy,
     },
     /// Remove package from virtpy
     Remove {
@@ -74,6 +78,8 @@ enum Command {
         /// The python to use. Either a path or an indicator of the form `python3.7` or `3.7`
         #[clap(short, long, default_value = "3")]
         python: String,
+        #[clap(flatten)]
+        check_strategy: CheckStrategy,
     },
     /// Delete the virtpy of a previously installed executable package
     Uninstall { package: Vec<String> },
@@ -141,7 +147,12 @@ enum InternalStoreCmd {
 #[derive(Subcommand)]
 enum InternalUseOnly {
     /// Install the wheel file into the given virtpy
-    AddFromFile { virtpy: PathBuf, file: PathBuf },
+    AddFromFile {
+        virtpy: PathBuf,
+        file: PathBuf,
+        #[clap(flatten)]
+        check_strategy: CheckStrategy,
+    },
     /// Return path to globally available python executable of the same version as used in virtpy
     ///
     /// On systems where the venv executable is symlinked, it will return the linked one.
@@ -202,6 +213,19 @@ struct Ctx {
 #[derive(Copy, Clone)]
 pub(crate) struct Options {
     verbose: u8,
+}
+
+#[derive(clap::Args)]
+struct CheckStrategy {
+    /// How to check integrity of wheel packages.
+    ///
+    /// The official specification requires to fail when installing packages where the
+    /// metadata doesn't match its contents. However, pip doesn't conform with this
+    /// so you may encounter invalid packages that won't be fixed.
+    /// With the "repair" strategy, the wheel's contents are considered correct and the
+    /// metadata is changed to match.
+    #[clap(arg_enum, long, default_value = "repair")]
+    check_strategy: python::wheel::CheckStrategy,
 }
 
 /// The directory where the internal store is placed.
@@ -377,9 +401,13 @@ fn main() -> Result<()> {
     let ctx = Ctx { proj_dirs, options };
 
     match opt.cmd {
-        Command::Add { file, virtpy_path } => {
+        Command::Add {
+            file,
+            virtpy_path,
+            check_strategy: CheckStrategy { check_strategy },
+        } => {
             let virtpy = virtpy_path.unwrap_or_else(|| PathBuf::from(DEFAULT_VIRTPY_PATH));
-            add_from_file(&ctx, virtpy, file)?;
+            add_from_file(&ctx, virtpy, file, check_strategy)?;
         }
         Command::Remove {
             distributions,
@@ -393,14 +421,18 @@ fn main() -> Result<()> {
             python,
             without_pip_shim,
             without_package_resources,
+            check_strategy: CheckStrategy { check_strategy },
         } => {
             let path = path.unwrap_or_else(|| PathBuf::from(DEFAULT_VIRTPY_PATH));
 
             let shim_info = (!without_pip_shim).then(|| shim_info(&ctx)).transpose()?;
             let virtpy = python::detection::detect(&python)
-                .and_then(|python_path| Virtpy::create(&ctx, &python_path, &path, None, shim_info))
+                .and_then(|python_path| {
+                    Virtpy::create(&ctx, &python_path, &path, None, shim_info, check_strategy)
+                })
                 .wrap_err("failed to create virtpy")?;
 
+            // TODO: move into Virtpy::create
             if !without_package_resources {
                 add_package_resources(&ctx, &virtpy)?;
             }
@@ -410,12 +442,19 @@ fn main() -> Result<()> {
             force,
             allow_prereleases,
             python,
+            check_strategy: CheckStrategy { check_strategy },
         } => {
             let mut any_errors = false;
             for package in package {
                 println!("installing {package}...");
-                match install_executable_package(&ctx, &package, force, allow_prereleases, &python)
-                {
+                match install_executable_package(
+                    &ctx,
+                    &package,
+                    force,
+                    allow_prereleases,
+                    &python,
+                    check_strategy,
+                ) {
                     Ok(InstalledStatus::NewlyInstalled) => println!("installed {package}."),
                     Ok(InstalledStatus::AlreadyInstalled) => {
                         println!("package is already installed.")
@@ -427,9 +466,7 @@ fn main() -> Result<()> {
                 }
             }
 
-            if any_errors {
-                bail!("some installs failed");
-            }
+            ensure!(!any_errors, "some installs failed");
         }
         Command::Uninstall { package } => {
             let mut any_errors = false;
@@ -472,8 +509,12 @@ fn main() -> Result<()> {
         Command::InternalStore(InternalStoreCmd::Verify) => {
             internal_store::print_verify_store(&ctx)?;
         }
-        Command::InternalUseOnly(InternalUseOnly::AddFromFile { virtpy, file }) => {
-            add_from_file(&ctx, virtpy, file)?;
+        Command::InternalUseOnly(InternalUseOnly::AddFromFile {
+            virtpy,
+            file,
+            check_strategy: CheckStrategy { check_strategy },
+        }) => {
+            add_from_file(&ctx, virtpy, file, check_strategy)?;
         }
         Command::InternalUseOnly(InternalUseOnly::GlobalPython { virtpy }) => {
             println!("{}", Virtpy::from_existing(&virtpy)?.global_python()?);
@@ -504,8 +545,13 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn add_from_file(ctx: &Ctx, virtpy: PathBuf, file: PathBuf) -> Result<()> {
-    Ok(Virtpy::from_existing(&virtpy)?.add_dependency_from_file(ctx, &file)?)
+fn add_from_file(
+    ctx: &Ctx,
+    virtpy: PathBuf,
+    file: PathBuf,
+    check_strategy: python::wheel::CheckStrategy,
+) -> Result<()> {
+    Ok(Virtpy::from_existing(&virtpy)?.add_dependency_from_file(ctx, &file, check_strategy)?)
 }
 
 enum InstalledStatus {
@@ -519,6 +565,7 @@ fn install_executable_package(
     force: bool,
     allow_prereleases: bool,
     python: &str,
+    check_strategy: python::wheel::CheckStrategy,
 ) -> Result<InstalledStatus> {
     let package_folder = ctx.proj_dirs.package_folder(package);
 
@@ -543,6 +590,7 @@ fn install_executable_package(
         &package_folder,
         None,
         Some(shim_info(ctx)?),
+        check_strategy,
     )?;
 
     // if anything goes wrong, try to delete the incomplete installation
