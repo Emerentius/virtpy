@@ -1,6 +1,7 @@
 use crate::prelude::*;
 use camino::Utf8Path;
 use eyre::{bail, eyre, WrapErr};
+use fs_err::PathExt;
 use std::{
     collections::HashMap,
     fmt::Display,
@@ -32,27 +33,6 @@ pub(crate) fn unpack_wheel(wheel: &Path, dest: &StdPath) -> Result<()> {
     archive
         .extract(dest)
         .wrap_err_with(|| eyre!("failed to extract wheel to {dest:?}"))?;
-    Ok(())
-}
-
-// TODO: check that ALL files in the install folder are also mentioned in the RECORD
-#[allow(unused)]
-pub(crate) fn verify_wheel_contents(
-    install_folder: &Path,
-    wheel_record: &WheelRecord,
-) -> Result<()> {
-    for entry in &wheel_record.files {
-        let path = install_folder.join(&entry.path);
-        let hash = FileHash::from_file(&path)?;
-        if hash != entry.hash {
-            bail!(
-                "hash mismatch in package files: '{}', expected: {}, found: {hash}",
-                entry.path,
-                entry.hash,
-            );
-        }
-    }
-
     Ok(())
 }
 
@@ -411,6 +391,100 @@ impl WheelRecord {
         })?;
         Ok(())
     }
+}
+
+/// See verify_wheel_contents_or_repair() for additional info.
+pub(crate) enum CheckStrategy {
+    /// Assume the distribution contents are correct and update its metadata when incorrect.
+    /// This is in violation of the spec, but required because invalid wheels exist
+    /// in the wild and we can't let them corrupt our internal content addressed store.
+    Repair,
+    /// Return an error when the wheel's metadata doesn't match its contents, i.e.
+    /// when not all files are mentioned in the RECORD or their content's hashes don't match
+    /// the one one in the wheel's RECORD.
+    /// Correct behavior as per the spec:
+    /// https://packaging.python.org/en/latest/specifications/binary-distribution-format/#the-dist-info-directory
+    RejectInvalid,
+}
+
+/// Token
+pub(crate) struct WheelChecked;
+
+/// Check that the RECORD matches the wheel contents for an unpacked wheel distribution and repair it, if desired.
+///
+///
+/// As stated in the wheel format specification
+/// https:///packaging.python.org/en/latest/specifications/binary-distribution-format/#the-dist-info-directory
+///
+/// >During extraction, wheel installers verify all the hashes in RECORD against the file contents.
+/// Apart from RECORD and its signatures, installation will fail if any file in the archive is not both
+/// mentioned and correctly hashed in RECORD.
+///
+/// Pip, THE python package manager, neglected to implement this so now there are lots of invalid wheels
+/// in the wild and we have to deal with them. Why am I not surprised?
+///
+/// Given that our pip shim calls virtpy non-interactively, we can't inform the user and prompt
+/// whether they want to accept corrupted wheels.
+/// We can automatically fix the wheels by computing the correct hash. If we simply accepted
+/// files into the central store under whatever hash is in the RECORD, it would be trivial to maliciously
+/// create collisions and overwrite another distribution's files.
+pub(crate) fn verify_wheel_contents_or_repair(
+    // directory into which the distribution has been unpackaged
+    path: &Path,
+    distribution: &super::Distribution,
+    record: &mut WheelRecord,
+    check_strategy: CheckStrategy,
+) -> Result<WheelChecked> {
+    // TODO: ensure that no other virtpy install tries to install the same package at the same time.
+    //       Maybe we're already holding a lock?
+    let mut n_hash_updated = 0;
+    let mut n_filesize_updated = 0;
+    for entry in &mut record.files {
+        let filepath = path.join(&entry.path);
+        let filesize = filepath.as_std_path().fs_err_metadata()?.len();
+        let filehash = FileHash::from_file(&filepath)?;
+        let filesize_matches = filesize == entry.filesize;
+        let hash_matches = filehash == entry.hash;
+        match check_strategy {
+            CheckStrategy::Repair => {
+                // NOTE: As we're currently only supporting SHA256 file hashes, if the wheel record
+                //       uses a different hash than SHA256, this will replace it.
+                if !hash_matches {
+                    entry.hash = filehash;
+                    n_hash_updated += 1;
+                }
+                if !filesize_matches {
+                    entry.filesize = filesize;
+                    n_filesize_updated += 1;
+                }
+            }
+            CheckStrategy::RejectInvalid => {
+                eyre::ensure!(
+                    filesize_matches,
+                    "filesize doesn't match record: expected {}, got {filesize} for {}",
+                    entry.filesize,
+                    entry.path
+                );
+                eyre::ensure!(
+                    hash_matches,
+                    "filehash doesn't match record: expected {}, got {filehash} for {}",
+                    entry.hash,
+                    entry.path
+                );
+            }
+        }
+    }
+    if n_filesize_updated > 0 || n_hash_updated > 0 {
+        eprintln!(
+            "updated record for new package {}: {} filesize mismatches, {} hash mismatches",
+            distribution.name_and_version(),
+            n_filesize_updated,
+            n_hash_updated
+        );
+        record.save_to_file(path.join(&record.record_path))?;
+    }
+
+    Ok(WheelChecked)
 }
 
 #[cfg(test)]

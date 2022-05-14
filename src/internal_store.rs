@@ -3,7 +3,7 @@ use eyre::{ensure, eyre, WrapErr};
 use fs_err::{File, PathExt};
 use itertools::Itertools;
 
-use crate::python::wheel::MaybeRecordEntry;
+use crate::python::wheel::{MaybeRecordEntry, WheelChecked};
 use crate::python::{records, Distribution, DistributionHash, EntryPoint, FileHash, PythonVersion};
 use crate::venv::{
     virtpy_link_location, virtpy_link_target, virtpy_status, VirtpyBacking, VirtpyBackingStatus,
@@ -747,9 +747,11 @@ impl std::ops::DerefMut for FileLockGuard {
 // Usable only for our own installation from wheel files
 pub(crate) fn register_new_distribution(
     ctx: &Ctx,
+    _: WheelChecked,
     distrib: Distribution,
     python_version: PythonVersion,
-    tmp_dir: tempdir::TempDir,
+    install_folder: &Path,
+    wheel_record: WheelRecord,
 ) -> Result<()> {
     if ctx.options.verbose >= 2 {
         println!(
@@ -757,31 +759,6 @@ pub(crate) fn register_new_distribution(
             distrib.name, distrib.version, distrib.sha
         );
     }
-
-    let install_folder = tmp_dir.utf8_path();
-    let src_dist_info = install_folder.join(distrib.dist_info_name());
-    let wheel_record = crate::python::wheel::WheelRecord::from_file(&src_dist_info.join("RECORD"))
-        .wrap_err("couldn't get dist-info/RECORD")?;
-
-    // As stated in the wheel format specification
-    // https://packaging.python.org/en/latest/specifications/binary-distribution-format/#the-dist-info-directory
-    //
-    // >During extraction, wheel installers verify all the hashes in RECORD against the file contents.
-    // Apart from RECORD and its signatures, installation will fail if any file in the archive is not both
-    // mentioned and correctly hashed in RECORD.
-    //
-    // Pip, THE python package manager, neglected to implement this so now there are lots of invalid wheels
-    // in the wild and we have to deal with them. Why am I not surprised?
-    //
-    // Given that our pip shim calls virtpy non-interactively, we can't inform the user and prompt
-    // whether they want to accept corrupted wheels.
-    // We could automatically fix the wheels by computing the correct hash. If we simply accepted
-    // files into the central store under whatever hash is in the RECORD, it would be trivial to maliciously
-    // create collisions and overwrite another distribution's files.
-    //
-    // TODO: implement auto-fixing of corrupted wheels.
-    // verify_wheel_contents(install_folder, &wheel_record)
-    //     .wrap_err("failed to verify wheel record")?;
 
     let mut all_stored_distributions = StoredDistributions::load(ctx)?;
     let stored_distributions = all_stored_distributions

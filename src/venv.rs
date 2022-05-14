@@ -7,7 +7,8 @@
 use crate::internal_store::{wheel_is_already_registered, StoredDistributions};
 use crate::prelude::*;
 use crate::python::wheel::{
-    is_path_of_executable, normalized_distribution_name_for_wheel, RecordEntry, WheelRecord,
+    is_path_of_executable, normalized_distribution_name_for_wheel, CheckStrategy, RecordEntry,
+    WheelRecord,
 };
 use crate::python::{
     generate_executable, records, Distribution, DistributionHash, EntryPoint, FileHash,
@@ -1009,7 +1010,28 @@ fn install_and_register_distribution_from_file(
     assert!(distrib_path.extension().unwrap() == "whl");
     crate::python::wheel::unpack_wheel(&distrib_path, tmp_dir.path())?;
 
-    crate::internal_store::register_new_distribution(ctx, distribution, python_version, tmp_dir)?;
+    let install_folder = tmp_dir.utf8_path();
+    let src_dist_info = install_folder.join(distribution.dist_info_name());
+    let mut wheel_record = WheelRecord::from_file(&src_dist_info.join("RECORD"))
+        .wrap_err("couldn't get dist-info/RECORD")?;
+
+    // TODO: make configurable
+    let check_strategy = CheckStrategy::Repair;
+    let wheel_checked = crate::python::wheel::verify_wheel_contents_or_repair(
+        install_folder,
+        &distribution,
+        &mut wheel_record,
+        check_strategy,
+    )?;
+
+    crate::internal_store::register_new_distribution(
+        ctx,
+        wheel_checked,
+        distribution,
+        python_version,
+        install_folder,
+        wheel_record,
+    )?;
 
     Ok(())
 }
