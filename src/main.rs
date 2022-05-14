@@ -1,11 +1,11 @@
 use camino::{Utf8Path, Utf8PathBuf};
+use clap::{Parser, Subcommand};
 use eyre::bail;
 use eyre::{ensure, eyre, WrapErr};
 use internal_store::{StoredDistribution, StoredDistributionType};
 use itertools::Itertools;
 use prelude::*;
 use std::path::Path as StdPath;
-use structopt::StructOpt;
 
 mod internal_store;
 pub(crate) mod prelude;
@@ -27,62 +27,64 @@ pub(crate) use fs_err::os::windows::fs::symlink_file;
 type Path = Utf8Path;
 type PathBuf = Utf8PathBuf;
 
-#[derive(StructOpt)]
-#[structopt(global_setting(structopt::clap::AppSettings::ColoredHelp))]
+#[derive(Parser)]
 struct Opt {
-    #[structopt(subcommand)] // Note that we mark a field as a subcommand
+    #[clap(subcommand)] // Note that we mark a field as a subcommand
     cmd: Command,
-    #[structopt(short, parse(from_occurrences))]
+    #[clap(short, parse(from_occurrences))]
     verbose: u8,
-    #[structopt(long, hidden = true)]
+    #[clap(long, hide = true)]
     project_dir: Option<PathBuf>,
 }
 
-#[derive(StructOpt)]
+#[derive(Subcommand)]
 enum Command {
     /// Create a new virtpy environment
     New {
         path: Option<PathBuf>,
         /// The python to use. Either a path or an indicator of the form `python3.7` or `3.7`
-        #[structopt(short, long, default_value = "3")]
+        #[clap(short, long, default_value = "3")]
         python: String,
-        #[structopt(long)]
+        #[clap(long)]
         without_pip_shim: bool,
         /// Don't add pkg_resources module that is usually installed into venvs alongside setuptools.
-        #[structopt(long)]
+        #[clap(long)]
         without_package_resources: bool,
     },
     /// Add package to virtpy from wheel file
     Add {
         file: PathBuf,
-        #[structopt(long)]
+        #[clap(long)]
         virtpy_path: Option<PathBuf>,
     },
     /// Remove package from virtpy
     Remove {
         distributions: Vec<String>,
-        #[structopt(long)]
+        #[clap(long)]
         virtpy_path: Option<PathBuf>,
     },
     /// Install executable package into an isolated virtpy
     Install {
         package: Vec<String>,
         /// Reinstall, if it already exists
-        #[structopt(short, long)]
+        #[clap(short, long)]
         force: bool,
-        #[structopt(long)]
+        #[clap(long)]
         allow_prereleases: bool,
         /// The python to use. Either a path or an indicator of the form `python3.7` or `3.7`
-        #[structopt(short, long, default_value = "3")]
+        #[clap(short, long, default_value = "3")]
         python: String,
     },
     /// Delete the virtpy of a previously installed executable package
     Uninstall { package: Vec<String> },
     /// Print paths where various files are stored
+    #[clap(subcommand)]
     Path(PathCmd),
     /// Get info about or modify the internal package store
+    #[clap(subcommand)]
     InternalStore(InternalStoreCmd),
     /// Helper commands for internal use, e.g. by the pip shim.
+    #[clap(subcommand)]
     InternalUseOnly(InternalUseOnly),
     /// List paths of all virtpys
     ListAll,
@@ -106,24 +108,24 @@ pub(crate) fn platform() -> Platform {
     }
 }
 
-#[derive(StructOpt)]
+#[derive(Subcommand)]
 enum InternalStoreCmd {
     /// Find virtpys that have been moved or deleted and unneeded files in the central store.
     Gc {
         /// Delete unnecessary files
-        #[structopt(long)]
+        #[clap(long)]
         remove: bool,
     },
     /// Show how much storage is used
     Stats {
         /// Show sizes in bytes
-        #[structopt(long, short)]
+        #[clap(long, short)]
         bytes: bool,
         /// Use binary prefixes instead of SI.
         ///
         /// This uses powers of 1024 instead of 1000 and will print the accompanying symbol (e.g. 1 KiB for 1024 bytes).
         /// Has no effect if `--bytes` is passed.
-        #[structopt(long)]
+        #[clap(long)]
         binary_prefix: bool,
     },
     /// Check integrity of the files of all python modules in the internal store.
@@ -136,7 +138,7 @@ enum InternalStoreCmd {
     Verify,
 }
 
-#[derive(StructOpt)]
+#[derive(Subcommand)]
 enum InternalUseOnly {
     /// Install the wheel file into the given virtpy
     AddFromFile { virtpy: PathBuf, file: PathBuf },
@@ -149,12 +151,12 @@ enum InternalUseOnly {
     /// Subcommand will be deleted again in the future.
     // TODO: delete again
     AddPackageResources {
-        #[structopt(long)]
+        #[clap(long)]
         virtpy_path: Option<PathBuf>,
     },
 }
 
-#[derive(StructOpt)]
+#[derive(Subcommand)]
 enum PathCmd {
     /// Directory where executables are placed by `virtpy install`
     Bin,
@@ -356,7 +358,7 @@ fn shim_info(ctx: &Ctx) -> Result<ShimInfo> {
 fn main() -> Result<()> {
     color_eyre::install()?;
 
-    let opt = Opt::from_args();
+    let opt = Opt::parse();
     let options = Options {
         verbose: opt.verbose,
     };
