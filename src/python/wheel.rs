@@ -223,7 +223,7 @@ pub(crate) fn is_path_of_executable(path: &Utf8Path) -> bool {
 /// The installed distributions retain the record and any files that are newly generated
 /// or moved to their target destinations from the data directory have to be added
 /// to the record by the installer (i.e. us).
-#[derive(PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, Debug, Hash, PartialOrd, Ord, Clone)]
 pub(crate) struct WheelRecord {
     // stored separately just so we can easily recreate the line for the RECORD itself
     // without making paths and filesizes optional for all other files.
@@ -394,6 +394,7 @@ impl WheelRecord {
 }
 
 /// See verify_wheel_contents_or_repair() for additional info.
+#[derive(clap::ArgEnum, Clone, Copy)]
 pub(crate) enum CheckStrategy {
     /// Assume the distribution contents are correct and update its metadata when incorrect.
     /// This is in violation of the spec, but required because invalid wheels exist
@@ -491,6 +492,8 @@ pub(crate) fn verify_wheel_contents_or_repair(
 mod test {
     use eyre::eyre;
 
+    use crate::python::{Distribution, DistributionHash};
+
     use super::*;
 
     #[test]
@@ -535,6 +538,82 @@ mod test {
             WheelRecord::from_file(PathBuf::from_path_buf(f.path()).unwrap())?;
         }
         WheelRecord::from_file("test_files/RECORD")?;
+        Ok(())
+    }
+
+    #[test]
+    fn verify_and_repair_wheel() -> Result<()> {
+        // TODO: split this into multiple tests. It does too much.
+        let tmp_dir_valid = tempdir::TempDir::new("virtpy_valid_wheel_verification_test")?;
+        let tmp_dir_invalid = tempdir::TempDir::new("virtpy_invalid_wheel_verification_test")?;
+
+        let package_name = "wheel_test_package-0.1.0-py3-none-any.whl";
+        let valid_wheel =
+            Path::new("test_files/wheels/validity_check_valid_wheel").join(package_name);
+        let invalid_wheel =
+            Path::new("test_files/wheels/validity_check_invalid_wheel").join(package_name);
+
+        // we're not checking the hash, but a Distribution requires one
+        let hash = DistributionHash::from_file(&valid_wheel)?;
+        let dist = Distribution::from_package_name(package_name, hash)?;
+
+        unpack_wheel(valid_wheel.as_ref(), tmp_dir_valid.path())?;
+        unpack_wheel(invalid_wheel.as_ref(), tmp_dir_invalid.path())?;
+
+        let record_valid = WheelRecord::from_file(
+            tmp_dir_valid
+                .utf8_path()
+                .join(dist.dist_info_name())
+                .join("RECORD"),
+        )?;
+        let record_invalid = WheelRecord::from_file(
+            tmp_dir_invalid
+                .utf8_path()
+                .join(dist.dist_info_name())
+                .join("RECORD"),
+        )?;
+
+        assert_ne!(record_valid, record_invalid);
+
+        // Check that validity is correctly determined and
+        // that RejectInvalid doesn't modify the record.
+        let mut record_valid_copy = record_valid.clone();
+        verify_wheel_contents_or_repair(
+            tmp_dir_valid.utf8_path(),
+            &dist,
+            &mut record_valid_copy,
+            CheckStrategy::RejectInvalid,
+        )?;
+        assert_eq!(record_valid_copy, record_valid);
+
+        let mut record_invalid_copy = record_invalid.clone();
+        assert!(verify_wheel_contents_or_repair(
+            tmp_dir_invalid.utf8_path(),
+            &dist,
+            &mut record_invalid_copy,
+            CheckStrategy::RejectInvalid
+        )
+        .is_err());
+        assert_eq!(record_invalid_copy, record_invalid);
+
+        // Check that repair does nothing for valid and repairs the invalid record
+        // to match the valid one
+        verify_wheel_contents_or_repair(
+            tmp_dir_valid.utf8_path(),
+            &dist,
+            &mut record_valid_copy,
+            CheckStrategy::Repair,
+        )?;
+        assert_eq!(record_valid_copy, record_valid);
+
+        verify_wheel_contents_or_repair(
+            tmp_dir_invalid.utf8_path(),
+            &dist,
+            &mut record_invalid_copy,
+            CheckStrategy::Repair,
+        )?;
+        assert_eq!(record_invalid_copy, record_valid);
+
         Ok(())
     }
 }
