@@ -1222,7 +1222,7 @@ pub(crate) fn python_version(venv: &Path) -> Result<PythonVersion> {
         .ok_or_else(|| eyre!("failed to read python version from {version:?}"))?;
 
     let parse_num = |num: &str| {
-        num.parse::<i32>()
+        num.parse::<u32>()
             .wrap_err_with(|| eyre!("failed to parse number: \"{num:?}\""))
     };
     Ok(PythonVersion {

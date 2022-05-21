@@ -31,10 +31,7 @@ pub(crate) fn detect(python: &str) -> Result<PathBuf> {
 }
 
 pub(crate) fn detect_from_version(python_version: super::PythonVersion) -> Result<PathBuf> {
-    find_python_by_version(
-        python_version.major.try_into().unwrap(),
-        Some(python_version.minor.try_into().unwrap()),
-    )
+    find_python_by_version(python_version.major, Some(python_version.minor))
 }
 
 fn find_python_by_version(major: u32, minor: Option<u32>) -> Result<PathBuf> {

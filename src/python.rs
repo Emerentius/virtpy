@@ -13,11 +13,10 @@ pub(crate) mod wheel;
 // TODO: check official scheme
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub(crate) struct PythonVersion {
-    // TODO: make these u32
-    pub(crate) major: i32,
-    pub(crate) minor: i32,
+    pub(crate) major: u32,
+    pub(crate) minor: u32,
     #[allow(unused)]
-    pub(crate) patch: i32,
+    pub(crate) patch: u32,
 }
 
 impl PythonVersion {
