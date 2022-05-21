@@ -551,7 +551,7 @@ fn add_from_file(
     file: PathBuf,
     check_strategy: python::wheel::CheckStrategy,
 ) -> Result<()> {
-    Ok(Virtpy::from_existing(&virtpy)?.add_dependency_from_file(ctx, &file, check_strategy)?)
+    Virtpy::from_existing(&virtpy)?.add_dependency_from_file(ctx, &file, check_strategy)
 }
 
 enum InstalledStatus {

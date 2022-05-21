@@ -226,7 +226,7 @@ impl Virtpy {
             VirtpyStatus::Ok { matching_virtpy } => Ok(Virtpy {
                 link: canonicalize(virtpy_link)?,
                 backing: matching_virtpy,
-                python_version: python_version(&virtpy_link)?,
+                python_version: python_version(virtpy_link)?,
             }),
         }
         .wrap_err_with(|| eyre!("the virtpy `{virtpy_link}` is broken, please recreate it.",))
@@ -404,7 +404,7 @@ impl Virtpy {
                 .try_into_utf8_pathbuf()?;
             Ok(python)
         } else {
-            let version = python_version(&self.location())?;
+            let version = python_version(self.location())?;
             crate::python::detection::detect(&version.as_string_without_patch())
         }
     }
@@ -663,7 +663,7 @@ fn link_file_into_virtpy(
     dest: PathBuf,
     distribution: &Distribution,
 ) {
-    let src = ctx.proj_dirs.package_file(&filehash);
+    let src = ctx.proj_dirs.package_file(filehash);
     fs_err::hard_link(&src, &dest)
         .or_else(|err| {
             if err.kind() == std::io::ErrorKind::AlreadyExists {

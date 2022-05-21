@@ -374,7 +374,7 @@ impl WheelRecord {
             .into_iter()
             .filter(|entry| !(ignore_pyc_files && entry.path.extension() == Some("pyc")))
             .filter(|entry| !entry.path.ends_with("RECORD"))
-            .map(|maybe_entry| RecordEntry::try_from(maybe_entry))
+            .map(RecordEntry::try_from)
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Self { files, record_path })

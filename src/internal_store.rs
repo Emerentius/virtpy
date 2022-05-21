@@ -101,7 +101,7 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> Result<()> {
             .file_dists
             .iter()
             .filter(|(_, dependents)| dependents.is_empty())
-            .map(|(file, _)| ctx.proj_dirs.package_file(&file))
+            .map(|(file, _)| ctx.proj_dirs.package_file(file))
             .collect_vec();
         if !unused_package_files.is_empty() {
             println!(
