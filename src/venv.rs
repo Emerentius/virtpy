@@ -240,7 +240,7 @@ impl Virtpy {
         let distribution =
             Distribution::from_package_name(file.file_name().unwrap(), file_hash).unwrap();
 
-        if !wheel_is_already_registered(ctx, &distribution, self.python_version)? {
+        if !wheel_is_already_registered(ctx, &distribution)? {
             install_and_register_distribution_from_file(
                 ctx,
                 file,
@@ -492,14 +492,9 @@ fn link_distributions_into_virtpy(
     let site_packages = virtpy.virtpy_backing().site_packages();
 
     let stored_distributions = StoredDistributions::<crate::internal_store::Shared>::load(ctx)?;
-    let existing_deps = stored_distributions
-        .0
-        .get(&virtpy.python_version.as_string_without_patch())
-        .cloned()
-        .unwrap_or_default();
     for distribution in distributions {
         // find compatible hash
-        let stored_distrib = match existing_deps.get(&distribution.sha) {
+        let stored_distrib = match stored_distributions.0.get(&distribution.sha) {
             Some(stored_distrib) => stored_distrib,
             None => {
                 // return Err(format!(
@@ -960,7 +955,6 @@ fn install_and_register_distribution_from_file(
         ctx,
         wheel_checked,
         distribution,
-        python_version,
         install_folder,
         wheel_record,
     )?;

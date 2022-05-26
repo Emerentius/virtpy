@@ -4,7 +4,7 @@ use fs_err::{File, PathExt};
 use itertools::Itertools;
 
 use crate::python::wheel::WheelChecked;
-use crate::python::{Distribution, DistributionHash, EntryPoint, FileHash, PythonVersion};
+use crate::python::{Distribution, DistributionHash, EntryPoint, FileHash};
 use crate::venv::{
     virtpy_link_location, virtpy_link_target, virtpy_status, VirtpyBacking, VirtpyBackingStatus,
     VirtpyPaths,
@@ -79,9 +79,7 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> Result<()> {
                     // python versions.
                     // Save after each attempted removal in case a bug causes the removal to fail prematurely
                     let hash = &dist.distribution.sha;
-                    for python_specific_stored_distribs in stored_distribs.0.values_mut() {
-                        python_specific_stored_distribs.remove(hash);
-                    }
+                    stored_distribs.0.remove(hash);
                     stored_distribs
                         .save()
                         .wrap_err("failed to save stored distributions")?;
@@ -469,8 +467,7 @@ pub(crate) struct StoredDistribution {
 #[derive(Debug)]
 pub(crate) struct StoredDistributions<S: Share>(pub(crate) _StoredDistributions, FileLockGuard<S>);
 
-pub(crate) type _StoredDistributions =
-    HashMap<String, HashMap<DistributionHash, StoredDistribution>>;
+pub(crate) type _StoredDistributions = HashMap<DistributionHash, StoredDistribution>;
 
 impl<S: Share> PartialEq for StoredDistributions<S> {
     fn eq(&self, other: &Self) -> bool {
@@ -587,35 +584,20 @@ impl Share for Exclusive {
 }
 
 impl<S: Share> StoredDistributions<S> {
-    // fn try_load_old(reader: impl std::io::Read) -> Option<_StoredDistributions> {
-    //     let stored_distribs = serde_json::from_reader::<
-    //         _,
-    //         HashMap<String, HashMap<DistributionHash, String>>,
-    //     >(reader)
-    //     .ok()?;
+    fn try_load_old(reader: impl std::io::Read) -> Option<_StoredDistributions> {
+        let stored_distribs = serde_json::from_reader::<
+            _,
+            HashMap<String, HashMap<DistributionHash, StoredDistribution>>,
+        >(reader)
+        .ok()?;
 
-    //     let mut new_format_stored_distribs =
-    //         HashMap::<String, HashMap<DistributionHash, StoredDistribution>>::new();
+        let mut new_format_stored_distribs = HashMap::<DistributionHash, StoredDistribution>::new();
 
-    //     for (python_version, inner) in stored_distribs {
-    //         let entry = new_format_stored_distribs
-    //             .entry(python_version)
-    //             .or_default();
-    //         for (key_hash, name_and_version_and_hash) in inner {
-    //             let distribution = Distribution::from_store_name(&name_and_version_and_hash);
-    //             debug_assert_eq!(key_hash, distribution.sha);
-
-    //             entry.insert(
-    //                 key_hash,
-    //                 StoredDistribution {
-    //                     distribution,
-    //                     installed_via: StoredDistributionType::FromPip,
-    //                 },
-    //             );
-    //         }
-    //     }
-    //     Some(new_format_stored_distribs)
-    // }
+        for (_python_version, inner) in stored_distribs {
+            new_format_stored_distribs.extend(inner);
+        }
+        Some(new_format_stored_distribs)
+    }
 
     pub(crate) fn load(ctx: &Ctx) -> Result<Self> {
         Self::load_from(ctx.proj_dirs.installed_distributions_log())
@@ -641,9 +623,9 @@ impl<S: Share> StoredDistributions<S> {
             return Ok(StoredDistributions(HashMap::new(), lock));
         }
 
-        // if let Some(stored_distribs) = Self::try_load_old(BufReader::new(&*lock)) {
-        //     return Ok(Self(stored_distribs, lock));
-        // }
+        if let Some(stored_distribs) = Self::try_load_old(BufReader::new(&*lock)) {
+            return Ok(Self(stored_distribs, lock));
+        }
 
         lock.seek(std::io::SeekFrom::Start(0))
             .wrap_err("failed to seek to 0")?;
@@ -717,7 +699,6 @@ pub(crate) fn register_new_distribution(
     ctx: &Ctx,
     _: WheelChecked,
     distrib: Distribution,
-    python_version: PythonVersion,
     install_folder: &Path,
     wheel_record: WheelRecord,
 ) -> Result<()> {
@@ -729,16 +710,13 @@ pub(crate) fn register_new_distribution(
     }
 
     let mut all_stored_distributions = StoredDistributions::<Exclusive>::load(ctx)?;
-    let stored_distributions = all_stored_distributions
-        .0
-        .entry(python_version.as_string_without_patch())
-        .or_default();
     register_distribution_files_of_wheel(
         ctx,
         install_folder,
         wheel_record,
         &distrib,
-        stored_distributions,
+        // TODO: take full stored distribs
+        &mut all_stored_distributions.0,
     )
     .wrap_err_with(|| {
         eyre!(
@@ -751,53 +729,9 @@ pub(crate) fn register_new_distribution(
     Ok(())
 }
 
-pub(crate) fn wheel_is_already_registered(
-    ctx: &Ctx,
-    distribution: &Distribution,
-    python_version: PythonVersion,
-) -> Result<bool> {
-    let mut stored_distributions = StoredDistributions::<Exclusive>::load(ctx)?;
-
-    let stored_distrib = StoredDistribution {
-        distribution: distribution.clone(),
-    };
-
-    let stored_distribs = stored_distributions
-        .0
-        .entry(python_version.as_string_without_patch());
-
-    if let std::collections::hash_map::Entry::Occupied(deps) = &stored_distribs {
-        if deps.get().contains_key(&distribution.sha) {
-            return Ok(true);
-        }
-    };
-    // Check if the package has already been installed for another python version.
-    // If so, just add it for the current python version.
-    // NOTE: This is a holdover from the old pip install method where we used
-    //       poetry to generate a requirements file. That file contained
-    //       a list of hashes for each package and it was up to us to figure out
-    //       if a given package was compatible with a python version.
-    //       This approach is now deprecated and so `StoredDistributions` should be
-    //       changed to no longer keep this distinction as soon as the residual support
-    //       for packages installed via the old method are removed.
-    if stored_distributions
-        .0
-        .values()
-        .any(|a| a.contains_key(&distribution.sha))
-    {
-        // add it here, because it may have been installed by a different
-        // python version. In that case, the current python version's list
-        // may be missing this distribution.
-        stored_distributions
-            .0
-            .entry(python_version.as_string_without_patch())
-            .or_default()
-            .insert(distribution.sha.clone(), stored_distrib);
-        stored_distributions.save()?;
-        return Ok(true);
-    }
-
-    Ok(false)
+pub(crate) fn wheel_is_already_registered(ctx: &Ctx, distribution: &Distribution) -> Result<bool> {
+    let stored_distributions = StoredDistributions::<Shared>::load(ctx)?;
+    Ok(stored_distributions.0.contains_key(&distribution.sha))
 }
 
 #[cfg(test)]
