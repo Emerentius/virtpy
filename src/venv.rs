@@ -502,7 +502,7 @@ fn link_distributions_into_virtpy(
     // Symlinks for the new dirs are generated after all the files have been liked in.
     let site_packages = virtpy.virtpy_backing().site_packages();
 
-    let stored_distributions = StoredDistributions::load(ctx)?;
+    let stored_distributions = StoredDistributions::<crate::internal_store::Shared>::load(ctx)?;
     let existing_deps = stored_distributions
         .0
         .get(&virtpy.python_version.as_string_without_patch())

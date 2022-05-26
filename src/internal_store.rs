@@ -16,6 +16,7 @@ use crate::{
     Path, PathBuf, Result,
 };
 use std::collections::HashSet;
+use std::marker::PhantomData;
 use std::{
     collections::HashMap,
     io::{BufReader, Seek},
@@ -65,7 +66,7 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> Result<()> {
             println!("found {} modules without users.", unused_dists.len());
 
             if remove {
-                let mut stored_distribs = StoredDistributions::load(ctx)?;
+                let mut stored_distribs = StoredDistributions::<Exclusive>::load(ctx)?;
 
                 for dist in unused_dists {
                     let path = dist.path(ctx);
@@ -499,18 +500,18 @@ pub(crate) enum StoredDistributionType {
 // We currently assume they don't.
 // key = python version "major.minor"
 #[derive(Debug)]
-pub(crate) struct StoredDistributions(pub(crate) _StoredDistributions, FileLockGuard);
+pub(crate) struct StoredDistributions<S: Share>(pub(crate) _StoredDistributions, FileLockGuard<S>);
 
 pub(crate) type _StoredDistributions =
     HashMap<String, HashMap<DistributionHash, StoredDistribution>>;
 
-impl PartialEq for StoredDistributions {
+impl<S: Share> PartialEq for StoredDistributions<S> {
     fn eq(&self, other: &Self) -> bool {
         self.0.eq(&other.0)
     }
 }
 
-impl Eq for StoredDistributions {}
+impl<S: Share> Eq for StoredDistributions<S> {}
 
 impl StoredDistribution {
     fn record_file(&self, ctx: &Ctx) -> Result<PathBuf> {
@@ -628,7 +629,25 @@ impl StoredDistribution {
     }
 }
 
-impl StoredDistributions {
+#[derive(Debug)]
+pub(crate) struct Shared;
+
+#[derive(Debug)]
+pub(crate) struct Exclusive;
+
+pub(crate) trait Share {
+    const IS_EXCLUSIVE: bool;
+}
+
+impl Share for Shared {
+    const IS_EXCLUSIVE: bool = false;
+}
+
+impl Share for Exclusive {
+    const IS_EXCLUSIVE: bool = true;
+}
+
+impl<S: Share> StoredDistributions<S> {
     fn try_load_old(reader: impl std::io::Read) -> Option<_StoredDistributions> {
         let stored_distribs = serde_json::from_reader::<
             _,
@@ -694,7 +713,9 @@ impl StoredDistributions {
             .wrap_err("couldn't load stored distributions")?;
         Ok(Self(distribs, lock))
     }
+}
 
+impl StoredDistributions<Exclusive> {
     fn save(&self) -> Result<()> {
         self._save().wrap_err("failed to save stored distributions")
     }
@@ -712,25 +733,33 @@ impl StoredDistributions {
 // TODO: Find a good crate for this that also offers locking with timeouts and
 //       a lock that contains the pid of the process holding it, so it can be
 //       detected if the locking process is dead.
-fn lock_file(file: fs_err::File) -> Result<FileLockGuard> {
+fn lock_file<S: Share>(file: fs_err::File) -> Result<FileLockGuard<S>> {
     use fs2::FileExt;
-    file.file().lock_exclusive()?;
-    Ok(FileLockGuard { file })
+    if S::IS_EXCLUSIVE {
+        file.file().lock_exclusive()?;
+    } else {
+        file.file().lock_shared()?;
+    }
+    Ok(FileLockGuard {
+        file,
+        _s: PhantomData,
+    })
 }
 
 #[derive(Debug)]
-struct FileLockGuard {
+struct FileLockGuard<S: Share> {
     file: File,
+    _s: PhantomData<S>,
 }
 
-impl Drop for FileLockGuard {
+impl<S: Share> Drop for FileLockGuard<S> {
     fn drop(&mut self) {
         use fs2::FileExt;
         let _ = self.file.file().unlock();
     }
 }
 
-impl std::ops::Deref for FileLockGuard {
+impl<S: Share> std::ops::Deref for FileLockGuard<S> {
     type Target = File;
 
     fn deref(&self) -> &Self::Target {
@@ -738,7 +767,7 @@ impl std::ops::Deref for FileLockGuard {
     }
 }
 
-impl std::ops::DerefMut for FileLockGuard {
+impl<S: Share> std::ops::DerefMut for FileLockGuard<S> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.file
     }
@@ -760,7 +789,7 @@ pub(crate) fn register_new_distribution(
         );
     }
 
-    let mut all_stored_distributions = StoredDistributions::load(ctx)?;
+    let mut all_stored_distributions = StoredDistributions::<Exclusive>::load(ctx)?;
     let stored_distributions = all_stored_distributions
         .0
         .entry(python_version.as_string_without_patch())
@@ -788,7 +817,7 @@ pub(crate) fn wheel_is_already_registered(
     distribution: &Distribution,
     python_version: PythonVersion,
 ) -> Result<bool> {
-    let mut stored_distributions = StoredDistributions::load(ctx)?;
+    let mut stored_distributions = StoredDistributions::<Exclusive>::load(ctx)?;
 
     let stored_distrib = StoredDistribution {
         distribution: distribution.clone(),
@@ -853,8 +882,9 @@ mod test {
     #[serial_test::serial(installed_distribs)]
     fn can_load_old_stored_distribs() -> Result<()> {
         let old_file = fs_err::File::open("test_files/old_installed_distributions.json")?;
-        let old_stored_distribs = StoredDistributions::try_load_old(BufReader::new(old_file))
-            .ok_or_else(|| eyre!("failed to load old stored dstributions"))?;
+        let old_stored_distribs =
+            StoredDistributions::<Shared>::try_load_old(BufReader::new(old_file))
+                .ok_or_else(|| eyre!("failed to load old stored dstributions"))?;
 
         let new_file = fs_err::read_to_string("test_files/new_installed_distributions.json")?;
         let new_stored_distribs: _StoredDistributions =
@@ -866,8 +896,12 @@ mod test {
     #[test]
     #[serial_test::serial(installed_distribs)]
     fn loading_old_and_new_stored_distribs_identical() -> Result<()> {
-        let old = StoredDistributions::load_from("test_files/old_installed_distributions.json")?;
-        let new = StoredDistributions::load_from("test_files/new_installed_distributions.json")?;
+        let old = StoredDistributions::<Shared>::load_from(
+            "test_files/old_installed_distributions.json",
+        )?;
+        let new = StoredDistributions::<Shared>::load_from(
+            "test_files/new_installed_distributions.json",
+        )?;
         assert_eq!(old, new);
         Ok(())
     }
