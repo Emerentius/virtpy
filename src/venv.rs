@@ -7,8 +7,7 @@
 use crate::internal_store::{wheel_is_already_registered, StoredDistributions};
 use crate::prelude::*;
 use crate::python::wheel::{
-    is_path_of_executable, normalized_distribution_name_for_wheel, CheckStrategy, RecordEntry,
-    WheelRecord,
+    normalized_distribution_name_for_wheel, CheckStrategy, RecordEntry, WheelRecord,
 };
 use crate::python::{
     generate_executable, records, Distribution, DistributionHash, EntryPoint, FileHash,
@@ -17,9 +16,8 @@ use crate::python::{
 use crate::{check_output, ignore_target_doesnt_exist, Ctx, DEFAULT_VIRTPY_PATH};
 use crate::{
     check_status, delete_virtpy_backing, dist_info_matches_package, executables_path,
-    ignore_target_exists, is_not_found, python_path, relative_path, remove_leading_parent_dirs,
-    symlink_dir, symlink_file, Path, PathBuf, ShimInfo, StoredDistribution, StoredDistributionType,
-    CENTRAL_METADATA, DIST_HASH_FILE, LINK_METADATA,
+    ignore_target_exists, is_not_found, python_path, relative_path, symlink_dir, symlink_file,
+    Path, PathBuf, ShimInfo, StoredDistribution, CENTRAL_METADATA, DIST_HASH_FILE, LINK_METADATA,
 };
 use clap::ArgEnum;
 use eyre::{eyre, Context};
@@ -296,12 +294,7 @@ impl Virtpy {
             let dist_infos = site_packages.join(&info);
             let record_file = dist_infos.join("RECORD");
 
-            let was_installed_via_old_method = dist_infos
-                .as_std_path()
-                .fs_err_symlink_metadata()?
-                .is_symlink();
-
-            for file in records(&record_file, was_installed_via_old_method)? {
+            for file in records(&record_file)? {
                 let file = file?;
 
                 let path = site_packages.join(file.path);
@@ -314,10 +307,6 @@ impl Virtpy {
                     files_to_remove.push(path.with_extension("pyc"));
                 }
                 files_to_remove.push(path);
-            }
-
-            if was_installed_via_old_method {
-                files_to_remove.push(dist_infos);
             }
         }
 
@@ -542,119 +531,43 @@ fn link_single_requirement_into_virtpy(
     distrib: &StoredDistribution,
     site_packages: &Path,
 ) -> Result<()> {
-    match distrib.installed_via {
-        StoredDistributionType::FromPip => {
-            let dist_info_path = ctx
-                .proj_dirs
-                .dist_infos()
-                .join(distrib.distribution.as_csv());
+    let record_dir = ctx.proj_dirs.records().join(distrib.distribution.as_csv());
+    let record_path = record_dir.join("RECORD");
 
-            let dist_info_foldername = distrib.distribution.dist_info_name();
-            let target = site_packages.join(&dist_info_foldername);
-            if ctx.options.verbose >= 1 {
-                println!("symlinking dist info from {dist_info_path} to {target}");
-            }
+    let mut record = WheelRecord::from_file(record_path)?;
 
-            symlink_dir(&dist_info_path, &target)
-                .or_else(ignore_target_exists)
-                .unwrap();
+    link_files_from_record_into_virtpy(
+        ctx,
+        &mut record,
+        virtpy,
+        site_packages,
+        &distrib.distribution,
+    )?;
+    install_executables(ctx, distrib, virtpy, Some(&mut record))?;
 
-            link_files_from_record_into_virtpy(
-                ctx,
-                &dist_info_path,
-                virtpy,
-                site_packages,
-                &distrib.distribution,
-            );
-            install_executables(ctx, distrib, virtpy, None)?;
-        }
-        StoredDistributionType::FromWheel => {
-            let record_dir = ctx.proj_dirs.records().join(distrib.distribution.as_csv());
-            let record_path = record_dir.join("RECORD");
+    // ========== This code can be extracted into a fn for "add file with X content to Y path and record it"
+    // Add the hash of the installed wheel to the metadata so we can find out
+    // later what was installed.
+    let hash_path = site_packages
+        .join(distrib.distribution.dist_info_name())
+        .join(DIST_HASH_FILE);
+    let dist_hash = &distrib.distribution.sha.0;
+    fs_err::write(&hash_path, &dist_hash).wrap_err("failed to write distribution hash file")?;
+    record.files.push(RecordEntry {
+        path: relative_path(site_packages, hash_path)?,
+        hash: FileHash::from_reader(dist_hash.as_bytes()), // It's a hash of a hash => can't just copy it
+        filesize: dist_hash.len() as u64,
+    });
+    // ==========
 
-            let mut record = WheelRecord::from_file(record_path)?;
-
-            link_files_from_record_into_virtpy_new(
-                ctx,
-                &mut record,
-                virtpy,
-                site_packages,
-                &distrib.distribution,
-            )?;
-            install_executables(ctx, distrib, virtpy, Some(&mut record))?;
-
-            // ========== This code can be extracted into a fn for "add file with X content to Y path and record it"
-            // Add the hash of the installed wheel to the metadata so we can find out
-            // later what was installed.
-            let hash_path = site_packages
-                .join(distrib.distribution.dist_info_name())
-                .join(DIST_HASH_FILE);
-            let dist_hash = &distrib.distribution.sha.0;
-            fs_err::write(&hash_path, &dist_hash)
-                .wrap_err("failed to write distribution hash file")?;
-            record.files.push(RecordEntry {
-                path: relative_path(site_packages, hash_path)?,
-                hash: FileHash::from_reader(dist_hash.as_bytes()), // It's a hash of a hash => can't just copy it
-                filesize: dist_hash.len() as u64,
-            });
-            // ==========
-
-            // The RECORD is not linked in, because it doesn't (can't) contain its own hash.
-            // Save the (possibly amended) record into the virtpy
-            record.save_to_file(
-                &site_packages
-                    .join(distrib.distribution.dist_info_name())
-                    .join("RECORD"),
-            )?;
-        }
-    }
+    // The RECORD is not linked in, because it doesn't (can't) contain its own hash.
+    // Save the (possibly amended) record into the virtpy
+    record.save_to_file(
+        &site_packages
+            .join(distrib.distribution.dist_info_name())
+            .join("RECORD"),
+    )?;
     Ok(())
-}
-
-fn link_files_from_record_into_virtpy(
-    ctx: &Ctx,
-    dist_info_path: &PathBuf,
-    virtpy: &Virtpy,
-    site_packages: &Path,
-    distribution: &Distribution,
-) {
-    for record in records(&dist_info_path.join("RECORD"), true)
-        .unwrap()
-        .map(Result::unwrap)
-    {
-        let record = RecordEntry::try_from(record).unwrap();
-        let dest = match remove_leading_parent_dirs(&record.path) {
-            Ok(path) => {
-                let toplevel_dirs = ["bin", "Scripts", "include", "lib", "lib64", "share"];
-                let starts_with_venv_dir = toplevel_dirs.iter().any(|dir| path.starts_with(dir));
-                if !starts_with_venv_dir {
-                    println!(
-                        "{}: attempted file placement outside virtpy, ignoring: {}",
-                        distribution.name, record.path
-                    );
-                    continue;
-                }
-
-                // executables need to be generated on demand
-                if is_path_of_executable(path) {
-                    continue;
-                }
-
-                let dest = virtpy.backing.join(path);
-                if path.starts_with("include") || path.starts_with("share") {
-                    fs_err::create_dir_all(dest.parent().unwrap()).unwrap();
-                }
-                dest
-            }
-            Err(path) => {
-                let dest = site_packages.join(path);
-                let dir = dest.parent().unwrap();
-                fs_err::create_dir_all(&dir).unwrap();
-                dest
-            }
-        };
-        link_file_into_virtpy(ctx, &record.hash, dest, distribution);
-    }
 }
 
 fn link_file_into_virtpy(
@@ -683,7 +596,7 @@ fn link_file_into_virtpy(
         .unwrap();
 }
 
-fn link_files_from_record_into_virtpy_new(
+fn link_files_from_record_into_virtpy(
     ctx: &Ctx,
     record: &mut WheelRecord,
     virtpy: &Virtpy,

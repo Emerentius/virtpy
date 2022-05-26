@@ -1,5 +1,4 @@
 use crate::prelude::*;
-use camino::Utf8Path;
 use eyre::{bail, eyre, WrapErr};
 use fs_err::PathExt;
 use std::{
@@ -211,10 +210,6 @@ pub(crate) fn normalized_distribution_name_for_wheel(distrib_name: &str) -> Stri
 fn _escape(string: &str, replace_with: &str) -> String {
     let pattern = lazy_regex::regex!(r"[-_.]+");
     pattern.replace_all(string, replace_with).into_owned()
-}
-
-pub(crate) fn is_path_of_executable(path: &Utf8Path) -> bool {
-    path.starts_with("bin") || path.starts_with("Scripts")
 }
 
 /// The record of all files belonging to a distribution along with their path, size and hash.

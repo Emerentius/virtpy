@@ -3,8 +3,8 @@ use eyre::{ensure, eyre, WrapErr};
 use fs_err::{File, PathExt};
 use itertools::Itertools;
 
-use crate::python::wheel::{MaybeRecordEntry, WheelChecked};
-use crate::python::{records, Distribution, DistributionHash, EntryPoint, FileHash, PythonVersion};
+use crate::python::wheel::WheelChecked;
+use crate::python::{Distribution, DistributionHash, EntryPoint, FileHash, PythonVersion};
 use crate::venv::{
     virtpy_link_location, virtpy_link_target, virtpy_status, VirtpyBacking, VirtpyBackingStatus,
     VirtpyPaths,
@@ -232,8 +232,6 @@ impl StoreDependencies {
         for dist in dist_virtpys.keys() {
             let records: HashSet<_> = dist
                 .records(ctx)?
-                .map(Result::unwrap) // won't be a result anymore when FromPip install method is removed
-                .flat_map(RecordEntry::try_from)
                 // .filter(|record| {
                 //     // FIXME: files with ../../
                 //     ctx.proj_dirs.package_file(&record.hash).exists()
@@ -396,35 +394,16 @@ pub(crate) fn stored_distribution_of_installed_dist(
 }
 
 fn _stored_distribution_of_installed_dist(dist_info_path: &Path) -> StoredDistribution {
-    match dist_info_path
-        .symlink_metadata()
-        .unwrap()
-        .file_type()
-        .is_symlink()
-    {
-        true => {
-            let dir_in_repo = dist_info_path.read_link().unwrap();
-            let dirname = dir_in_repo.file_name().unwrap().to_str().unwrap();
-            StoredDistribution {
-                distribution: Distribution::from_store_name(dirname),
-                installed_via: StoredDistributionType::FromPip,
-            }
-        }
-        false => {
-            let hash_path = dist_info_path.join(crate::DIST_HASH_FILE);
-            let hash = fs_err::read_to_string(hash_path).unwrap();
-            let (name, version) =
-                package_info_from_dist_info_dirname(dist_info_path.file_name().unwrap());
+    let hash_path = dist_info_path.join(crate::DIST_HASH_FILE);
+    let hash = fs_err::read_to_string(hash_path).unwrap();
+    let (name, version) = package_info_from_dist_info_dirname(dist_info_path.file_name().unwrap());
 
-            StoredDistribution {
-                distribution: Distribution {
-                    name: name.into(),
-                    version: version.into(),
-                    sha: DistributionHash(hash),
-                },
-                installed_via: StoredDistributionType::FromWheel,
-            }
-        }
+    StoredDistribution {
+        distribution: Distribution {
+            name: name.into(),
+            version: version.into(),
+            sha: DistributionHash(hash),
+        },
     }
 }
 
@@ -437,7 +416,6 @@ fn register_distribution_files_of_wheel(
 ) -> Result<()> {
     let stored_distrib = StoredDistribution {
         distribution: distribution.clone(),
-        installed_via: StoredDistributionType::FromWheel,
     };
 
     if ctx.options.verbose >= 1 {
@@ -474,17 +452,6 @@ fn register_distribution_files_of_wheel(
 #[derive(Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize, Clone)]
 pub(crate) struct StoredDistribution {
     pub(crate) distribution: Distribution,
-    pub(crate) installed_via: StoredDistributionType,
-}
-
-#[derive(Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize, Clone)]
-pub(crate) enum StoredDistributionType {
-    // A distribution that was installed via pip into a directory, then moved into the repository.
-    FromPip,
-    // A distribution that was added via its wheel file by our own unpacking code.
-    // These contain fewer errors and allow for correctly dealing with the wheel's data directory,
-    // in particular its scripts.
-    FromWheel,
 }
 
 // We don't know what environments and what python versions a
@@ -524,35 +491,23 @@ impl StoredDistribution {
     }
 
     fn dist_info_file(&self, ctx: &Ctx, file: &str) -> Option<PathBuf> {
-        match self.installed_via {
-            StoredDistributionType::FromPip => {
-                let file = ctx
-                    .proj_dirs
-                    .dist_infos()
-                    .join(self.distribution.as_csv())
-                    .join(file);
-                file.exists().then(|| file)
-            }
-            StoredDistributionType::FromWheel => {
-                let record_path = ctx
-                    .proj_dirs
-                    .records()
-                    .join(self.distribution.as_csv())
-                    .join("RECORD");
-                if file == "RECORD" {
-                    return Some(record_path);
-                }
-
-                // TODO: optimize. kinda wasteful to keep rereading this on every call
-                let path_in_record = PathBuf::from(self.distribution.dist_info_name()).join(file);
-                let record = WheelRecord::from_file(record_path).unwrap();
-                record
-                    .files
-                    .into_iter()
-                    .find(|entry| entry.path == path_in_record)
-                    .map(|entry| ctx.proj_dirs.package_file(&entry.hash))
-            }
+        let record_path = ctx
+            .proj_dirs
+            .records()
+            .join(self.distribution.as_csv())
+            .join("RECORD");
+        if file == "RECORD" {
+            return Some(record_path);
         }
+
+        // TODO: optimize. kinda wasteful to keep rereading this on every call
+        let path_in_record = PathBuf::from(self.distribution.dist_info_name()).join(file);
+        let record = WheelRecord::from_file(record_path).unwrap();
+        record
+            .files
+            .into_iter()
+            .find(|entry| entry.path == path_in_record)
+            .map(|entry| ctx.proj_dirs.package_file(&entry.hash))
     }
 
     pub(crate) fn entrypoints(&self, ctx: &Ctx) -> Option<Vec<EntryPoint>> {
@@ -569,27 +524,12 @@ impl StoredDistribution {
     // that are not shared with other distributions.
     // It must also be removed from StoredDistributions.
     fn path(&self, ctx: &Ctx) -> PathBuf {
-        let base = match self.installed_via {
-            StoredDistributionType::FromPip => ctx.proj_dirs.dist_infos(),
-            StoredDistributionType::FromWheel => ctx.proj_dirs.records(),
-        };
-        base.join(self.distribution.as_csv())
+        ctx.proj_dirs.records().join(self.distribution.as_csv())
     }
 
-    fn records(&self, ctx: &Ctx) -> Result<Box<dyn Iterator<Item = Result<MaybeRecordEntry>>>> {
+    fn records(&self, ctx: &Ctx) -> Result<impl Iterator<Item = RecordEntry>> {
         let record = self.record_file(ctx)?;
-        Ok(match self.installed_via {
-            StoredDistributionType::FromPip => {
-                Box::new(records(&record, false)?.map(|rec| Ok(rec?)))
-            }
-            StoredDistributionType::FromWheel => Box::new(
-                WheelRecord::from_file(&record)?
-                    .files
-                    .into_iter()
-                    .map(|entry| entry.into())
-                    .map(Ok),
-            ),
-        })
+        Ok(WheelRecord::from_file(&record)?.files.into_iter())
     }
 
     // The executables of this distribution that can be added to the global install dir.
@@ -603,28 +543,27 @@ impl StoredDistribution {
             .map(|ep| ep.name)
             .collect::<Vec<_>>();
         let mut exes = entrypoint_exes.clone();
-        if self.installed_via == StoredDistributionType::FromWheel {
-            let record = WheelRecord::from_file(self.record_file(ctx)?)?;
-            let mut data_exes = record.files;
-            let script_path = PathBuf::from(self.distribution.data_dir_name()).join("scripts");
-            data_exes.retain(|entry| entry.path.starts_with(&script_path));
 
-            let data_exes = data_exes
-                .into_iter()
-                .filter_map(|entry| entry.path.file_name().map(|s| s.to_owned()))
-                .collect_vec();
-            let all_exes = entrypoint_exes.iter().chain(data_exes.iter());
-            let duplicates = all_exes.duplicates().map(String::as_str).collect_vec();
+        let record = WheelRecord::from_file(self.record_file(ctx)?)?;
+        let mut data_exes = record.files;
+        let script_path = PathBuf::from(self.distribution.data_dir_name()).join("scripts");
+        data_exes.retain(|entry| entry.path.starts_with(&script_path));
 
-            ensure!(
-                duplicates.is_empty(),
-                "distribution {} contains executables with duplicate names: {}",
-                self.distribution.name_and_version(),
-                duplicates.join(", ")
-            );
+        let data_exes = data_exes
+            .into_iter()
+            .filter_map(|entry| entry.path.file_name().map(|s| s.to_owned()))
+            .collect_vec();
+        let all_exes = entrypoint_exes.iter().chain(data_exes.iter());
+        let duplicates = all_exes.duplicates().map(String::as_str).collect_vec();
 
-            exes.extend(data_exes);
-        }
+        ensure!(
+            duplicates.is_empty(),
+            "distribution {} contains executables with duplicate names: {}",
+            self.distribution.name_and_version(),
+            duplicates.join(", ")
+        );
+
+        exes.extend(data_exes);
         Ok(exes)
     }
 }
@@ -648,35 +587,35 @@ impl Share for Exclusive {
 }
 
 impl<S: Share> StoredDistributions<S> {
-    fn try_load_old(reader: impl std::io::Read) -> Option<_StoredDistributions> {
-        let stored_distribs = serde_json::from_reader::<
-            _,
-            HashMap<String, HashMap<DistributionHash, String>>,
-        >(reader)
-        .ok()?;
+    // fn try_load_old(reader: impl std::io::Read) -> Option<_StoredDistributions> {
+    //     let stored_distribs = serde_json::from_reader::<
+    //         _,
+    //         HashMap<String, HashMap<DistributionHash, String>>,
+    //     >(reader)
+    //     .ok()?;
 
-        let mut new_format_stored_distribs =
-            HashMap::<String, HashMap<DistributionHash, StoredDistribution>>::new();
+    //     let mut new_format_stored_distribs =
+    //         HashMap::<String, HashMap<DistributionHash, StoredDistribution>>::new();
 
-        for (python_version, inner) in stored_distribs {
-            let entry = new_format_stored_distribs
-                .entry(python_version)
-                .or_default();
-            for (key_hash, name_and_version_and_hash) in inner {
-                let distribution = Distribution::from_store_name(&name_and_version_and_hash);
-                debug_assert_eq!(key_hash, distribution.sha);
+    //     for (python_version, inner) in stored_distribs {
+    //         let entry = new_format_stored_distribs
+    //             .entry(python_version)
+    //             .or_default();
+    //         for (key_hash, name_and_version_and_hash) in inner {
+    //             let distribution = Distribution::from_store_name(&name_and_version_and_hash);
+    //             debug_assert_eq!(key_hash, distribution.sha);
 
-                entry.insert(
-                    key_hash,
-                    StoredDistribution {
-                        distribution,
-                        installed_via: StoredDistributionType::FromPip,
-                    },
-                );
-            }
-        }
-        Some(new_format_stored_distribs)
-    }
+    //             entry.insert(
+    //                 key_hash,
+    //                 StoredDistribution {
+    //                     distribution,
+    //                     installed_via: StoredDistributionType::FromPip,
+    //                 },
+    //             );
+    //         }
+    //     }
+    //     Some(new_format_stored_distribs)
+    // }
 
     pub(crate) fn load(ctx: &Ctx) -> Result<Self> {
         Self::load_from(ctx.proj_dirs.installed_distributions_log())
@@ -702,9 +641,9 @@ impl<S: Share> StoredDistributions<S> {
             return Ok(StoredDistributions(HashMap::new(), lock));
         }
 
-        if let Some(stored_distribs) = Self::try_load_old(BufReader::new(&*lock)) {
-            return Ok(Self(stored_distribs, lock));
-        }
+        // if let Some(stored_distribs) = Self::try_load_old(BufReader::new(&*lock)) {
+        //     return Ok(Self(stored_distribs, lock));
+        // }
 
         lock.seek(std::io::SeekFrom::Start(0))
             .wrap_err("failed to seek to 0")?;
@@ -821,7 +760,6 @@ pub(crate) fn wheel_is_already_registered(
 
     let stored_distrib = StoredDistribution {
         distribution: distribution.clone(),
-        installed_via: StoredDistributionType::FromWheel,
     };
 
     let stored_distribs = stored_distributions
@@ -864,45 +802,5 @@ pub(crate) fn wheel_is_already_registered(
 
 #[cfg(test)]
 mod test {
-    use super::*;
-
-    #[test]
-    fn test_records() {
-        records("test_files/RECORD".as_ref(), false)
-            .unwrap()
-            .map(Result::unwrap)
-            .for_each(drop);
-    }
-
-    // This test accesses the same file as the test `loading_old_and_new_stored_distribs_identical`
-    // and the function StoredDistributions::load_from() will lock that file.
-    // That causes a failure if both tests run concurrently.
-    // That's why they are forced to run in series.
-    #[test]
-    #[serial_test::serial(installed_distribs)]
-    fn can_load_old_stored_distribs() -> Result<()> {
-        let old_file = fs_err::File::open("test_files/old_installed_distributions.json")?;
-        let old_stored_distribs =
-            StoredDistributions::<Shared>::try_load_old(BufReader::new(old_file))
-                .ok_or_else(|| eyre!("failed to load old stored dstributions"))?;
-
-        let new_file = fs_err::read_to_string("test_files/new_installed_distributions.json")?;
-        let new_stored_distribs: _StoredDistributions =
-            serde_json::from_str(&new_file).wrap_err("failed to deserialize new file format")?;
-        assert_eq!(old_stored_distribs, new_stored_distribs);
-        Ok(())
-    }
-
-    #[test]
-    #[serial_test::serial(installed_distribs)]
-    fn loading_old_and_new_stored_distribs_identical() -> Result<()> {
-        let old = StoredDistributions::<Shared>::load_from(
-            "test_files/old_installed_distributions.json",
-        )?;
-        let new = StoredDistributions::<Shared>::load_from(
-            "test_files/new_installed_distributions.json",
-        )?;
-        assert_eq!(old, new);
-        Ok(())
-    }
+    //use super::*;
 }

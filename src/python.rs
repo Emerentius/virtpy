@@ -89,9 +89,9 @@ impl std::fmt::Display for DistributionHash {
 }
 
 // returns all files recorded in RECORDS
+// TODO: check if it should be replaced with WheelRecord
 pub(crate) fn records(
     record_path: &Path,
-    filter_out_dist_info_files: bool,
 ) -> csv::Result<impl Iterator<Item = csv::Result<MaybeRecordEntry>>> {
     let record_path = record_path.to_owned();
     Ok(csv::ReaderBuilder::new()
@@ -106,27 +106,6 @@ pub(crate) fn records(
             assert!(path.is_relative(), "record: {record_path}, path: {path}");
 
             record.deserialize(None)
-        })
-        // Some use cases require to skip the files dist-info, if using the old install method
-        // TODO: delete with rest of deprecated code when compatibility is dropped
-        .filter(move |record| {
-            if !filter_out_dist_info_files {
-                return true;
-            }
-            let record = match record {
-                Ok(r) => r,
-                Err(_) => return true,
-            };
-
-            let first = record
-                .path
-                .components()
-                .find_map(|comp| match comp {
-                    camino::Utf8Component::Normal(path) => Some(path),
-                    _ => None,
-                })
-                .unwrap();
-            !first.ends_with(".dist-info")
         }))
 }
 
@@ -525,5 +504,13 @@ mod test {
             }
         );
         Ok(())
+    }
+
+    #[test]
+    fn test_records() {
+        records("test_files/RECORD".as_ref())
+            .unwrap()
+            .map(Result::unwrap)
+            .for_each(drop);
     }
 }

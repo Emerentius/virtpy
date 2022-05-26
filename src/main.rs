@@ -2,7 +2,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use clap::{Parser, Subcommand};
 use eyre::bail;
 use eyre::{ensure, eyre, WrapErr};
-use internal_store::{StoredDistribution, StoredDistributionType};
+use internal_store::StoredDistribution;
 use itertools::Itertools;
 use prelude::*;
 use std::path::Path as StdPath;
@@ -279,10 +279,6 @@ impl ProjectDirs {
         self.data().join("virtpys")
     }
 
-    fn dist_infos(&self) -> PathBuf {
-        self.data().join("dist-infos")
-    }
-
     // This is set to replace dist_infos().
     // Only the RECORD file from the wheel and the RECORD file we generated
     // for the wheel's data directory should be contained.
@@ -321,20 +317,12 @@ impl ProjectDirs {
     }
 
     fn installed_distributions(&self) -> impl Iterator<Item = StoredDistribution> + '_ {
-        self.dist_infos()
+        self.records()
             .read_dir()
             .into_iter()
             .flatten()
-            .map(|e| (e.unwrap(), StoredDistributionType::FromPip))
-            .chain(
-                self.records()
-                    .read_dir()
-                    .into_iter()
-                    .flatten()
-                    .map(|e| (e.unwrap(), StoredDistributionType::FromWheel)),
-            )
-            .map(|(dist_info_entry, installed_via)| StoredDistribution {
-                installed_via,
+            .map(|e| e.unwrap())
+            .map(|dist_info_entry| StoredDistribution {
                 distribution: python::Distribution::from_store_name(
                     dist_info_entry
                         .path()
@@ -774,19 +762,6 @@ fn _relative_path(base: &Path, path: &Path) -> Result<PathBuf> {
     rel_path.extend(iter_base.map(|_| ".."));
     rel_path.push(iter_path.as_path());
     Ok(rel_path)
-}
-
-fn remove_leading_parent_dirs(mut path: &Utf8Path) -> Result<&Utf8Path, &Utf8Path> {
-    let mut anything_removed = false;
-    while let Ok(stripped_path) = path.strip_prefix("..") {
-        path = stripped_path;
-        anything_removed = true;
-    }
-    if anything_removed {
-        Ok(path)
-    } else {
-        Err(path)
-    }
 }
 
 fn ignore_target_doesnt_exist(err: std::io::Error) -> std::io::Result<()> {
