@@ -431,8 +431,6 @@ pub(crate) fn verify_wheel_contents_or_repair(
     record: &mut WheelRecord,
     check_strategy: CheckStrategy,
 ) -> Result<WheelChecked> {
-    // TODO: ensure that no other virtpy install tries to install the same package at the same time.
-    //       Maybe we're already holding a lock?
     let mut n_hash_updated = 0;
     let mut n_filesize_updated = 0;
     for entry in &mut record.files {

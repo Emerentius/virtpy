@@ -428,9 +428,8 @@ impl Virtpy {
         self._pip_shim_flag_file().exists()
     }
 
-    fn set_has_pip_shim(&self) {
-        // TODO: bubble error up
-        let _ = std::fs::write(self._pip_shim_flag_file(), "");
+    fn set_has_pip_shim(&self) -> std::io::Result<()> {
+        fs_err::write(self._pip_shim_flag_file(), "")
     }
 
     pub(crate) fn set_check_strategy(&self, strategy: CheckStrategy) -> std::io::Result<()> {
@@ -808,7 +807,7 @@ fn add_pip_shim(virtpy: &Virtpy, shim_info: ShimInfo<'_>) -> Result<()> {
         &virtpy.python(),
         &virtpy.site_packages(),
     )?;
-    virtpy.set_has_pip_shim();
+    virtpy.set_has_pip_shim()?;
     virtpy.set_metadata("virtpy_exe", shim_info.virtpy_exe.as_str())?;
     virtpy.set_metadata("proj_dir", shim_info.proj_dirs.data().as_str())?;
 

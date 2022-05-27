@@ -305,8 +305,8 @@ pub(crate) fn print_stats(
         .package_files()
         .as_std_path()
         .fs_err_read_dir()?
-        .map(|entry| entry.and_then(|e| e.metadata()).map(|md| md.len()))
-        .sum::<Result<u64, _>>()?;
+        .map(|entry| Ok(entry?.metadata()?.len()))
+        .sum::<Result<u64>>()?;
 
     let deps = StoreDependencies::current(ctx)?;
     //let (danglers, errors) = dangling_virtpys(ctx);
@@ -644,6 +644,7 @@ impl StoredDistributions<Exclusive> {
     fn _save(&self) -> Result<()> {
         let mut file = &self.1.file;
         // Truncate file, then write to it.
+        // We mustn't close our filehandle or our lock would be gone with it.
         file.seek(std::io::SeekFrom::Start(0))?;
         file.set_len(0)?;
         serde_json::to_writer_pretty(file, &self.0)?;
@@ -651,9 +652,6 @@ impl StoredDistributions<Exclusive> {
     }
 }
 
-// TODO: Find a good crate for this that also offers locking with timeouts and
-//       a lock that contains the pid of the process holding it, so it can be
-//       detected if the locking process is dead.
 fn lock_file<S: Share>(file: fs_err::File) -> Result<FileLockGuard<S>> {
     use fs2::FileExt;
     if S::IS_EXCLUSIVE {
@@ -715,7 +713,6 @@ pub(crate) fn register_new_distribution(
         install_folder,
         wheel_record,
         &distrib,
-        // TODO: take full stored distribs
         &mut all_stored_distributions.0,
     )
     .wrap_err_with(|| {
