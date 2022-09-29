@@ -29,11 +29,11 @@ type PathBuf = Utf8PathBuf;
 
 #[derive(Parser)]
 struct Opt {
-    #[clap(subcommand)] // Note that we mark a field as a subcommand
+    #[command(subcommand)] // Note that we mark a field as a subcommand
     cmd: Command,
-    #[clap(short, action = ArgAction::Count)]
+    #[arg(short, action = ArgAction::Count)]
     verbose: u8,
-    #[clap(long, hide = true)]
+    #[arg(long, hide = true)]
     project_dir: Option<PathBuf>,
 }
 
@@ -43,54 +43,54 @@ enum Command {
     New {
         path: Option<PathBuf>,
         /// The python to use. Either a path or an indicator of the form `python3.7` or `3.7`
-        #[clap(short, long, default_value = "3")]
+        #[arg(short, long, default_value = "3")]
         python: String,
-        #[clap(long)]
+        #[arg(long)]
         without_pip_shim: bool,
         /// Don't add pkg_resources module that is usually installed into venvs alongside setuptools.
-        #[clap(long)]
+        #[arg(long)]
         without_package_resources: bool,
-        #[clap(flatten)]
+        #[command(flatten)]
         check_strategy: CheckStrategy,
     },
     /// Add package to virtpy from wheel file
     Add {
         file: PathBuf,
-        #[clap(long)]
+        #[arg(long)]
         virtpy_path: Option<PathBuf>,
-        #[clap(flatten)]
+        #[command(flatten)]
         check_strategy: CheckStrategy,
     },
     /// Remove package from virtpy
     Remove {
         distributions: Vec<String>,
-        #[clap(long)]
+        #[arg(long)]
         virtpy_path: Option<PathBuf>,
     },
     /// Install executable package into an isolated virtpy
     Install {
         package: Vec<String>,
         /// Reinstall, if it already exists
-        #[clap(short, long)]
+        #[arg(short, long)]
         force: bool,
-        #[clap(long)]
+        #[arg(long)]
         allow_prereleases: bool,
         /// The python to use. Either a path or an indicator of the form `python3.7` or `3.7`
-        #[clap(short, long, default_value = "3")]
+        #[arg(short, long, default_value = "3")]
         python: String,
-        #[clap(flatten)]
+        #[command(flatten)]
         check_strategy: CheckStrategy,
     },
     /// Delete the virtpy of a previously installed executable package
     Uninstall { package: Vec<String> },
     /// Print paths where various files are stored
-    #[clap(subcommand)]
+    #[command(subcommand)]
     Path(PathCmd),
     /// Get info about or modify the internal package store
-    #[clap(subcommand)]
+    #[command(subcommand)]
     InternalStore(InternalStoreCmd),
     /// Helper commands for internal use, e.g. by the pip shim.
-    #[clap(subcommand)]
+    #[command(subcommand)]
     InternalUseOnly(InternalUseOnly),
     /// List paths of all virtpys
     ListAll,
@@ -119,19 +119,19 @@ enum InternalStoreCmd {
     /// Find virtpys that have been moved or deleted and unneeded files in the central store.
     Gc {
         /// Delete unnecessary files
-        #[clap(long)]
+        #[arg(long)]
         remove: bool,
     },
     /// Show how much storage is used
     Stats {
         /// Show sizes in bytes
-        #[clap(long, short)]
+        #[arg(long, short)]
         bytes: bool,
         /// Use binary prefixes instead of SI.
         ///
         /// This uses powers of 1024 instead of 1000 and will print the accompanying symbol (e.g. 1 KiB for 1024 bytes).
         /// Has no effect if `--bytes` is passed.
-        #[clap(long)]
+        #[arg(long)]
         binary_prefix: bool,
     },
     /// Check integrity of the files of all python modules in the internal store.
@@ -150,7 +150,7 @@ enum InternalUseOnly {
     AddFromFile {
         virtpy: PathBuf,
         file: PathBuf,
-        #[clap(flatten)]
+        #[command(flatten)]
         check_strategy: CheckStrategy,
     },
     /// Return path to globally available python executable of the same version as used in virtpy
@@ -162,7 +162,7 @@ enum InternalUseOnly {
     /// Subcommand will be deleted again in the future.
     // TODO: delete again
     AddPackageResources {
-        #[clap(long)]
+        #[arg(long)]
         virtpy_path: Option<PathBuf>,
     },
 }
@@ -224,7 +224,7 @@ struct CheckStrategy {
     /// so you may encounter invalid packages that won't be fixed.
     /// With the "repair" strategy, the wheel's contents are considered correct and the
     /// metadata is changed to match.
-    #[clap(arg_enum, long, default_value = "repair")]
+    #[arg(value_enum, long, default_value = "repair")]
     check_strategy: python::wheel::CheckStrategy,
 }
 

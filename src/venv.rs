@@ -19,7 +19,7 @@ use crate::{
     ignore_target_exists, is_not_found, python_path, relative_path, symlink_dir, symlink_file,
     Path, PathBuf, ShimInfo, StoredDistribution, CENTRAL_METADATA, DIST_HASH_FILE, LINK_METADATA,
 };
-use clap::ArgEnum;
+use clap::ValueEnum;
 use eyre::{eyre, Context};
 use fs_err::PathExt;
 use itertools::Itertools;

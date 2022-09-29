@@ -389,7 +389,7 @@ impl WheelRecord {
 }
 
 /// See verify_wheel_contents_or_repair() for additional info.
-#[derive(clap::ArgEnum, Clone, Copy)]
+#[derive(clap::ValueEnum, Clone, Copy)]
 pub(crate) enum CheckStrategy {
     /// Assume the distribution contents are correct and update its metadata when incorrect.
     /// This is in violation of the spec, but required because invalid wheels exist
