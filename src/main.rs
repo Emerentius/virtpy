@@ -1,5 +1,5 @@
 use camino::{Utf8Path, Utf8PathBuf};
-use clap::{Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand};
 use eyre::bail;
 use eyre::{ensure, eyre, WrapErr};
 use internal_store::StoredDistribution;
@@ -31,7 +31,7 @@ type PathBuf = Utf8PathBuf;
 struct Opt {
     #[clap(subcommand)] // Note that we mark a field as a subcommand
     cmd: Command,
-    #[clap(short, parse(from_occurrences))]
+    #[clap(short, action = ArgAction::Count)]
     verbose: u8,
     #[clap(long, hide = true)]
     project_dir: Option<PathBuf>,
