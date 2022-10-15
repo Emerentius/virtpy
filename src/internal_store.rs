@@ -29,15 +29,11 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> Result<()> {
         eprintln!("failed to check {path}: {err}");
     }
 
-    let mut store_dependencies = StoreDependencies::current(ctx)?;
-    store_dependencies
-        .remove_virtpy_dependencies(danglers.iter().map(|(virtpy, _)| virtpy.clone()));
-
     if !danglers.is_empty() {
         println!("found {} missing virtpys.", danglers.len());
 
         if remove {
-            for (backing, link) in danglers {
+            for (backing, link) in &danglers {
                 let backing_path = backing.location();
                 debug_assert!(virtpy_link_target(&link)
                     .map_or(true, |link_target| link_target != backing_path));
@@ -48,12 +44,16 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> Result<()> {
         } else {
             println!("If you've moved some of these, recreate new ones in their place as they'll break when the orphaned backing stores are deleted.\nRun `virtpy gc --remove` to delete orphans\n");
 
-            for (target, virtpy_gone_awol) in danglers {
+            for (target, virtpy_gone_awol) in &danglers {
                 let target = target.location();
                 println!("{virtpy_gone_awol} => {target}");
             }
         }
     }
+
+    let mut store_dependencies = StoreDependencies::current(ctx)?;
+    store_dependencies
+        .remove_virtpy_dependencies(danglers.iter().map(|(virtpy, _)| virtpy.clone()));
 
     {
         let unused_dists = store_dependencies
@@ -103,9 +103,26 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> Result<()> {
             .map(|(file, _)| ctx.proj_dirs.package_file(file))
             .collect_vec();
         if !unused_package_files.is_empty() {
+            let mut n_unreadable = 0;
+            let total_size: u64 = unused_package_files
+                .iter()
+                .flat_map(|p| match fs_err::metadata(p) {
+                    Ok(md) => Ok(md.len()),
+                    Err(_) => {
+                        n_unreadable += 1;
+                        Err(())
+                    }
+                })
+                .sum();
             println!(
-                "found {} package files without distribution dependents.",
-                unused_package_files.len()
+                "found {} unused package files. total size: {}{}",
+                unused_package_files.len(),
+                bytesize::to_string(total_size, false),
+                if n_unreadable > 0 {
+                    format!(" ({n_unreadable} file sizes not readable)")
+                } else {
+                    String::new()
+                }
             );
 
             if remove {
