@@ -181,6 +181,8 @@ const DEFAULT_VIRTPY_PATH: &str = ".venv";
 const INSTALLED_DISTRIBUTIONS: &str = "installed_distributions.json";
 const CENTRAL_METADATA: &str = "virtpy_central_metadata";
 const LINK_METADATA: &str = "virtpy_link_metadata";
+const LINK_LOCATION: &str = "link_location";
+const CENTRAL_LOCATION: &str = "central_location";
 
 // name of file we add to .dist-info dir containing the distribution's hash
 const DIST_HASH_FILE: &str = "DISTRIBUTION_HASH";
@@ -514,13 +516,8 @@ fn main() -> Result<()> {
                 .virtpys()
                 .read_dir()?
                 .map(|entry| entry.unwrap())
-                .filter(|entry| entry.path().join("virtpy_central_metadata").exists())
-                .map(|entry| {
-                    entry
-                        .path()
-                        .join("virtpy_central_metadata")
-                        .join("link_location")
-                })
+                .filter(|entry| entry.path().join(CENTRAL_METADATA).exists())
+                .map(|entry| entry.path().join(CENTRAL_METADATA).join(LINK_LOCATION))
                 .map(|path| fs_err::read_to_string(path).unwrap())
                 .sorted()
                 .collect_vec();

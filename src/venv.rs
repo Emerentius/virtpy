@@ -13,7 +13,10 @@ use crate::python::{
     generate_executable, records, Distribution, DistributionHash, EntryPoint, FileHash,
     PythonVersion,
 };
-use crate::{check_output, ignore_target_doesnt_exist, Ctx, DEFAULT_VIRTPY_PATH};
+use crate::{
+    check_output, ignore_target_doesnt_exist, Ctx, CENTRAL_LOCATION, DEFAULT_VIRTPY_PATH,
+    LINK_LOCATION,
+};
 use crate::{
     check_status, delete_virtpy_backing, dist_info_matches_package, executables_path,
     ignore_target_exists, is_not_found, python_path, relative_path, symlink_dir, symlink_file,
@@ -725,17 +728,17 @@ fn _create_virtpy(
     {
         let metadata_dir = central_path.join(CENTRAL_METADATA);
         fs_err::create_dir(&metadata_dir)?;
-        fs_err::write(metadata_dir.join("link_location"), abs_path.as_str())?;
+        fs_err::write(metadata_dir.join(LINK_LOCATION), abs_path.as_str())?;
     }
 
     {
         let link_metadata_dir = path.join(LINK_METADATA);
         fs_err::create_dir(&link_metadata_dir)?;
-        fs_err::write(link_metadata_dir.join("link_location"), abs_path.as_str())?;
+        fs_err::write(link_metadata_dir.join(LINK_LOCATION), abs_path.as_str())?;
 
         debug_assert!(central_path.is_absolute());
         fs_err::write(
-            link_metadata_dir.join("central_location"),
+            link_metadata_dir.join(CENTRAL_LOCATION),
             central_path.as_str(),
         )?;
     }
@@ -815,17 +818,17 @@ fn add_pip_shim(virtpy: &Virtpy, shim_info: ShimInfo<'_>) -> Result<()> {
 }
 
 pub(crate) fn virtpy_link_location(virtpy: &Path) -> std::io::Result<PathBuf> {
-    let backlink = virtpy.join(CENTRAL_METADATA).join("link_location");
+    let backlink = virtpy.join(CENTRAL_METADATA).join(LINK_LOCATION);
     fs_err::read_to_string(backlink).map(PathBuf::from)
 }
 
 pub(crate) fn virtpy_link_target(virtpy_link: &Path) -> std::io::Result<PathBuf> {
-    let link = virtpy_link.join(LINK_METADATA).join("central_location");
+    let link = virtpy_link.join(LINK_METADATA).join(CENTRAL_LOCATION);
     fs_err::read_to_string(link).map(PathBuf::from)
 }
 
 fn virtpy_link_supposed_location(virtpy_link: &Path) -> std::io::Result<PathBuf> {
-    let link = virtpy_link.join(LINK_METADATA).join("link_location");
+    let link = virtpy_link.join(LINK_METADATA).join(LINK_LOCATION);
     fs_err::read_to_string(link).map(PathBuf::from)
 }
 
