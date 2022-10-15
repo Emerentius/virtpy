@@ -622,7 +622,7 @@ fn install_executable_package(
 
     let distrib = virtpy
         .dist_info(package)
-        .map(internal_store::stored_distribution_of_installed_dist)?;
+        .and_then(internal_store::stored_distribution_of_installed_dist)?;
 
     let executables = distrib.executable_names(ctx)?;
     let exe_dir = virtpy.executables();

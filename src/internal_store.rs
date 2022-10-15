@@ -216,8 +216,16 @@ impl StoreDependencies {
             .collect::<Result<FileDists, _>>()?;
 
         for virtpy_path in ctx.proj_dirs.virtpys().as_std_path().fs_err_read_dir()? {
-            let backing = VirtpyBacking::from_existing(virtpy_path?.utf8_path());
-            let distributions: HashSet<_> = distributions_used(&backing).collect();
+            let virtpy_path = virtpy_path?.utf8_path();
+            let backing = VirtpyBacking::from_existing(virtpy_path.clone());
+            let distributions: HashSet<_> = distributions_used(&backing)
+                .collect::<Result<_>>()
+                .wrap_err_with(|| {
+                    format!(
+                        "can't read packages used by {}",
+                        virtpy_link_location(&virtpy_path).unwrap_or(virtpy_path)
+                    )
+                })?;
             for dist in &distributions {
                 dist_virtpys
                     .entry(dist.clone())
@@ -373,7 +381,9 @@ pub(crate) fn print_stats(
     Ok(())
 }
 
-fn distributions_used(virtpy_dirs: &VirtpyBacking) -> impl Iterator<Item = StoredDistribution> {
+fn distributions_used(
+    virtpy_dirs: &VirtpyBacking,
+) -> impl Iterator<Item = Result<StoredDistribution>> {
     virtpy_dirs
         .dist_infos()
         .filter(|dist_info_path| {
@@ -387,22 +397,22 @@ fn distributions_used(virtpy_dirs: &VirtpyBacking) -> impl Iterator<Item = Store
 
 pub(crate) fn stored_distribution_of_installed_dist(
     dist_info_path: impl AsRef<Path>,
-) -> StoredDistribution {
+) -> Result<StoredDistribution> {
     _stored_distribution_of_installed_dist(dist_info_path.as_ref())
 }
 
-fn _stored_distribution_of_installed_dist(dist_info_path: &Path) -> StoredDistribution {
+fn _stored_distribution_of_installed_dist(dist_info_path: &Path) -> Result<StoredDistribution> {
     let hash_path = dist_info_path.join(crate::DIST_HASH_FILE);
-    let hash = fs_err::read_to_string(hash_path).unwrap();
+    let hash = fs_err::read_to_string(hash_path).wrap_err("failed to get distribution hash")?;
     let (name, version) = package_info_from_dist_info_dirname(dist_info_path.file_name().unwrap());
 
-    StoredDistribution {
+    Ok(StoredDistribution {
         distribution: Distribution {
             name: name.into(),
             version: version.into(),
             sha: DistributionHash(hash),
         },
-    }
+    })
 }
 
 fn register_distribution_files_of_wheel(

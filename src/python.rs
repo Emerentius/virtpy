@@ -485,7 +485,7 @@ mod test {
 
         for &(filename, (distrib_name, version)) in filenames_and_output.iter() {
             let req = Distribution::from_package_name(filename, DistributionHash("".into()))
-                .expect(&filename.to_string());
+                .expect(filename);
             assert_eq!(req.name, distrib_name);
             assert_eq!(req.version, version);
         }
