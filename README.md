@@ -31,6 +31,16 @@ virtpy remove PACKAGE
 
 It's easiest to use virtpys together with [poetry](https://python-poetry.org/) in which case you don't use `add` or `remove` directly.
 
+# Limitations
+* Only [Wheel packages]([wheels](https://peps.python.org/pep-0427/)) or wheel-convertible packages can be installed.  
+  That covers the vast majority of packages nowadays, but there are still exceptions for which you need to fall back to regular venvs.
+* The user must be allowed to create symlinks  
+  On windows, symlinking requires a special permission without which virtpy won't work.
+* Generated venvs don't contain a real `pip`.  
+  Some developer tooling may fail because of it.
+* Tools that create venvs for you typically can't be customized to use virtpy.
+* VS Code won't automatically detect when you create a virtpy venv. You have to set the interpreter path manually.
+
 ## Create virtual environment
 `virtpy new [TARGET_PATH]`  
 This creates a new virtpy.
@@ -51,7 +61,6 @@ Packages can also be added or removed manually via
 * `virtpy remove PACKAGE`
   Removes the PACKAGE from the virtpy.  
   No dependency resolution is done and dependent packages will remain.
-
 
 # Install python executables in isolated environments
 Two subcommands build on top of the core `virtpy` functionality to install packages with executables
