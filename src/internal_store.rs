@@ -35,7 +35,7 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> Result<()> {
         if remove {
             for (backing, link) in &danglers {
                 let backing_path = backing.location();
-                debug_assert!(virtpy_link_target(&link)
+                debug_assert!(virtpy_link_target(link)
                     .map_or(true, |link_target| link_target != backing_path));
                 if let Err(err) = delete_virtpy_backing(backing_path) {
                     eprintln!("failed to delete virtpy at {backing_path}: {err}")
@@ -70,7 +70,7 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> Result<()> {
 
                 for dist in unused_dists {
                     let path = dist.path(ctx);
-                    assert!(path.starts_with(&ctx.proj_dirs.data()));
+                    assert!(path.starts_with(ctx.proj_dirs.data()));
 
                     let Distribution { name, version, sha } = &dist.distribution;
                     println!("Removing {name} {version} ({sha})");
@@ -452,7 +452,7 @@ fn register_distribution_files_of_wheel(
 
     for file in &wheel_record.files {
         let src = install_folder.join(&file.path);
-        assert!(src.starts_with(&install_folder));
+        assert!(src.starts_with(install_folder));
         let dest = ctx.proj_dirs.package_file(&file.hash);
         if ctx.options.verbose >= 2 {
             println!("    moving {src} to {dest}");

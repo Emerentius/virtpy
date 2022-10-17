@@ -23,7 +23,7 @@ use crate::{
     Path, PathBuf, ShimInfo, StoredDistribution, CENTRAL_METADATA, DIST_HASH_FILE, LINK_METADATA,
 };
 use clap::ValueEnum;
-use eyre::{eyre, Context};
+use eyre::{bail, eyre, Context};
 use fs_err::PathExt;
 use itertools::Itertools;
 use rand::Rng;
@@ -358,7 +358,7 @@ impl Virtpy {
                 }
             } else {
                 // not using fs_err here, because we're not bubbling the error up
-                if let Err(e) = std::fs::remove_file(&path).or_else(ignore_target_doesnt_exist) {
+                if let Err(e) = std::fs::remove_file(path).or_else(ignore_target_doesnt_exist) {
                     eprintln!("failed to delete {path}: {e}");
                 }
             }
@@ -497,21 +497,8 @@ fn link_distributions_into_virtpy(
     for distribution in distributions {
         // find compatible hash
         let stored_distrib = match stored_distributions.0.get(&distribution.sha) {
-            Some(stored_distrib) => stored_distrib,
-            None => {
-                // return Err(format!(
-                //     "failed to find dist_info for distribution: {distribution:?}",
-                // )
-                // .into());
-                println!(
-                    "failed to find dist_info for distribution: {} {}",
-                    distribution.name, distribution.version
-                );
-                if ctx.options.verbose >= 2 {
-                    println!("hash: {:#?}", distribution.sha);
-                }
-                continue;
-            }
+            Some(dists) => dists,
+            None => bail!("failed to find distribution in store: {distribution:?}"),
         };
 
         link_single_requirement_into_virtpy(ctx, virtpy, stored_distrib, &site_packages)?;
@@ -540,7 +527,7 @@ fn link_single_requirement_into_virtpy(
         site_packages,
         &distrib.distribution,
     )?;
-    install_executables(ctx, distrib, virtpy, Some(&mut record))?;
+    install_executables(ctx, distrib, virtpy, &mut record)?;
 
     // ========== This code can be extracted into a fn for "add file with X content to Y path and record it"
     // Add the hash of the installed wheel to the metadata so we can find out
@@ -549,7 +536,7 @@ fn link_single_requirement_into_virtpy(
         .join(distrib.distribution.dist_info_name())
         .join(DIST_HASH_FILE);
     let dist_hash = &distrib.distribution.sha.0;
-    fs_err::write(&hash_path, &dist_hash).wrap_err("failed to write distribution hash file")?;
+    fs_err::write(&hash_path, dist_hash).wrap_err("failed to write distribution hash file")?;
     record.files.push(RecordEntry {
         path: relative_path(site_packages, hash_path)?,
         hash: FileHash::from_reader(dist_hash.as_bytes()), // It's a hash of a hash => can't just copy it
@@ -612,7 +599,7 @@ fn link_files_from_record_into_virtpy(
     let ensure_dir_exists = |dest: &Path| {
         let dir = dest.parent().unwrap();
         // TODO: assert we're still in the virtpy
-        fs_err::create_dir_all(&dir).unwrap();
+        fs_err::create_dir_all(dir).unwrap();
     };
 
     for record in &mut record.files {
@@ -762,8 +749,8 @@ fn _create_virtpy(
 fn _create_bare_venv(python_path: &Path, path: &Path, prompt: &str) -> Result<()> {
     check_status(
         Command::new(python_path)
-            .args(&["-m", "venv", "--without-pip", "--prompt", prompt])
-            .arg(&path)
+            .args(["-m", "venv", "--without-pip", "--prompt", prompt])
+            .arg(path)
             .stdout(std::process::Stdio::null()),
     )
     .map(drop)
@@ -774,7 +761,7 @@ fn install_executables(
     ctx: &Ctx,
     stored_distrib: &StoredDistribution,
     virtpy: &Virtpy,
-    mut wheel_record: Option<&mut WheelRecord>, // only record when unpacking wheels ourselves
+    wheel_record: &mut WheelRecord,
 ) -> Result<(), color_eyre::Report> {
     let entrypoints = stored_distrib.entrypoints(ctx).unwrap_or_default();
     for entrypoint in entrypoints {
@@ -784,9 +771,7 @@ fn install_executables(
         let record_entry = entrypoint
             .generate_executable(&executables_path, &python_path, &virtpy.site_packages())
             .wrap_err_with(err)?;
-        if let Some(wheel_record) = &mut wheel_record {
-            wheel_record.files.push(record_entry);
-        }
+        wheel_record.files.push(record_entry);
     }
     Ok(())
 }
@@ -906,7 +891,7 @@ print(json.dumps(paths))"#
             get_paths("nt")
         };
 
-        let output = check_output(Command::new(python_path.as_ref()).args(&["-c", &get_paths]))?;
+        let output = check_output(Command::new(python_path.as_ref()).args(["-c", &get_paths]))?;
 
         Ok(InstallPaths(serde_json::from_str(&output)?))
     }
@@ -993,7 +978,7 @@ fn generate_pkg_resources_wheel(
     let venv_dir = tmp_dir.try_utf8_path()?.join(".venv");
     check_status(
         Command::new(global_python)
-            .args(&["-m", "venv"])
+            .args(["-m", "venv"])
             .arg(&venv_dir)
             .stdout(std::process::Stdio::null()),
     )?;
@@ -1011,9 +996,9 @@ fn generate_pkg_resources_wheel(
         find_wheel(tmp_dir_path)?.ok_or_else(|| eyre!("no pkg_resources wheel generated"))?;
     let wheel_name = wheel_path.file_name().unwrap();
 
-    let target = wheel_dir.join(&wheel_name);
+    let target = wheel_dir.join(wheel_name);
 
-    fs_err::rename(tmp_dir.path().join(&wheel_name), &target)
+    fs_err::rename(tmp_dir.path().join(wheel_name), &target)
         // If another process already placed it there in the meantime, that's fine too
         .or_else(ignore_target_exists)?;
     Ok(target)
@@ -1063,7 +1048,7 @@ setup(
     )?;
     check_output(
         Command::new(global_python)
-            .args(&["-m", "pip", "wheel"])
+            .args(["-m", "pip", "wheel"])
             .arg(tmp_dir.path())
             .arg("--wheel-dir")
             .arg(tmp_dir.path()),

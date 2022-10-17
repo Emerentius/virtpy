@@ -389,7 +389,7 @@ fn _convert_to_wheel(
 
     check_status(
         std::process::Command::new(python)
-            .args(&[
+            .args([
                 "-m",
                 "pip",
                 "wheel",

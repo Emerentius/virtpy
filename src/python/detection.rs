@@ -44,7 +44,7 @@ fn find_python_by_version(major: u32, minor: Option<u32>) -> Result<PathBuf> {
         crate::Platform::Windows => {
             use color_eyre::section::{Section, SectionExt};
             let mut cmd = std::process::Command::new("py");
-            cmd.args(&[
+            cmd.args([
                 &format!("-{version}"),
                 "-c",
                 "import sys; print(sys.executable)",

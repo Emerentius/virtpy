@@ -692,8 +692,8 @@ fn check_poetry_available() -> Result<()> {
 fn init_temporary_poetry_project(path: &StdPath) -> Result<()> {
     check_status(
         std::process::Command::new("poetry")
-            .current_dir(&path)
-            .args(&["init", "-n"])
+            .current_dir(path)
+            .args(["init", "-n"])
             .stdout(std::process::Stdio::null()),
     )
     .and_then(|_|
