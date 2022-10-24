@@ -184,6 +184,7 @@ impl Virtpy {
         path: &Path,
         prompt: Option<String>,
         with_pip_shim: Option<ShimInfo>,
+        with_package_resources: bool,
         check_strategy: CheckStrategy,
     ) -> Result<Virtpy> {
         let mut rng = rand::thread_rng();
@@ -211,7 +212,15 @@ impl Virtpy {
             .as_deref()
             .or_else(|| path.file_name())
             .unwrap_or(DEFAULT_VIRTPY_PATH);
-        let virtpy = _create_virtpy(central_path, python_path, path, prompt, with_pip_shim)?;
+        let virtpy = _create_virtpy(
+            ctx,
+            central_path,
+            python_path,
+            path,
+            prompt,
+            with_pip_shim,
+            with_package_resources,
+        )?;
         virtpy.set_check_strategy(check_strategy)?;
         Ok(virtpy)
     }
@@ -695,11 +704,13 @@ fn ensure_toplevel_symlinks_exist(backing_location: &Path, virtpy_location: &Pat
 }
 
 fn _create_virtpy(
+    ctx: &Ctx,
     central_path: PathBuf,
     python_path: &Path,
     path: &Path,
     prompt: &str,
     with_pip_shim: Option<ShimInfo>,
+    with_package_resources: bool,
 ) -> Result<Virtpy> {
     _create_bare_venv(python_path, &central_path, prompt)?;
 
@@ -740,6 +751,9 @@ fn _create_virtpy(
     };
     if let Some(shim_info) = with_pip_shim {
         add_pip_shim(&checked_virtpy, shim_info).wrap_err("failed to add pip shim")?;
+    }
+    if with_package_resources {
+        add_package_resources(ctx, &checked_virtpy)?;
     }
 
     Ok(checked_virtpy)
@@ -1125,7 +1139,7 @@ pub(crate) fn python_version(venv: &Path) -> Result<PythonVersion> {
     })
 }
 
-pub(crate) fn add_package_resources(ctx: &Ctx, virtpy: &Virtpy) -> Result<()> {
+fn add_package_resources(ctx: &Ctx, virtpy: &Virtpy) -> Result<()> {
     let pkg_res_wheel = package_resources_wheel(ctx, &virtpy.global_python()?)?;
     virtpy.add_dependency_from_file(ctx, &pkg_res_wheel, CheckStrategy::Repair)
 }
@@ -1158,6 +1172,7 @@ mod test {
             &virtpy_path,
             None,
             None,
+            false,
             CheckStrategy::RejectInvalid,
         )?;
         let install_paths = virtpy.install_paths()?;

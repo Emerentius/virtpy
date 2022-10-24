@@ -12,7 +12,7 @@ pub(crate) mod prelude;
 mod python;
 pub(crate) mod venv;
 
-use venv::{add_package_resources, Virtpy, VirtpyPaths};
+use venv::{Virtpy, VirtpyPaths};
 
 #[cfg(unix)]
 pub(crate) use fs_err::os::unix::fs::symlink as symlink_dir;
@@ -158,13 +158,6 @@ enum InternalUseOnly {
     /// On systems where the venv executable is symlinked, it will return the linked one.
     /// Otherwise, it will search for the executable by version which might return a different one.
     GlobalPython { virtpy: PathBuf },
-    /// Add the pkg_resources module to the virtpy
-    /// Subcommand will be deleted again in the future.
-    // TODO: delete again
-    AddPackageResources {
-        #[arg(long)]
-        virtpy_path: Option<PathBuf>,
-    },
 }
 
 #[derive(Subcommand)]
@@ -416,16 +409,19 @@ fn main() -> Result<()> {
             let path = path.unwrap_or_else(|| PathBuf::from(DEFAULT_VIRTPY_PATH));
 
             let shim_info = (!without_pip_shim).then(|| shim_info(&ctx)).transpose()?;
-            let virtpy = python::detection::detect(&python)
+            python::detection::detect(&python)
                 .and_then(|python_path| {
-                    Virtpy::create(&ctx, &python_path, &path, None, shim_info, check_strategy)
+                    Virtpy::create(
+                        &ctx,
+                        &python_path,
+                        &path,
+                        None,
+                        shim_info,
+                        !without_package_resources,
+                        check_strategy,
+                    )
                 })
                 .wrap_err("failed to create virtpy")?;
-
-            // TODO: move into Virtpy::create
-            if !without_package_resources {
-                add_package_resources(&ctx, &virtpy)?;
-            }
         }
         Command::Install {
             package,
@@ -474,11 +470,6 @@ fn main() -> Result<()> {
             if any_errors {
                 bail!("some uninstalls failed");
             }
-        }
-        Command::InternalUseOnly(InternalUseOnly::AddPackageResources { virtpy_path }) => {
-            let path = virtpy_path.unwrap_or_else(|| PathBuf::from(DEFAULT_VIRTPY_PATH));
-            let virtpy = Virtpy::from_existing(&path)?;
-            venv::add_package_resources(&ctx, &virtpy)?;
         }
         Command::InternalStore(InternalStoreCmd::Gc { remove }) => {
             internal_store::collect_garbage(&ctx, remove)?;
@@ -575,6 +566,7 @@ fn install_executable_package(
         &package_folder,
         None,
         Some(shim_info(ctx)?),
+        true,
         check_strategy,
     )?;
 
