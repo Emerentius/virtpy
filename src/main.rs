@@ -647,8 +647,10 @@ fn delete_executable_virtpy(ctx: &Ctx, package: &str) -> Result<()> {
     for entry in ctx.proj_dirs.executables().read_dir()? {
         let entry = entry?;
         let target = fs_err::read_link(entry.path())?;
-        // TODO: switch to .try_exists() when stable
-        if !target.exists() {
+        if !target
+            .try_exists()
+            .wrap_err_with(|| eyre!("couldn't access {target:?}"))?
+        {
             fs_err::remove_file(entry.path())?;
         }
     }

@@ -518,7 +518,9 @@ impl StoredDistribution {
             return Some(record_path);
         }
 
-        // TODO: optimize. kinda wasteful to keep rereading this on every call
+        // This could be optimized, as it's kinda wasteful to keep rereading this on every call,
+        // but it's only called once per package when installing it into
+        // a new virtpy right now, so it doesn't matter.
         let path_in_record = PathBuf::from(self.distribution.dist_info_name()).join(file);
         let record = WheelRecord::from_file(record_path).unwrap();
         record
