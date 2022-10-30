@@ -505,21 +505,15 @@ impl<S: Share> PartialEq for StoredDistributions<S> {
 impl<S: Share> Eq for StoredDistributions<S> {}
 
 impl StoredDistribution {
-    fn record_file(&self, ctx: &Ctx) -> Result<PathBuf> {
-        self.dist_info_file(ctx, "RECORD").ok_or_else(|| {
-            eyre!(
-                "couldn't find RECORD file for {}",
-                self.distribution.name_and_version()
-            )
-        })
+    fn record_file(&self, ctx: &Ctx) -> PathBuf {
+        ctx.proj_dirs
+            .records()
+            .join(self.distribution.as_csv())
+            .join("RECORD")
     }
 
     fn dist_info_file(&self, ctx: &Ctx, file: &str) -> Option<PathBuf> {
-        let record_path = ctx
-            .proj_dirs
-            .records()
-            .join(self.distribution.as_csv())
-            .join("RECORD");
+        let record_path = self.record_file(ctx);
         if file == "RECORD" {
             return Some(record_path);
         }
@@ -552,7 +546,7 @@ impl StoredDistribution {
     }
 
     fn records(&self, ctx: &Ctx) -> Result<impl Iterator<Item = RecordEntry>> {
-        let record = self.record_file(ctx)?;
+        let record = self.record_file(ctx);
         Ok(WheelRecord::from_file(&record)?.files.into_iter())
     }
 
@@ -568,7 +562,7 @@ impl StoredDistribution {
             .collect::<Vec<_>>();
         let mut exes = entrypoint_exes.clone();
 
-        let record = WheelRecord::from_file(self.record_file(ctx)?)?;
+        let record = WheelRecord::from_file(self.record_file(ctx))?;
         let mut data_exes = record.files;
         let script_path = PathBuf::from(self.distribution.data_dir_name()).join("scripts");
         data_exes.retain(|entry| entry.path.starts_with(&script_path));
