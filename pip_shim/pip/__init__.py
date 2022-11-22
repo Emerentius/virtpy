@@ -174,7 +174,7 @@ def install_package_from_folder(package_path: str) -> None:
                 "--no-cache-dir",
                 "--wheel-dir",
                 directory,
-                ".venv/src/pendulum/",
+                package_path,
             ],
             check=True,
         )
