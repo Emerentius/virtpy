@@ -374,9 +374,10 @@ pub(crate) fn convert_to_wheel(
     ctx: &Ctx,
     python: &Path,
     distrib_path: impl AsRef<Path>,
+    use_pep517: bool,
 ) -> Result<(PathBuf, tempdir::TempDir)> {
     let path = distrib_path.as_ref();
-    _convert_to_wheel(ctx, python, path)
+    _convert_to_wheel(ctx, python, path, use_pep517)
         .wrap_err_with(|| eyre!("failed to convert file to wheel: {path}"))
 }
 
@@ -384,22 +385,25 @@ fn _convert_to_wheel(
     ctx: &Ctx,
     python: &Path,
     distrib_path: &Path,
+    use_pep517: bool,
 ) -> Result<(PathBuf, tempdir::TempDir)> {
     let output_dir = tempdir::TempDir::new_in(ctx.proj_dirs.tmp(), "convert_to_wheel")?;
 
-    check_status(
-        std::process::Command::new(python)
-            .args([
-                "-m",
-                "pip",
-                "wheel",
-                "--no-cache-dir",
-                "--no-deps",
-                "--wheel-dir",
-            ])
-            .arg(output_dir.path())
-            .arg(distrib_path),
-    )?;
+    let mut cmd = std::process::Command::new(python);
+    cmd.args([
+        "-m",
+        "pip",
+        "wheel",
+        "--no-cache-dir",
+        "--no-deps",
+        "--wheel-dir",
+    ])
+    .arg(output_dir.path())
+    .arg(distrib_path);
+    if use_pep517 {
+        cmd.arg("--use-pep517");
+    }
+    check_status(&mut cmd)?;
 
     let output_files = output_dir
         .path()

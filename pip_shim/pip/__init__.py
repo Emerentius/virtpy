@@ -99,7 +99,7 @@ def main() -> None:
 
 
 def add_install_subcommand(
-    argparser: "argparse._SubParsersAction[argparse.ArgumentParser]",
+    argparser: "argparse._SubParsersAction[ErrorCatchingArgumentParser]",
 ) -> None:
     cmd = argparser.add_parser("install")
     cmd.add_argument(
@@ -113,6 +113,8 @@ def add_install_subcommand(
     cmd.add_argument("--disable-pip-version-check", action="store_true")
     # ignored
     cmd.add_argument("--prefix")
+    # forwarded to pip wheel conversion
+    cmd.add_argument("--use-pep517", action="store_true")
 
     def install(args: argparse.Namespace) -> None:
         # CAREFUL! Impossible to typecheck args.
@@ -121,9 +123,9 @@ def add_install_subcommand(
         if package_path.startswith(prefix):
             package_path = package_path[len(prefix) :]
         if os.path.isfile(package_path):
-            install_package_from_file(package_path)
+            install_package_from_file(package_path, args.use_pep517)
         elif os.path.isdir(args.path):
-            install_package_from_folder(package_path)
+            install_package_from_folder(package_path, args.use_pep517)
         else:
             raise Exception("Not a path to a file or folder")
 
@@ -131,7 +133,7 @@ def add_install_subcommand(
 
 
 def add_uninstall_subcommand(
-    argparser: "argparse._SubParsersAction[argparse.ArgumentParser]",
+    argparser: "argparse._SubParsersAction[ErrorCatchingArgumentParser]",
 ) -> None:
     cmd = argparser.add_parser("uninstall")
     cmd.add_argument(
@@ -146,7 +148,7 @@ def add_uninstall_subcommand(
     cmd.set_defaults(func=uninstall)
 
 
-def install_package_from_folder(package_path: str) -> None:
+def install_package_from_folder(package_path: str, use_pep517: bool) -> None:
     import tempfile
     import glob
 
@@ -175,6 +177,7 @@ def install_package_from_folder(package_path: str) -> None:
                 "--wheel-dir",
                 directory,
                 package_path,
+                *(["--use-pep517"] if use_pep517 else []),
             ],
             check=True,
         )
@@ -184,10 +187,11 @@ def install_package_from_folder(package_path: str) -> None:
         print(os.listdir(directory))
         output_files = glob.glob(pattern)
         assert len(output_files) == 1, f"{output_files=}"
-        install_package_from_file(output_files[0])
+        # forwarding use_pep517 here would have no effect, because it's already a wheel
+        install_package_from_file(output_files[0], False)
 
 
-def install_package_from_file(package_path: str) -> None:
+def install_package_from_file(package_path: str, use_pep517: bool) -> None:
     if not os.path.abspath(package_path):
         return
 
@@ -205,6 +209,7 @@ def install_package_from_file(package_path: str) -> None:
             virtpy,
             package_path,
             *strategy_args,
+            *(["--use-pep517"] if use_pep517 else []),
         ],
         check=True,
     )

@@ -152,6 +152,8 @@ enum InternalUseOnly {
         file: PathBuf,
         #[command(flatten)]
         check_strategy: CheckStrategy,
+        #[arg(long)]
+        use_pep517: bool,
     },
     /// Return path to globally available python executable of the same version as used in virtpy
     ///
@@ -390,7 +392,7 @@ fn main() -> Result<()> {
             check_strategy: CheckStrategy { check_strategy },
         } => {
             let virtpy = virtpy_path.unwrap_or_else(|| PathBuf::from(DEFAULT_VIRTPY_PATH));
-            add_from_file(&ctx, virtpy, file, check_strategy)?;
+            add_from_file(&ctx, virtpy, file, check_strategy, false)?;
         }
         Command::Remove {
             distributions,
@@ -494,8 +496,9 @@ fn main() -> Result<()> {
             virtpy,
             file,
             check_strategy: CheckStrategy { check_strategy },
+            use_pep517,
         }) => {
-            add_from_file(&ctx, virtpy, file, check_strategy)?;
+            add_from_file(&ctx, virtpy, file, check_strategy, use_pep517)?;
         }
         Command::InternalUseOnly(InternalUseOnly::GlobalPython { virtpy }) => {
             println!("{}", Virtpy::from_existing(&virtpy)?.global_python()?);
@@ -526,8 +529,9 @@ fn add_from_file(
     virtpy: PathBuf,
     file: PathBuf,
     check_strategy: python::wheel::CheckStrategy,
+    use_pep517: bool,
 ) -> Result<()> {
-    Virtpy::from_existing(&virtpy)?.add_dependency_from_file(ctx, &file, check_strategy)
+    Virtpy::from_existing(&virtpy)?.add_dependency_from_file(ctx, &file, check_strategy, use_pep517)
 }
 
 enum InstalledStatus {

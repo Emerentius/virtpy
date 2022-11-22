@@ -247,6 +247,7 @@ impl Virtpy {
         ctx: &Ctx,
         file: &Path,
         check_strategy: CheckStrategy,
+        use_pep517: bool,
     ) -> Result<()> {
         let file_hash = DistributionHash::from_file(file)?;
         let distribution =
@@ -259,6 +260,7 @@ impl Virtpy {
                 distribution.clone(),
                 self.python_version,
                 check_strategy,
+                use_pep517,
             )?;
         }
 
@@ -916,6 +918,7 @@ fn install_and_register_distribution_from_file(
     distribution: Distribution,
     python_version: crate::python::PythonVersion,
     check_strategy: CheckStrategy,
+    use_pep517: bool,
 ) -> Result<()> {
     let tmp_dir = tempdir::TempDir::new_in(ctx.proj_dirs.tmp(), "virtpy_wheel")?;
     let (distrib_path, _wheel_tmp_dir) = match distrib_path.extension().unwrap() {
@@ -927,7 +930,7 @@ fn install_and_register_distribution_from_file(
 
             let python = crate::python::detection::detect_from_version(python_version)?;
             let (wheel_path, tmp_dir) =
-                crate::python::convert_to_wheel(ctx, &python, distrib_path)?;
+                crate::python::convert_to_wheel(ctx, &python, distrib_path, use_pep517)?;
 
             if ctx.options.verbose >= 2 {
                 println!("wheel file placed at {wheel_path}");
@@ -1141,7 +1144,7 @@ pub(crate) fn python_version(venv: &Path) -> Result<PythonVersion> {
 
 fn add_package_resources(ctx: &Ctx, virtpy: &Virtpy) -> Result<()> {
     let pkg_res_wheel = package_resources_wheel(ctx, &virtpy.global_python()?)?;
-    virtpy.add_dependency_from_file(ctx, &pkg_res_wheel, CheckStrategy::Repair)
+    virtpy.add_dependency_from_file(ctx, &pkg_res_wheel, CheckStrategy::Repair, false)
 }
 
 fn canonicalize(path: &Path) -> Result<PathBuf> {
