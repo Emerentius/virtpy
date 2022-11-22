@@ -109,6 +109,10 @@ def add_install_subcommand(
         "-U", "--upgrade", action="store_true"
     )  # TODO: add logic using this
     cmd.add_argument("path")
+    # ignored
+    cmd.add_argument("--disable-pip-version-check", action="store_true")
+    # ignored
+    cmd.add_argument("--prefix")
 
     def install(args: argparse.Namespace) -> None:
         # CAREFUL! Impossible to typecheck args.
