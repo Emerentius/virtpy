@@ -1,10 +1,12 @@
 # Several tools expect that they can interact with a venv through pip.
-# This module is installed by default into all virtpys and will translate and forward commands to virtpy.
+# This module is installed by default into all virtpys and will translate and
+# forward commands to virtpy.
 #
 # This allows transparent usage of virtpy by tools that are not aware of it
 # (which is just, like, every single one of them)
 #
 # EXTREMELY incomplete
+from __future__ import annotations
 
 import argparse
 import sys
@@ -99,7 +101,7 @@ def main() -> None:
 
 
 def add_install_subcommand(
-    argparser: "argparse._SubParsersAction[ErrorCatchingArgumentParser]",
+    argparser: argparse._SubParsersAction,
 ) -> None:
     cmd = argparser.add_parser("install")
     cmd.add_argument(
@@ -133,7 +135,7 @@ def add_install_subcommand(
 
 
 def add_uninstall_subcommand(
-    argparser: "argparse._SubParsersAction[ErrorCatchingArgumentParser]",
+    argparser: argparse._SubParsersAction,
 ) -> None:
     cmd = argparser.add_parser("uninstall")
     cmd.add_argument(
