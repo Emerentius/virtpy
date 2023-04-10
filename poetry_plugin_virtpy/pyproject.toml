@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "poetry-plugin-virtpy"
+version = "0.1.0"
+description = ""
+authors = ["Emerentius <emerentius@arcor.de>"]
+readme = "README.md"
+packages = [{ include = "poetry_plugin_virtpy", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+poetry = "^1.5"
+
+# [tool.poetry.group.dev.dependencies]
+# mypy = "^1.2.0"
+# pylint = "^2.17.2"
+
+[tool.poetry.group.dev.dependencies]
+mypy = "^1.5.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.plugins."poetry.application.plugin"]
+virtpy = "poetry_plugin_virtpy.plugin:VirtpyPlugin"
