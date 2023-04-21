@@ -115,6 +115,10 @@ def add_install_subcommand(
     cmd.add_argument("--disable-pip-version-check", action="store_true")
     # ignored
     cmd.add_argument("--prefix")
+    # ignored, we don't prompt anyway
+    cmd.add_argument("--no-input", action="store_true")
+    # ignored, we don't use any user config
+    cmd.add_argument("--isolated", action="store_true")
     # forwarded to pip wheel conversion
     cmd.add_argument("--use-pep517", action="store_true")
 
