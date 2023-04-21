@@ -25,10 +25,21 @@ def virtpy_path() -> Optional[pathlib.Path]:
     # So the venv dir is either the 3rd or 4th parent.
     parents = itertools.islice(iter(path.parents), 3, 5)
 
+    # In earlier versions of python, __file__ pointed to path the module was imported
+    # from without resolving symlinks. That has changed at some point.
     path = next(
-        (p for p in parents if p.joinpath("virtpy_link_metadata").exists()),
+        (
+            p
+            for p in parents
+            if (p.joinpath("virtpy_link_metadata").exists())
+            or p.joinpath("virtpy_central_metadata").exists()
+        ),
         None,
     )
+    if path is not None:
+        central_metadata = path.joinpath("virtpy_central_metadata")
+        if central_metadata.exists():
+            path = pathlib.Path(central_metadata.joinpath("link_location").read_text())
     return path
 
 
