@@ -202,7 +202,13 @@ impl KeyValues {
         // Unknown keys are ignored. They may be from a newer wheel format version.
         let mut key_values: HashMap<_, Vec<_>> = HashMap::new();
 
-        for line in string.lines().map(str::trim_end).filter(|l| !l.is_empty()) {
+        for line in string
+            .lines()
+            // Once a blank line appears, everything after it is part of the description.
+            // We mustn't read it, lest we mistake part of it for a key-value pair.
+            .take_while(|l| !l.is_empty())
+            .map(str::trim_end)
+        {
             let (key, value) = match line.split_once(": ") {
                 Some(x) => x,
                 // There can be a block below the key-values.
@@ -567,6 +573,17 @@ mod test {
             let f = f?;
             let data = fs_err::read_to_string(f.path())?;
             WheelMetadata::from_str(&data)
+                .wrap_err_with(|| eyre!("failed to parse data for {:?}", f.path()))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn can_parse_distribution_metadata() -> Result<()> {
+        for f in Path::new("test_files/distribution_metadata").read_dir()? {
+            let f = f?;
+            let data = fs_err::read_to_string(f.path())?;
+            DistributionMetadata::from_str(&data)
                 .wrap_err_with(|| eyre!("failed to parse data for {:?}", f.path()))?;
         }
         Ok(())

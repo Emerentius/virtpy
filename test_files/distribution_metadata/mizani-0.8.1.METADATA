@@ -1,0 +1,88 @@
+Metadata-Version: 2.1
+Name: mizani
+Version: 0.8.1
+Summary: Scales for Python
+Home-page: https://github.com/has2k1/mizani
+Author: Hassan Kibirige
+Author-email: has2k1@gmail.com
+License: BSD (3-clause)
+Project-URL: Documentation, https://mizani.readthedocs.io/en/stable
+Project-URL: Source, https://github.com/has2k1/mizani
+Project-URL: Bug Tracker, https://github.com/has2k1/mizani/issues
+Project-URL: CI, https://github.com/has2k1/mizani/actions
+Platform: UNKNOWN
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: BSD License
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Topic :: Scientific/Engineering :: Visualization
+Requires-Python: >=3.8
+Description-Content-Type: text/x-rst
+License-File: LICENSE
+Requires-Dist: numpy (>=1.19.0)
+Requires-Dist: scipy (>=1.5.0)
+Requires-Dist: pandas (>=1.3.5)
+Requires-Dist: matplotlib (>=3.5.0)
+Requires-Dist: palettable
+Requires-Dist: tzdata ; platform_system == "Windows"
+Requires-Dist: backports.zoneinfo ; python_version < "3.9"
+Provides-Extra: doc
+Requires-Dist: sphinx (>=4.5.0) ; extra == 'doc'
+Requires-Dist: numpydoc (>=0.9.1) ; extra == 'doc'
+Provides-Extra: testing
+Requires-Dist: flake8 ; extra == 'testing'
+Requires-Dist: pytest-cov ; extra == 'testing'
+
+######
+Mizani
+######
+
+=================    =================
+Latest Release       |release|_
+License              |license|_
+Build Status         |buildstatus|_
+Coverage             |coverage|_
+Documentation        |documentation|_
+=================    =================
+
+Mizani is a scales package for graphics. It is written in Python and is
+based on Hadley Wickham's `Scales`_. See the `documentation`_ for how
+to use it in a graphics system.
+
+Installation
+============
+
+**Official version**
+
+.. code-block:: console
+
+   $ pip install mizani
+
+**Development version**
+
+.. code-block:: console
+
+   $ pip install git+https://github.com/has2k1/mizani.git@main
+
+
+
+.. |release| image:: https://img.shields.io/pypi/v/mizani.svg
+.. _release: https://pypi.python.org/pypi/mizani
+
+.. |license| image:: https://img.shields.io/pypi/l/mizani.svg
+.. _license: https://pypi.python.org/pypi/mizani
+
+.. |buildstatus| image:: https://github.com/has2k1/mizani/workflows/build/badge.svg?branch=main
+.. _buildstatus: https://github.com/has2k1/mizani/actions?query=branch%3Amain+workflow%3A%22build%22
+
+.. |coverage| image:: https://codecov.io /github/has2k1/mizani/coverage.svg?branch=main
+.. _coverage: https://codecov.io/github/has2k1/mizani?branch=main
+
+.. |documentation| image:: https://readthedocs.org/projects/mizani/badge/?version=latest
+.. _documentation: https://mizani.readthedocs.io/en/latest/
+
+.. _Scales: https://github.com/r-lib/scales
+
+
