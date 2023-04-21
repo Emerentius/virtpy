@@ -237,7 +237,7 @@ fn _generate_executable(dest: &Path, bytes: &[u8], site_packages: &Path) -> Resu
 /// A specific package file that can be installed into a python environment.
 /// The file is clearly identified by the hash of its contents.
 ///
-/// Python's terminology is somwehat confused in that a package can be two things:
+/// Python's terminology is ambigous in that a package can be two things:
 /// 1. an archive containing python code packaged for distribution
 /// 2. A folder on disk that contains other folders (packages) or
 ///    python files (modules) and which can be `import`ed inside python.

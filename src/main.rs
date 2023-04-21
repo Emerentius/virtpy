@@ -312,7 +312,7 @@ impl ProjectDirs {
     }
 
     fn package_folder(&self, package: &str) -> PathBuf {
-        self.installations().join(&format!("{package}.virtpy"))
+        self.installations().join(format!("{package}.virtpy"))
     }
 
     fn installed_distributions(&self) -> impl Iterator<Item = StoredDistribution> + '_ {
