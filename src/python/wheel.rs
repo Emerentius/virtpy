@@ -123,7 +123,7 @@ enum WheelVersionSupport {
 }
 
 /// Metadata about the wheel archive itself, not the contained package.
-/// Stored in the file `METADATA` in a wheel's dist-info directory.
+/// Stored in the file `WHEEL` in a wheel's dist-info directory.
 struct WheelMetadata {
     version: WheelFormatVersion,
     #[allow(unused)]
@@ -148,46 +148,80 @@ impl WheelMetadata {
     fn from_str(metadata: &str) -> Result<Self> {
         // First, read all key-value pairs so we can collect all tags into a vec and also detect duplicates.
         // Unknown keys are ignored. They may be from a newer wheel format version.
+        let kv = KeyValues::from_str(metadata);
+
+        Ok(WheelMetadata {
+            version: WheelFormatVersion::from_str(&kv.get_unique("Wheel-Version")?)?,
+            generator: kv.get_unique("Generator")?,
+            root_is_purelib: KeyValues::parse_bool(&kv.get_unique("Root-Is-Purelib")?)?,
+            tags: kv.0.get("Tag").cloned().unwrap_or_default(),
+            build: kv.get_unique_optional("Build")?,
+        })
+    }
+}
+
+/// Metadata about the distribution package.
+/// Stored in the file `METADATA` in a wheel's dist-info directory.
+pub struct DistributionMetadata {
+    pub name: String,
+    pub version: String,
+    // and a whole lot of other things
+}
+
+impl DistributionMetadata {
+    pub fn from_str(metadata: &str) -> Result<Self> {
+        let kv = KeyValues::from_str(metadata);
+
+        Ok(DistributionMetadata {
+            name: kv.get_unique("Name")?,
+            version: kv.get_unique("Version")?,
+        })
+    }
+}
+
+/// Helper struct for reading METADATA and WHEEL files
+struct KeyValues(HashMap<String, Vec<String>>);
+
+impl KeyValues {
+    fn from_str(string: &str) -> Self {
+        // First, read all key-value pairs so we can collect all tags into a vec and also detect duplicates.
+        // Unknown keys are ignored. They may be from a newer wheel format version.
         let mut key_values: HashMap<_, Vec<_>> = HashMap::new();
 
-        for line in metadata
-            .lines()
-            .map(str::trim_end)
-            .filter(|l| !l.is_empty())
-        {
-            let (key, value) = line
-                .split_once(": ")
-                .ok_or_else(|| eyre!("found key without value: {line:?}"))?;
-            key_values.entry(key).or_default().push(value);
+        for line in string.lines().map(str::trim_end).filter(|l| !l.is_empty()) {
+            let (key, value) = match line.split_once(": ") {
+                Some(x) => x,
+                // There can be a block below the key-values.
+                // In the METADATA file that contains something like a README.
+                None => continue,
+            };
+            key_values
+                .entry(key.to_owned())
+                .or_default()
+                .push(value.to_owned());
         }
+        Self(key_values)
+    }
 
-        let get_unique_optional = |key| match key_values.get(key).map(|v| v.as_slice()) {
-            Some(&[value]) => Ok(Some(value.to_owned())),
+    fn get_unique_optional(&self, key: &str) -> Result<Option<String>> {
+        match self.0.get(key).map(|v| v.as_slice()) {
+            Some([value]) => Ok(Some(value.clone())),
             Some(_) => Err(eyre!("multiple key-value pairs for key {key}")),
             None => Ok(None),
-        };
+        }
+    }
 
-        let get_unique = |key| {
-            get_unique_optional(key)
-                .and_then(|opt_val| opt_val.ok_or_else(|| eyre!("missing required key {}", key)))
-        };
+    fn get_unique(&self, key: &str) -> Result<String> {
+        self.get_unique_optional(key)
+            .and_then(|opt_val| opt_val.ok_or_else(|| eyre!("missing required key {}", key)))
+    }
 
-        let parse_bool = |value| match value {
+    fn parse_bool(value: &str) -> Result<bool> {
+        match value {
             "true" => Ok(true),
             "false" => Ok(false),
             _ => Err(eyre!("invalid value for boolean: {value:?}")),
-        };
-
-        Ok(WheelMetadata {
-            version: WheelFormatVersion::from_str(&get_unique("Wheel-Version")?)?,
-            generator: get_unique("Generator")?,
-            root_is_purelib: parse_bool(&get_unique("Root-Is-Purelib")?)?,
-            tags: key_values
-                .get("Tag")
-                .map(|v| v.iter().map(<_>::to_string).collect())
-                .unwrap_or_default(),
-            build: get_unique_optional("Build")?,
-        })
+        }
     }
 }
 

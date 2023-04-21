@@ -99,6 +99,7 @@ def main() -> None:
     subcommands = parser.add_subparsers(title="Commands")
     add_install_subcommand(subcommands)
     add_uninstall_subcommand(subcommands)
+    add_list_subcommand(subcommands)
 
     def parse_and_run() -> None:
         args = parser.parse_args()
@@ -163,6 +164,24 @@ def add_uninstall_subcommand(
         uninstall_package(args.package)
 
     cmd.set_defaults(func=uninstall)
+
+
+def add_list_subcommand(
+    argparser: argparse._SubParsersAction,
+) -> None:
+    cmd = argparser.add_parser("list")
+    cmd.set_defaults(func=lambda _: list_packages())
+
+
+def list_packages() -> None:
+    virtpy = virtpy_path()
+    assert virtpy is not None
+
+    exit(
+        subprocess.run(
+            [*virtpy_cmd(virtpy), "internal-use-only", "list-packages", virtpy]
+        ).returncode
+    )
 
 
 def install_package_from_folder(package_path: str, use_pep517: bool) -> None:

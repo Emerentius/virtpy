@@ -160,6 +160,8 @@ enum InternalUseOnly {
     /// On systems where the venv executable is symlinked, it will return the linked one.
     /// Otherwise, it will search for the executable by version which might return a different one.
     GlobalPython { virtpy: PathBuf },
+    /// List packages in same format as pip list
+    ListPackages { virtpy: PathBuf },
 }
 
 #[derive(Subcommand)]
@@ -502,6 +504,58 @@ fn main() -> Result<()> {
         }
         Command::InternalUseOnly(InternalUseOnly::GlobalPython { virtpy }) => {
             println!("{}", Virtpy::from_existing(&virtpy)?.global_python()?);
+        }
+        Command::InternalUseOnly(InternalUseOnly::ListPackages { virtpy }) => {
+            let packages = Virtpy::from_existing(&virtpy)?.installed_distributions_metadata();
+            let (successes, failures): (Vec<_>, Vec<_>) = packages.into_iter().partition_result();
+
+            // Print table of package name and version.
+            // The columns are aligned at the width of the widest name and version.
+            // Example:
+            //
+            // Package                Version
+            // ---------------------- ------------------------------------
+            // flatbuffers            1.12.1-git20200711.33e2d80-dfsg1-0.6
+            // ubuntu-advantage-tools 8001
+            // ujson                  5.1.0
+            //
+            let max_name_width = successes
+                .iter()
+                .map(|metadata| metadata.name.len())
+                .max()
+                .unwrap_or("Package".len());
+            let max_version_width = successes
+                .iter()
+                .map(|metadata| metadata.version.len())
+                .max()
+                .unwrap_or("Version".len());
+
+            println!(
+                "{:p_width$} {:v_width$}",
+                "Package",
+                "Version",
+                p_width = max_name_width,
+                v_width = max_version_width
+            );
+            println!(
+                // print "---" lines by printing
+                // empty strings and filling with '-' up to specified width
+                "{:-<p_width$} {:-<v_width$}",
+                "",
+                "",
+                p_width = max_name_width,
+                v_width = max_version_width
+            );
+            for p in successes {
+                println!(
+                    "{:p_width$} {:v_width$}",
+                    p.name,
+                    p.version,
+                    p_width = max_name_width,
+                    v_width = max_version_width
+                );
+            }
+            // TODO: report errors
         }
         Command::ListAll => {
             // TODO: error handling

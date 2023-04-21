@@ -7,7 +7,8 @@
 use crate::internal_store::{wheel_is_already_registered, StoredDistributions};
 use crate::prelude::*;
 use crate::python::wheel::{
-    normalized_distribution_name_for_wheel, CheckStrategy, RecordEntry, WheelRecord,
+    normalized_distribution_name_for_wheel, CheckStrategy, DistributionMetadata, RecordEntry,
+    WheelRecord,
 };
 use crate::python::{
     generate_executable, records, Distribution, DistributionHash, EntryPoint, FileHash,
@@ -117,6 +118,15 @@ pub(crate) trait VirtpyPaths {
                     Err(err.into())
                 }
             })
+    }
+
+    fn installed_distributions_metadata(&self) -> Vec<Result<DistributionMetadata>> {
+        self.dist_infos()
+            .map(|dist_info| {
+                let metadata = fs_err::read_to_string(dist_info.join("METADATA"))?;
+                DistributionMetadata::from_str(&metadata)
+            })
+            .collect()
     }
 }
 
