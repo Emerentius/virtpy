@@ -160,9 +160,13 @@ impl WheelMetadata {
     }
 }
 
-/// Metadata about the distribution package.
+/// Metadata about the distribution package as defined by
+/// https://packaging.python.org/en/latest/specifications/core-metadata/#core-metadata
 /// Stored in the file `METADATA` in a wheel's dist-info directory.
 pub struct DistributionMetadata {
+    // name, version and metadatavversion are required, everything else is
+    // optional
+    pub metadata_version: String,
     pub name: String,
     pub version: String,
     // and a whole lot of other things
@@ -172,9 +176,19 @@ impl DistributionMetadata {
     pub fn from_str(metadata: &str) -> Result<Self> {
         let kv = KeyValues::from_str(metadata);
 
+        // Automated tools consuming metadata [...] MUST fail if metadata_version has a greater
+        // major version than the highest version they support
+        let metadata_version = kv.get_unique("Metadata-Version")?;
+        let major_version = metadata_version
+            .get(..2)
+            .ok_or_else(|| eyre!("distribution metadata version is missing major version"))?;
+        if !["1.", "2."].contains(&major_version) {
+            eyre::bail!("unsupported version of distribution metadata");
+        }
         Ok(DistributionMetadata {
             name: kv.get_unique("Name")?,
             version: kv.get_unique("Version")?,
+            metadata_version: kv.get_unique("Metadata-Version")?,
         })
     }
 }
