@@ -366,7 +366,34 @@ fn shim_info(ctx: &Ctx) -> Result<ShimInfo> {
     })
 }
 
+// when we're calling out to python or poetry, we don't want to accidentally
+// end up being influenced by whether or not a venv is active.
+// Any call to a venv-binary must be explicitly made.
+//
+// Unfortunately, the activation script hides some of the information
+// needed to fully undo the process. The variables storing the old state of
+// PATH and PYTHONHOME are not being stored
+fn deactivate_venv() {
+    use std::env::{remove_var, set_var};
+
+    // This should restore the PATH to the one set before activating the venv,
+    // but it won't restore the PYTHONHOME, if there was one.
+    // It could possibly be restored from the venv/pyvenv.cfg file. The "home"
+    // key contains a path. However, there is no way to distinguish the default
+    // home where no PYTHONHOME variable would be set from a different one
+    // where it would be without also adding system-dependent knowledge
+    // on what the default home is.
+    match python::detection::venvless_path() {
+        Err(e) => eprintln!("failed to remove venv from PATH: {e}"),
+        Ok(Some(path)) => set_var("PATH", path),
+        _ => {}
+    }
+
+    remove_var("VIRTUAL_ENV");
+}
+
 fn main() -> Result<()> {
+    deactivate_venv();
     color_eyre::install()?;
 
     let opt = Opt::parse();
