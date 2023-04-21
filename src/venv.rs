@@ -7,7 +7,8 @@
 use crate::internal_store::{wheel_is_already_registered, StoredDistributions};
 use crate::prelude::*;
 use crate::python::wheel::{
-    normalized_distribution_name_for_wheel, CheckStrategy, RecordEntry, WheelRecord,
+    normalized_distribution_name_for_wheel, CheckStrategy, DistributionMetadata, RecordEntry,
+    WheelRecord,
 };
 use crate::python::{
     generate_executable, records, Distribution, DistributionHash, EntryPoint, FileHash,
@@ -117,6 +118,15 @@ pub(crate) trait VirtpyPaths {
                     Err(err.into())
                 }
             })
+    }
+
+    fn installed_distributions_metadata(&self) -> Vec<Result<DistributionMetadata>> {
+        self.dist_infos()
+            .map(|dist_info| {
+                let metadata = fs_err::read_to_string(dist_info.join("METADATA"))?;
+                DistributionMetadata::from_str(&metadata)
+            })
+            .collect()
     }
 }
 
@@ -557,7 +567,7 @@ fn link_single_requirement_into_virtpy(
     // The RECORD is not linked in, because it doesn't (can't) contain its own hash.
     // Save the (possibly amended) record into the virtpy
     record.save_to_file(
-        &site_packages
+        site_packages
             .join(distrib.distribution.dist_info_name())
             .join("RECORD"),
     )?;
@@ -944,7 +954,7 @@ fn install_and_register_distribution_from_file(
 
     let install_folder = tmp_dir.utf8_path();
     let src_dist_info = install_folder.join(distribution.dist_info_name());
-    let mut wheel_record = WheelRecord::from_file(&src_dist_info.join("RECORD"))
+    let mut wheel_record = WheelRecord::from_file(src_dist_info.join("RECORD"))
         .wrap_err("couldn't get dist-info/RECORD")?;
 
     let wheel_checked = crate::python::wheel::verify_wheel_contents_or_repair(

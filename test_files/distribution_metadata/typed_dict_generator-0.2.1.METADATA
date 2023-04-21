@@ -1,0 +1,13 @@
+Metadata-Version: 2.1
+Name: typed-dict-generator
+Version: 0.2.1
+Summary: 
+Author: Emerentius
+Author-email: emerentius@arcor.de
+Requires-Python: >=3.7,<4.0
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Requires-Dist: click (>=8.0.1,<9.0.0)

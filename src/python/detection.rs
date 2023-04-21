@@ -40,7 +40,7 @@ fn find_python_by_version(major: u32, minor: Option<u32>) -> Result<PathBuf> {
         None => major.to_string(),
     };
     match crate::platform() {
-        crate::Platform::Unix => find_executable_in_path(&format!("python{version}")),
+        crate::Platform::Unix => find_executable_in_path(format!("python{version}")),
         crate::Platform::Windows => {
             use color_eyre::section::{Section, SectionExt};
             let mut cmd = std::process::Command::new("py");

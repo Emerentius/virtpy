@@ -25,10 +25,21 @@ def virtpy_path() -> Optional[pathlib.Path]:
     # So the venv dir is either the 3rd or 4th parent.
     parents = itertools.islice(iter(path.parents), 3, 5)
 
+    # In earlier versions of python, __file__ pointed to path the module was imported
+    # from without resolving symlinks. That has changed at some point.
     path = next(
-        (p for p in parents if p.joinpath("virtpy_link_metadata").exists()),
+        (
+            p
+            for p in parents
+            if (p.joinpath("virtpy_link_metadata").exists())
+            or p.joinpath("virtpy_central_metadata").exists()
+        ),
         None,
     )
+    if path is not None:
+        central_metadata = path.joinpath("virtpy_central_metadata")
+        if central_metadata.exists():
+            path = pathlib.Path(central_metadata.joinpath("link_location").read_text())
     return path
 
 
@@ -88,6 +99,7 @@ def main() -> None:
     subcommands = parser.add_subparsers(title="Commands")
     add_install_subcommand(subcommands)
     add_uninstall_subcommand(subcommands)
+    add_list_subcommand(subcommands)
 
     def parse_and_run() -> None:
         args = parser.parse_args()
@@ -152,6 +164,24 @@ def add_uninstall_subcommand(
         uninstall_package(args.package)
 
     cmd.set_defaults(func=uninstall)
+
+
+def add_list_subcommand(
+    argparser: argparse._SubParsersAction,
+) -> None:
+    cmd = argparser.add_parser("list")
+    cmd.set_defaults(func=lambda _: list_packages())
+
+
+def list_packages() -> None:
+    virtpy = virtpy_path()
+    assert virtpy is not None
+
+    exit(
+        subprocess.run(
+            [*virtpy_cmd(virtpy), "internal-use-only", "list-packages", virtpy]
+        ).returncode
+    )
 
 
 def install_package_from_folder(package_path: str, use_pep517: bool) -> None:

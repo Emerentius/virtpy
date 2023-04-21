@@ -123,7 +123,7 @@ enum WheelVersionSupport {
 }
 
 /// Metadata about the wheel archive itself, not the contained package.
-/// Stored in the file `METADATA` in a wheel's dist-info directory.
+/// Stored in the file `WHEEL` in a wheel's dist-info directory.
 struct WheelMetadata {
     version: WheelFormatVersion,
     #[allow(unused)]
@@ -148,46 +148,100 @@ impl WheelMetadata {
     fn from_str(metadata: &str) -> Result<Self> {
         // First, read all key-value pairs so we can collect all tags into a vec and also detect duplicates.
         // Unknown keys are ignored. They may be from a newer wheel format version.
+        let kv = KeyValues::from_str(metadata);
+
+        Ok(WheelMetadata {
+            version: WheelFormatVersion::from_str(&kv.get_unique("Wheel-Version")?)?,
+            generator: kv.get_unique("Generator")?,
+            root_is_purelib: KeyValues::parse_bool(&kv.get_unique("Root-Is-Purelib")?)?,
+            tags: kv.0.get("Tag").cloned().unwrap_or_default(),
+            build: kv.get_unique_optional("Build")?,
+        })
+    }
+}
+
+/// Metadata about the distribution package as defined by
+/// https://packaging.python.org/en/latest/specifications/core-metadata/#core-metadata
+/// Stored in the file `METADATA` in a wheel's dist-info directory.
+pub struct DistributionMetadata {
+    // name, version and metadatavversion are required, everything else is
+    // optional
+    pub metadata_version: String,
+    pub name: String,
+    pub version: String,
+    // and a whole lot of other things
+}
+
+impl DistributionMetadata {
+    pub fn from_str(metadata: &str) -> Result<Self> {
+        let kv = KeyValues::from_str(metadata);
+
+        // Automated tools consuming metadata [...] MUST fail if metadata_version has a greater
+        // major version than the highest version they support
+        let metadata_version = kv.get_unique("Metadata-Version")?;
+        let major_version = metadata_version
+            .get(..2)
+            .ok_or_else(|| eyre!("distribution metadata version is missing major version"))?;
+        if !["1.", "2."].contains(&major_version) {
+            eyre::bail!("unsupported version of distribution metadata");
+        }
+        Ok(DistributionMetadata {
+            name: kv.get_unique("Name")?,
+            version: kv.get_unique("Version")?,
+            metadata_version: kv.get_unique("Metadata-Version")?,
+        })
+    }
+}
+
+/// Helper struct for reading METADATA and WHEEL files
+struct KeyValues(HashMap<String, Vec<String>>);
+
+impl KeyValues {
+    fn from_str(string: &str) -> Self {
+        // First, read all key-value pairs so we can collect all tags into a vec and also detect duplicates.
+        // Unknown keys are ignored. They may be from a newer wheel format version.
         let mut key_values: HashMap<_, Vec<_>> = HashMap::new();
 
-        for line in metadata
+        for line in string
             .lines()
+            // Once a blank line appears, everything after it is part of the description.
+            // We mustn't read it, lest we mistake part of it for a key-value pair.
+            .take_while(|l| !l.is_empty())
             .map(str::trim_end)
-            .filter(|l| !l.is_empty())
         {
-            let (key, value) = line
-                .split_once(": ")
-                .ok_or_else(|| eyre!("found key without value: {line:?}"))?;
-            key_values.entry(key).or_default().push(value);
+            let (key, value) = match line.split_once(": ") {
+                Some(x) => x,
+                // There can be a block below the key-values.
+                // In the METADATA file that contains something like a README.
+                None => continue,
+            };
+            key_values
+                .entry(key.to_owned())
+                .or_default()
+                .push(value.to_owned());
         }
+        Self(key_values)
+    }
 
-        let get_unique_optional = |key| match key_values.get(key).map(|v| v.as_slice()) {
-            Some(&[value]) => Ok(Some(value.to_owned())),
+    fn get_unique_optional(&self, key: &str) -> Result<Option<String>> {
+        match self.0.get(key).map(|v| v.as_slice()) {
+            Some([value]) => Ok(Some(value.clone())),
             Some(_) => Err(eyre!("multiple key-value pairs for key {key}")),
             None => Ok(None),
-        };
+        }
+    }
 
-        let get_unique = |key| {
-            get_unique_optional(key)
-                .and_then(|opt_val| opt_val.ok_or_else(|| eyre!("missing required key {}", key)))
-        };
+    fn get_unique(&self, key: &str) -> Result<String> {
+        self.get_unique_optional(key)
+            .and_then(|opt_val| opt_val.ok_or_else(|| eyre!("missing required key {}", key)))
+    }
 
-        let parse_bool = |value| match value {
+    fn parse_bool(value: &str) -> Result<bool> {
+        match value {
             "true" => Ok(true),
             "false" => Ok(false),
             _ => Err(eyre!("invalid value for boolean: {value:?}")),
-        };
-
-        Ok(WheelMetadata {
-            version: WheelFormatVersion::from_str(&get_unique("Wheel-Version")?)?,
-            generator: get_unique("Generator")?,
-            root_is_purelib: parse_bool(&get_unique("Root-Is-Purelib")?)?,
-            tags: key_values
-                .get("Tag")
-                .map(|v| v.iter().map(<_>::to_string).collect())
-                .unwrap_or_default(),
-            build: get_unique_optional("Build")?,
-        })
+        }
     }
 }
 
@@ -519,6 +573,17 @@ mod test {
             let f = f?;
             let data = fs_err::read_to_string(f.path())?;
             WheelMetadata::from_str(&data)
+                .wrap_err_with(|| eyre!("failed to parse data for {:?}", f.path()))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn can_parse_distribution_metadata() -> Result<()> {
+        for f in Path::new("test_files/distribution_metadata").read_dir()? {
+            let f = f?;
+            let data = fs_err::read_to_string(f.path())?;
+            DistributionMetadata::from_str(&data)
                 .wrap_err_with(|| eyre!("failed to parse data for {:?}", f.path()))?;
         }
         Ok(())

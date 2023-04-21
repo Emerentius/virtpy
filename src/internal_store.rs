@@ -549,7 +549,7 @@ impl StoredDistribution {
 
     fn records(&self, ctx: &Ctx) -> Result<impl Iterator<Item = RecordEntry>> {
         let record = self.record_file(ctx);
-        Ok(WheelRecord::from_file(&record)?.files.into_iter())
+        Ok(WheelRecord::from_file(record)?.files.into_iter())
     }
 
     // The executables of this distribution that can be added to the global install dir.
