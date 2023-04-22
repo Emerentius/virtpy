@@ -69,10 +69,16 @@ fn find_python_by_version(major: u32, minor: Option<u32>) -> Result<PathBuf> {
 fn find_executable_in_path(executable: impl AsRef<Path>) -> Result<PathBuf> {
     let executable = executable.as_ref();
 
+    pathsearch::find_executable_in_path(executable)
+        .ok_or_else(|| eyre!("couldn't find python executable `{executable}` in PATH"))?
+        .try_into_utf8_pathbuf()
+}
+
+pub fn venvless_path() -> Result<Option<String>> {
     // If we're in an activated venv, the PATH has been modified
     // and we may find the executable in the venv's bin directory.
     // Remove the venv from the PATH in that case.
-    // We need to use env::var() and not var_os() here because OsString
+    // We need to use String instead of OsString because OsString
     // doesn't have any string modification methods.
     let path = std::env::var_os("PATH");
     let path = path
@@ -81,7 +87,7 @@ fn find_executable_in_path(executable: impl AsRef<Path>) -> Result<PathBuf> {
                 .map_err(|_| eyre!("PATH contains non-utf8 directories"))
         })
         .transpose()?;
-    let path = match (path, std::env::var_os("VIRTUAL_ENV")) {
+    match (path, std::env::var_os("VIRTUAL_ENV")) {
         (Some(path), Some(venv_path)) => {
             let path_sep = match crate::platform() {
                 crate::Platform::Unix => ":",
@@ -90,27 +96,14 @@ fn find_executable_in_path(executable: impl AsRef<Path>) -> Result<PathBuf> {
             let venv_path = PathBuf::try_from(StdPathBuf::from(venv_path))
                 .wrap_err("venv PATH is not valid utf8")?;
             let executables_dir = executables_path(&venv_path);
-            Some(
+            Ok(Some(
                 path.split(path_sep)
                     .filter(|&dir| Path::new(dir) != executables_dir)
                     .join(path_sep),
-            )
+            ))
         }
-        (path, _) => path,
-    };
-
-    let exe_path = _find_executable_in_custom_path(executable, path.map(std::ffi::OsString::from))
-        .ok_or_else(|| eyre!("couldn't find python executable `{executable}` in PATH"))?;
-    exe_path.try_into_utf8_pathbuf()
-}
-
-// TODO: maybe we can upstream this?
-fn _find_executable_in_custom_path(
-    executable: &Path,
-    path: Option<std::ffi::OsString>,
-) -> Option<StdPathBuf> {
-    let path_ext = std::env::var_os("PATHEXT");
-    pathsearch::PathSearcher::new(executable, path.as_deref(), path_ext.as_deref()).next()
+        (path, _) => Ok(path),
+    }
 }
 
 #[cfg(test)]
