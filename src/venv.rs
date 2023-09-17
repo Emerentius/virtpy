@@ -171,7 +171,24 @@ impl VirtpyPaths for Virtpy {
 
 trait VirtpyPathsPrivate: VirtpyPaths {
     fn install_paths(&self) -> Result<InstallPaths> {
-        InstallPaths::detect(self.python())
+        // cached so we don't get the >30ms delay from invoking python every time.
+        let cache_file = "install_paths.json";
+        // TODO: ensure cache is always in same location (only link or only backing)
+        if let Some(install_paths) = self
+            .get_metadata(cache_file)?
+            .and_then(|data| serde_json::from_str(&data).ok())
+        {
+            return Ok(InstallPaths(install_paths));
+        }
+        let install_paths = InstallPaths::detect(self.python());
+        if let Some(serialized_paths) = install_paths
+            .as_ref()
+            .ok()
+            .and_then(|paths| serde_json::to_string(&paths.0).ok())
+        {
+            let _ = self.set_metadata(cache_file, &serialized_paths);
+        }
+        install_paths
     }
 }
 
