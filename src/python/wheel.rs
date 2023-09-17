@@ -258,13 +258,14 @@ impl KeyValues {
 // This is NOT TRUE. PEP 503 normalization includes conversion to lowercase. We MUST NOT do that.
 // Package names out in the wild contain uppercase names and are accepted by pip.
 pub(crate) fn normalized_distribution_name_for_wheel(distrib_name: &str) -> String {
-    _escape(distrib_name, "_")
+    let pattern = lazy_regex::regex!(r"[-_]+");
+    pattern.replace_all(distrib_name, "_").into_owned()
 }
 
-fn _escape(string: &str, replace_with: &str) -> String {
-    let pattern = lazy_regex::regex!(r"[-_.]+");
-    pattern.replace_all(string, replace_with).into_owned()
-}
+// fn _escape(string: &str, replace_with: &str) -> String {
+//     let pattern = lazy_regex::regex!(r"[-_.]+");
+//     pattern.replace_all(string, replace_with).into_owned()
+// }
 
 /// The record of all files belonging to a distribution along with their path, size and hash.
 /// It is stored in the file `RECORD` inside a distribution's dist-info directory.

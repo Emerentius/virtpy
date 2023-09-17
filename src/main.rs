@@ -343,8 +343,11 @@ impl ProjectDirs {
 }
 
 fn package_info_from_dist_info_dirname(dirname: &str) -> (&str, &str) {
+    // NOTE: an old version allowed - in the distribution name.
+    //       Was this a bug or deliberate because of a misconfigured package out there?
+    //       I can't remember.
     let (_, distrib_name, version) = lazy_regex::regex_captures!(
-        r"([a-zA-Z_][a-zA-Z0-9_-]*)-(\d*!.*|\d*\..*)\.dist-info",
+        r"^([a-zA-Z_\.][a-zA-Z0-9_\.]*)-(\d*!.*|\d*\..*)\.dist-info$",
         dirname
     )
     .unwrap();
@@ -534,7 +537,7 @@ fn main() -> Result<()> {
         }
         Command::InternalUseOnly(InternalUseOnly::ListPackages { virtpy }) => {
             let packages = Virtpy::from_existing(&virtpy)?.installed_distributions_metadata();
-            let (successes, failures): (Vec<_>, Vec<_>) = packages.into_iter().partition_result();
+            let (successes, _failures): (Vec<_>, Vec<_>) = packages.into_iter().partition_result();
 
             // Print table of package name and version.
             // The columns are aligned at the width of the widest name and version.
