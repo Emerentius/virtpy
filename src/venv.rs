@@ -12,7 +12,7 @@ use crate::python::wheel::{
 };
 use crate::python::{
     generate_executable, records, Distribution, DistributionHash, EntryPoint, FileHash,
-    PythonVersion,
+    PythonVersion, PythonVersionError,
 };
 use crate::{
     check_output, ignore_target_doesnt_exist, Ctx, CENTRAL_LOCATION, DEFAULT_VIRTPY_PATH,
@@ -30,6 +30,7 @@ use itertools::Itertools;
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
+use std::io::Write;
 use std::path::Path as StdPath;
 use std::process::Command;
 use tempdir::TempDir;
@@ -196,11 +197,16 @@ impl VirtpyPathsPrivate for VirtpyBacking {}
 impl VirtpyPathsPrivate for Virtpy {}
 
 impl VirtpyBacking {
-    pub(crate) fn from_existing(location: PathBuf) -> Self {
-        Self {
-            python_version: python_version(&location).unwrap(),
+    /// A successful result does not guarantee, that the virtpy is in a good state, only that
+    /// the information to construct a VirtpyBacking could be collected.
+    pub(crate) fn from_existing(location: PathBuf) -> Result<Self, VirtpyBackingError> {
+        Ok(Self {
+            python_version: python_version(&location).map_err(|e| VirtpyBackingError::Broken {
+                link: None,
+                reason: format!("{}", e),
+            })?,
             location,
-        }
+        })
     }
 }
 
@@ -253,20 +259,8 @@ impl Virtpy {
     }
 
     pub(crate) fn from_existing(virtpy_link: &Path) -> Result<Self> {
-        match virtpy_link_status(virtpy_link).wrap_err("failed to verify virtpy")? {
-            VirtpyStatus::WrongLocation { should, .. } => {
-                Err(eyre!("virtpy copied or moved from {should}"))
-            }
-            VirtpyStatus::Dangling { target } => {
-                Err(eyre!("backing storage for virtpy not found: {target}"))
-            }
-            VirtpyStatus::Ok { matching_virtpy } => Ok(Virtpy {
-                link: canonicalize(virtpy_link)?,
-                backing: matching_virtpy,
-                python_version: python_version(virtpy_link)?,
-            }),
-        }
-        .wrap_err_with(|| eyre!("the virtpy `{virtpy_link}` is broken, please recreate it.",))
+        virtpy_link_status(virtpy_link)
+            .wrap_err_with(|| eyre!("working order `{virtpy_link}` couldn't be verified.",))
     }
 
     pub(crate) fn add_dependency_from_file(
@@ -487,25 +481,30 @@ impl Virtpy {
 /// Both the backing venv and the venv link contain references to the path
 /// of the other. Either one could be deleted without the other one
 /// and the link could also be moved
-enum VirtpyStatus {
-    Ok {
-        matching_virtpy: PathBuf,
-    },
+#[derive(thiserror::Error, Debug)]
+pub(crate) enum VirtpyError {
+    #[error("virtpy copied or moved from {should}")]
     WrongLocation {
         should: PathBuf,
         #[allow(unused)]
         actual: PathBuf,
     },
-    Dangling {
-        target: PathBuf,
+    #[error("backing storage for virtpy missing: {target}")]
+    Dangling { target: PathBuf },
+    #[error("virtpy is broken: {reason}")]
+    Broken {
+        backing: Option<PathBuf>,
+        reason: String,
     },
+    #[error("unknown error: {0}")]
+    Unknown(#[from] eyre::Report),
 }
 
-fn virtpy_link_status(virtpy_link_path: &Path) -> Result<VirtpyStatus> {
+fn virtpy_link_status(virtpy_link_path: &Path) -> Result<Virtpy, VirtpyError> {
     let supposed_location = virtpy_link_supposed_location(virtpy_link_path)
         .wrap_err("failed to read original location of virtpy")?;
     if !paths_match(virtpy_link_path.as_ref(), supposed_location.as_ref()).unwrap() {
-        return Ok(VirtpyStatus::WrongLocation {
+        return Err(VirtpyError::WrongLocation {
             should: supposed_location,
             actual: virtpy_link_path.to_owned(),
         });
@@ -513,11 +512,27 @@ fn virtpy_link_status(virtpy_link_path: &Path) -> Result<VirtpyStatus> {
 
     let target = virtpy_link_target(virtpy_link_path).wrap_err("failed to find virtpy backing")?;
     if !target.exists() {
-        return Ok(VirtpyStatus::Dangling { target });
+        return Err(VirtpyError::Dangling { target });
     }
 
-    Ok(VirtpyStatus::Ok {
-        matching_virtpy: target,
+    let python_version = python_version(virtpy_link_path).map_err(|e| {
+        let msg = "unable to determine virtpy python version";
+        let backing = Some(target.to_owned());
+        match e {
+            PythonVersionError::VersionKeyMissing | PythonVersionError::UnableToReadVersion(_) => {
+                VirtpyError::Broken {
+                    backing,
+                    reason: format!("{msg}: {e}"),
+                }
+            }
+            PythonVersionError::Unknown(e) => VirtpyError::Unknown(e.wrap_err(msg)),
+        }
+    })?;
+
+    Ok(Virtpy {
+        link: canonicalize(virtpy_link_path)?,
+        backing: target,
+        python_version,
     })
 }
 
@@ -859,28 +874,79 @@ fn virtpy_link_supposed_location(virtpy_link: &Path) -> std::io::Result<PathBuf>
     fs_err::read_to_string(link).map(PathBuf::from)
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub(crate) enum VirtpyBackingStatus {
-    #[allow(unused)]
-    Ok {
-        matching_link: PathBuf,
-    },
-    Orphaned {
-        link: PathBuf,
-    },
+    #[error("the virtpy linked to this backing not found")]
+    Orphaned { virtpy: VirtpyBacking },
+    // NOTE: it may be better to roll Unlinked into Broken
+    #[error("the link_location file is missing")]
+    Unlinked,
+    #[error("virtpy is unusable, an important invariant was broken: {reason}")]
+    Broken { link: PathBuf, reason: String },
+    #[error(transparent)]
+    Unknown(#[from] eyre::Report),
 }
 
-pub(crate) fn virtpy_status(virtpy_path: &Path) -> Result<VirtpyBackingStatus> {
-    let link_location = virtpy_link_location(virtpy_path)
-        .wrap_err("failed to read location of corresponding virtpy")?;
+#[derive(thiserror::Error, Debug)]
+pub(crate) enum VirtpyBackingError {
+    // #[error("the virtpy linking to this backing could not be found: {link}")]
+    // Orphaned { link: PathBuf },
+    #[error("virtpy is unusable, an important invariant was broken: {reason}")]
+    Broken {
+        link: Option<PathBuf>,
+        reason: String,
+    },
+    // TODO: map this onto Broken or Other, but maintain the backtrace
+    // #[error(transparent)]
+    // PythonVersion(#[from] PythonVersionError),
+    // #[error(transparent)]
+    // Other(#[from] eyre::Report),
+}
+
+pub(crate) fn virtpy_status(virtpy_path: &Path) -> Result<VirtpyBacking, VirtpyBackingStatus> {
+    let link_location = match virtpy_link_location(virtpy_path) {
+        Ok(location) => location,
+        Err(err) if is_not_found(&err) => {
+            return Err(VirtpyBackingStatus::Unlinked {});
+        }
+        Err(err) => Err(err).wrap_err("failed to read location of corresponding virtpy")?,
+    };
+
+    let python_version = python_version(virtpy_path).map_err(|e| {
+        let msg = "unable to determine virtpy python version";
+        match e {
+            PythonVersionError::Unknown(e) => VirtpyBackingStatus::Unknown(e.wrap_err(msg)),
+            e => VirtpyBackingStatus::Broken {
+                link: link_location.to_owned(),
+                reason: format!("{msg}: {e}"),
+            },
+        }
+    })?;
+
+    for expected_path in ["include", "lib", "lib64", "pyvenv.cfg"]
+        .into_iter()
+        .map(|p| virtpy_path.join(p))
+        .chain(std::iter::once(executables_path(virtpy_path)))
+    {
+        if !expected_path.exists() {
+            let filename = expected_path.file_name().unwrap();
+            return Err(VirtpyBackingStatus::Broken {
+                link: link_location,
+                reason: format!("Missing file: {filename}"),
+            });
+        }
+    }
 
     let link_target = virtpy_link_target(&link_location);
 
+    let backing = VirtpyBacking {
+        location: virtpy_path.to_owned(),
+        python_version,
+    };
+
     if let Err(err) = &link_target {
         if is_not_found(err) {
-            return Ok(VirtpyBackingStatus::Orphaned {
-                link: link_location,
-            });
+            return Err(VirtpyBackingStatus::Orphaned { virtpy: backing });
         }
     }
 
@@ -889,14 +955,24 @@ pub(crate) fn virtpy_status(virtpy_path: &Path) -> Result<VirtpyBackingStatus> {
         .wrap_err("failed to read virtpy link target through backlink")?;
 
     if !paths_match(virtpy_path.as_ref(), link_target.as_ref()).unwrap() {
-        return Ok(VirtpyBackingStatus::Orphaned {
-            link: link_location,
-        });
+        return Err(VirtpyBackingStatus::Orphaned { virtpy: backing });
     }
 
-    Ok(VirtpyBackingStatus::Ok {
-        matching_link: link_location,
-    })
+    // for entry in link_location.read_dir()? {
+    //     let entry = entry?;
+    //     // any standard paths are utf8
+    //     let Ok(path) = entry.try_utf8_path() else {
+    //         continue;
+    //     };
+    //     if !path.exists() {
+    //         return Ok(Err(VirtpyBackingError::Broken {
+    //             link: Some(link_location),
+    //             reason: format!("symlink target missing: {path}"),
+    //         }));
+    //     }
+    // }
+
+    Ok(backing)
 }
 
 /// The paths where the contents of subdirs of a wheel's data directory should be placed.
@@ -1148,25 +1224,28 @@ setup(
 //     Ok(())
 // }
 
-pub(crate) fn python_version(venv: &Path) -> Result<PythonVersion> {
+pub(crate) fn python_version(venv: &Path) -> Result<PythonVersion, PythonVersionError> {
     let mut ini = configparser::ini::Ini::new();
     ini.load(venv.join("pyvenv.cfg"))
         .map_err(|err_string| eyre!("couldn't load pyvenv.cfg for venv at {venv}: {err_string}"))?;
-    let version = ini
-        .get("default", "version")
-        .ok_or_else(|| eyre!("pyvenv.cfg contains no version key"))?;
-    let (_, major, minor, patch) = lazy_regex::regex_captures!(r"(\d+)\.(\d+)\.(\d+)", &version)
-        .ok_or_else(|| eyre!("failed to read python version from {version:?}"))?;
 
-    let parse_num = |num: &str| {
-        num.parse::<u32>()
-            .wrap_err_with(|| eyre!("failed to parse number: \"{num:?}\""))
-    };
-    Ok(PythonVersion {
-        major: parse_num(major)?,
-        minor: parse_num(minor)?,
-        patch: parse_num(patch)?,
-    })
+    ini.get("default", "version")
+        .ok_or_else(|| PythonVersionError::VersionKeyMissing)
+        .and_then(|version| {
+            let (_, major, minor, patch) =
+                lazy_regex::regex_captures!(r"(\d+)\.(\d+)\.(\d+)", &version)
+                    .ok_or_else(|| PythonVersionError::UnableToReadVersion(version.to_owned()))?;
+
+            let parse_num = |num: &str| {
+                num.parse::<u32>()
+                    .map_err(|_| PythonVersionError::UnableToReadVersion(version.to_owned()))
+            };
+            Ok(PythonVersion {
+                major: parse_num(major)?,
+                minor: parse_num(minor)?,
+                patch: parse_num(patch)?,
+            })
+        })
 }
 
 fn add_package_resources(ctx: &Ctx, virtpy: &Virtpy) -> Result<()> {
