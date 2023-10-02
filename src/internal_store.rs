@@ -216,6 +216,9 @@ struct StoreDependencies {
     dist_files: DistFiles,
     // Files -> Distributions containing it
     file_dists: FileDists,
+    // TODO: exclude these from stats
+    #[allow(unused)]
+    broken_backing_virtpys: Vec<PathBuf>,
 }
 
 impl StoreDependencies {
@@ -264,10 +267,26 @@ impl StoreDependencies {
         let mut file_dists = package_files(ctx)?
             .map_ok(|filehash| (filehash, <_>::default()))
             .collect::<Result<FileDists, _>>()?;
+        let mut broken_backing_virtpys = vec![];
 
         for virtpy_path in ctx.proj_dirs.virtpys().as_std_path().fs_err_read_dir()? {
             let virtpy_path = virtpy_path?.utf8_path();
-            let backing = VirtpyBacking::from_existing(virtpy_path.clone());
+            match virtpy_status(&virtpy_path) {
+                Ok(_backing) | Err(VirtpyBackingStatus::Orphaned { virtpy: _backing }) => {}
+                Err(VirtpyBackingStatus::Broken { .. } | VirtpyBackingStatus::Unlinked) => {
+                    broken_backing_virtpys.push(virtpy_path);
+                    continue;
+                }
+                Err(VirtpyBackingStatus::Unknown(_err)) => {
+                    // TODO: deal with differently
+                    broken_backing_virtpys.push(virtpy_path);
+                    continue;
+                }
+            };
+            let Ok(backing) = VirtpyBacking::from_existing(virtpy_path.clone()) else {
+                broken_backing_virtpys.push(virtpy_path);
+                continue;
+            };
             let distributions: HashSet<_> = distributions_used(&backing)
                 .collect::<Result<_>>()
                 .wrap_err_with(|| {
@@ -309,6 +328,7 @@ impl StoreDependencies {
             dist_virtpys,
             dist_files,
             file_dists,
+            broken_backing_virtpys,
         })
     }
 }
