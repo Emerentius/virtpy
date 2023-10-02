@@ -9,21 +9,21 @@
 from __future__ import annotations
 
 import argparse
-import sys
-import pathlib
-import os.path
 import itertools
-import time
+import os.path
+import pathlib
 import subprocess
+import sys
+import time
 from typing import List, Optional, Union
 
 
 def virtpy_path() -> Optional[pathlib.Path]:
-    path = pathlib.Path(__file__)
+    this_file: pathlib.Path = pathlib.Path(__file__)
     # linux:   venv/lib/python3.X/site-packages/pip
     # windows: venv/lib/site-packages/pip              (I think)
     # So the venv dir is either the 3rd or 4th parent.
-    parents = itertools.islice(iter(path.parents), 3, 5)
+    parents = itertools.islice(iter(this_file.parents), 3, 5)
 
     # In earlier versions of python, __file__ pointed to path the module was imported
     # from without resolving symlinks. That has changed at some point.
@@ -185,8 +185,8 @@ def list_packages() -> None:
 
 
 def install_package_from_folder(package_path: str, use_pep517: bool) -> None:
-    import tempfile
     import glob
+    import tempfile
 
     package_name = os.path.basename(package_path) or os.path.basename(
         os.path.dirname(package_path)
