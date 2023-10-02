@@ -20,7 +20,7 @@ The name stands for <b>virt</b>ual <b>py</b>thon and is subject to change. The e
     for installing non-wheel packages by converting them into wheels first.
 * [Poetry](https://github.com/python-poetry/poetry) (optional, but strongly recommended)  
   Virtpy does not manage dependencies or download packages. It will, however, work seamlessly with poetry after you've created a virtpy in your python project's directory.  
-  **You must set poetry's config "installer.modern-installer" to false in v1.4+ or it will break virtpy:**  
+  **You must either install the [poetry plugin](poetry_plugin_virtpy) from this repo or set poetry's config "installer.modern-installer" to false in v1.4+ or it will break virtpy:**  
   `poetry config installer.modern-installation false`
 
 # How to use
