@@ -1,13 +1,12 @@
 use crate::prelude::*;
-use eyre::{ensure, eyre, WrapErr};
+use eyre::{bail, ensure, eyre, WrapErr};
 use fs_err::{File, PathExt};
 use itertools::Itertools;
 
 use crate::python::wheel::WheelChecked;
 use crate::python::{Distribution, DistributionHash, EntryPoint, FileHash};
 use crate::venv::{
-    virtpy_link_location, virtpy_link_target, virtpy_status, VirtpyBacking, VirtpyBackingStatus,
-    VirtpyPaths,
+    virtpy_link_location, virtpy_status, VirtpyBacking, VirtpyBackingStatus, VirtpyPaths,
 };
 use crate::Ctx;
 use crate::{
@@ -23,20 +22,51 @@ use std::{
 };
 
 pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> Result<()> {
-    let (danglers, errors): (Vec<_>, Vec<_>) = dangling_virtpys(ctx)?.partition_result();
-    for (virtpy, err) in errors {
-        let path = virtpy.location();
-        eprintln!("failed to check {path}: {err}");
+    let (_virtpys, problematic_virtpys): (Vec<_>, Vec<_>) =
+        all_virtpy_backings(ctx)?.partition_result();
+
+    let mut to_delete = vec![];
+    let mut orphaned = vec![];
+    let mut any_critical_errors = false;
+    for (path, status) in problematic_virtpys {
+        match status {
+            VirtpyBackingStatus::Orphaned { virtpy } => orphaned.push(virtpy),
+            VirtpyBackingStatus::Unlinked => {
+                eprintln!("virtpy is not linked: {path}");
+                to_delete.push(path)
+            }
+            VirtpyBackingStatus::Broken { reason, .. } => {
+                eprintln!("virtpy is broken: {reason}: {path}");
+                to_delete.push(path);
+            }
+            VirtpyBackingStatus::Unknown(report) => {
+                eprintln!("failed to check status of virtpy: {path}");
+                eprintln!("{report}");
+                any_critical_errors = true;
+            }
+        }
     }
 
-    if !danglers.is_empty() {
-        println!("found {} missing virtpys.", danglers.len());
+    if any_critical_errors {
+        bail!("aborting due to inability to check some virtpys");
+    }
+
+    if !to_delete.is_empty() && remove {
+        for virtpy in to_delete {
+            if let Err(err) = delete_virtpy_backing(&virtpy) {
+                eprintln!("failed to delete virtpy at {virtpy}: {err}")
+            }
+        }
+    }
+
+    if !orphaned.is_empty() {
+        println!("found {} missing virtpys.", orphaned.len());
 
         if remove {
-            for (backing, link) in &danglers {
+            for backing in &orphaned {
                 let backing_path = backing.location();
-                debug_assert!(virtpy_link_target(link)
-                    .map_or(true, |link_target| link_target != backing_path));
+                // debug_assert!(virtpy_link_target(link)
+                //     .map_or(true, |link_target| link_target != backing_path));
                 if let Err(err) = delete_virtpy_backing(backing_path) {
                     eprintln!("failed to delete virtpy at {backing_path}: {err}")
                 }
@@ -44,16 +74,24 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> Result<()> {
         } else {
             println!("If you've moved some of these, recreate new ones in their place as they'll break when the orphaned backing stores are deleted.\nRun `virtpy gc --remove` to delete orphans\n");
 
-            for (target, virtpy_gone_awol) in &danglers {
-                let target = target.location();
-                println!("{virtpy_gone_awol} => {target}");
+            for backing in &orphaned {
+                let target = backing.location();
+                match backing.get_metadata("link_location") {
+                    Ok(Some(link)) => println!("{link} => {target}"),
+                    Ok(None) => println!("link missing for {target}"),
+                    Err(err) => eprintln!("failed to read link for {target}: {err}"),
+                };
+                //println!("{virtpy_gone_awol} => {target}");
             }
         }
     }
 
     let mut store_dependencies = StoreDependencies::current(ctx)?;
-    store_dependencies
-        .remove_virtpy_dependencies(danglers.iter().map(|(virtpy, _)| virtpy.clone()));
+    // TODO: add separate flag for removing orphans
+    // TODO: make it possible to remove broken virtpys from dependency graph
+    //       (if they are even a part of it)
+    store_dependencies.remove_virtpy_dependencies(orphaned.iter().cloned());
+    // store_dependencies.remove_virtpy_dependencies(to_delete.iter().cloned());
 
     {
         let unused_dists = store_dependencies
@@ -142,9 +180,9 @@ pub(crate) fn collect_garbage(ctx: &Ctx, remove: bool) -> Result<()> {
     Ok(())
 }
 
-fn dangling_virtpys(
+fn all_virtpy_backings(
     ctx: &Ctx,
-) -> Result<impl Iterator<Item = Result<(VirtpyBacking, PathBuf), (VirtpyBacking, eyre::Report)>>> {
+) -> Result<impl Iterator<Item = Result<VirtpyBacking, (PathBuf, VirtpyBackingStatus)>>> {
     Ok(ctx
         .proj_dirs
         .virtpys()
@@ -152,16 +190,11 @@ fn dangling_virtpys(
         .wrap_err("failed to read virtpy dir")?
         .filter_map(|virtpy| {
             let virtpy = virtpy.unwrap();
-            assert!(virtpy.file_type().unwrap().is_dir());
-            let path = virtpy.utf8_path();
-            let status = virtpy_status(&path);
-            let virtpy = VirtpyBacking::from_existing(path);
-
-            match status {
-                Ok(VirtpyBackingStatus::Ok { .. }) => None,
-                Ok(VirtpyBackingStatus::Orphaned { link }) => Some(Ok((virtpy, link))),
-                Err(err) => Some(Err((virtpy, err))),
+            if !(virtpy.file_type().unwrap().is_dir()) {
+                return None;
             }
+            let path = virtpy.utf8_path();
+            Some(virtpy_status(&path).map_err(|e| (path, e)))
         }))
 }
 

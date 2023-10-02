@@ -19,6 +19,16 @@ pub(crate) struct PythonVersion {
     pub(crate) patch: u32,
 }
 
+#[derive(thiserror::Error, Debug)]
+pub(crate) enum PythonVersionError {
+    #[error("pyvenv.cfg contains no version key")]
+    VersionKeyMissing,
+    #[error("can't read python version from pyvenv.cfg: {0}")]
+    UnableToReadVersion(String),
+    #[error(transparent)]
+    Unknown(#[from] eyre::Report),
+}
+
 impl PythonVersion {
     pub(crate) fn as_string_without_patch(&self) -> String {
         format!("{}.{}", self.major, self.minor)
