@@ -458,9 +458,17 @@ fn distributions_used(
         .dist_infos()
         .filter(|dist_info_path| {
             // poetry places a dist-info into the venv for the package
-            // whose dependencies are managed by poetry
+            // whose dependencies are managed by poetry.
+            // It marks these by writing "poetry" to the *.dist-info/INSTALLER file.
+            // Interestingly, wheels installed by poetry contain poetry's version
+            // but this one does not.
+            //
+            // Ignoring files by other installers also makes it possible for other
+            // tools to install distributions into virtpys and have it work transparently,
+            // although while losing all of virtpys benefits.
+            // TODO: build a way to detect foreign, unwanted packages.
             fs_err::read_to_string(dist_info_path.join("INSTALLER"))
-                .map_or(true, |installer| installer.trim() != "poetry")
+                .map_or(true, |installer| installer.trim() == "virtpy")
         })
         .map(stored_distribution_of_installed_dist)
 }
