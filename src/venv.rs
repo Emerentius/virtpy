@@ -5,7 +5,6 @@
 //! 2. The backing venv in a central location to which (1) contains symlinks to
 
 use crate::internal_store::{wheel_is_already_registered, StoredDistributions};
-use crate::prelude::*;
 use crate::python::wheel::{
     normalized_distribution_name_for_wheel, CheckStrategy, DistributionMetadata, RecordEntry,
     WheelRecord,
@@ -23,6 +22,7 @@ use crate::{
     ignore_target_exists, is_not_found, python_path, relative_path, symlink_dir, symlink_file,
     Path, PathBuf, ShimInfo, StoredDistribution, CENTRAL_METADATA, DIST_HASH_FILE, LINK_METADATA,
 };
+use crate::{prelude::*, INSTALLER_FILE};
 use clap::ValueEnum;
 use eyre::{bail, eyre, Context};
 use fs_err::PathExt;
@@ -589,6 +589,11 @@ fn link_single_requirement_into_virtpy(
     let dist_hash = &distrib.distribution.sha.0;
     fs_err::write(&hash_path, dist_hash).wrap_err("failed to write distribution hash file")?;
 
+    // Similarly, add the INSTALLER file
+    let installer_path = distrib_dist_info.join(INSTALLER_FILE);
+    let installer = "virtpy\n";
+    fs_err::write(&installer_path, installer).wrap_err("failed to write INSTALLER")?;
+
     link_files_from_record_into_virtpy(
         ctx,
         &mut record,
@@ -598,11 +603,16 @@ fn link_single_requirement_into_virtpy(
     )?;
     install_executables(ctx, distrib, virtpy, &mut record)?;
 
-    record.files.push(RecordEntry {
-        path: relative_path(site_packages, hash_path)?,
-        hash: FileHash::from_reader(dist_hash.as_bytes()), // It's a hash of a hash => can't just copy it
-        filesize: dist_hash.len() as u64,
-    });
+    let mut add_entry = |path: &Path, content: &str| -> Result<()> {
+        record.files.push(RecordEntry {
+            path: relative_path(site_packages, path)?,
+            hash: FileHash::from_reader(content.as_bytes()),
+            filesize: content.len() as u64,
+        });
+        Ok(())
+    };
+    add_entry(&hash_path, dist_hash)?;
+    add_entry(&installer_path, installer)?;
 
     // The RECORD is not linked in, because it doesn't (can't) contain its own hash.
     // Save the (possibly amended) record into the virtpy

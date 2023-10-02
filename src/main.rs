@@ -183,6 +183,7 @@ const CENTRAL_LOCATION: &str = "central_location";
 
 // name of file we add to .dist-info dir containing the distribution's hash
 const DIST_HASH_FILE: &str = "DISTRIBUTION_HASH";
+const INSTALLER_FILE: &str = "INSTALLER";
 
 fn check_output(cmd: &mut std::process::Command) -> Result<String> {
     String::from_utf8(_check_output(cmd)?)
