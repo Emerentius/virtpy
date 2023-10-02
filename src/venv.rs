@@ -287,6 +287,14 @@ impl Virtpy {
 
         link_distributions_into_virtpy(ctx, self, vec![distribution])
             .wrap_err("failed to add packages to virtpy")
+            .map(|e| {
+                let _ = fs_err::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(self.metadata_dir().join("installation.log"))
+                    .map(|mut f| writeln!(&mut f, "{file}"));
+                e
+            })
     }
 
     // TODO: refactor
