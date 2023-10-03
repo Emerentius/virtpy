@@ -31,7 +31,8 @@ type PathBuf = Utf8PathBuf;
 struct Opt {
     #[command(subcommand)] // Note that we mark a field as a subcommand
     cmd: Command,
-    #[arg(short, action = ArgAction::Count)]
+    /// Increase verbosity of output.
+    #[arg(short, action = ArgAction::Count, global = true)]
     verbose: u8,
     #[arg(long, hide = true)]
     project_dir: Option<PathBuf>,
