@@ -12,6 +12,16 @@ from poetry.plugins.application_plugin import ApplicationPlugin
 if typing.TYPE_CHECKING:
     from poetry.console.application import Application
 
+DEBUG_LOG = False
+
+
+def debug_log(message: str) -> None:
+    # stdout logging gets swallowed by poetry
+    # logging module has too many configs that could interfere with the output here
+    # so it's plain string formatting.
+    Path("/tmp/poetry_plugin_virtpy_log").open("a").write(message.rstrip("\n") + "\n")
+
+
 # TODO: Allow making virtpy creation the default for poetry.
 #       Requires custom config logic in virtpy.
 #       Right now, only package installation is overridden, if a virtpy is detected.
@@ -48,10 +58,12 @@ if typing.TYPE_CHECKING:
 
 class VirtpyPlugin(ApplicationPlugin):
     def __init__(self) -> None:
+        debug_log("VirtpyPlugin.__init__()")
         self.application: Application | None = None
 
     # def activate(self, poetry: Poetry, io: IO):
     def activate(self, application: Application):
+        debug_log("VirtpyPlugin.activate()")
         self.application = application
         # EnvManager.build_venv = build_venv  # type: ignore
         WheelInstaller.install = install  # type: ignore
@@ -62,9 +74,22 @@ old_install = WheelInstaller.install
 
 # Monkeypatch function for poetry's wheel installer
 def install(self: WheelInstaller, wheel: Path, *args, **kwargs) -> None:
-    if self._env.path.joinpath("virtpy_link_metadata").exists():
-        subprocess.run(
-            ["virtpy", "add", wheel, "--virtpy-path", self._env.path], check=True
+    debug_log("WheelInstaller.install() (monkey_patch)")
+    debug_log(str(wheel))
+    debug_log(f"path={self._env.path}")
+    virtpy_add = lambda virtpy_path: subprocess.run(
+        ["virtpy", "add", wheel, "--virtpy-path", virtpy_path], check=True
+    )
+    central_metadata = self._env.path.joinpath("virtpy_central_metadata")
+    if central_metadata.exists():
+        debug_log(f"central metadata found at {central_metadata}")
+        link_location = (
+            central_metadata.joinpath("link_location").read_text().removesuffix("\n")
         )
+        debug_log(f"link_location={link_location}")
+        virtpy_add(link_location)
+    if self._env.path.joinpath("virtpy_link_metadata").exists():
+        debug_log("virtpy link metadata found")
+        virtpy_add(self._env.path)
     else:
         old_install(self, wheel, *args, **kwargs)
