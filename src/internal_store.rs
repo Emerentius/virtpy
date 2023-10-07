@@ -457,18 +457,33 @@ fn distributions_used(
     virtpy_dirs
         .dist_infos()
         .filter(|dist_info_path| {
-            // poetry places a dist-info into the venv for the package
+            // The intention is that only we ourselves install packages into
+            // our venvs but some other tools may just see the venv structure
+            // and place files there themselves.
+            // We write to the "INSTALLER" file, but we can't fully rely on that.
+            // When poetry installs a package with our poetry plugin, it will use
+            // virtpy but it will also overwrite our INSTALLER file with its own
+            // if running from inside an active venv. It doesn't do that
+            // if the venv is not activated curiously (2023-10-07).
+            //
+            // poetry also places a dist-info into the venv for the package
             // whose dependencies are managed by poetry.
             // It marks these by writing "poetry" to the *.dist-info/INSTALLER file.
             // Interestingly, wheels installed by poetry contain poetry's version
             // but this one does not.
             //
+            // We check for the DISTRIBUTION_HASH file which is something we added ourselves.
+            //
             // Ignoring files by other installers also makes it possible for other
             // tools to install distributions into virtpys and have it work transparently,
             // although while losing all of virtpys benefits.
             // TODO: build a way to detect foreign, unwanted packages.
-            fs_err::read_to_string(dist_info_path.join("INSTALLER"))
-                .map_or(true, |installer| installer.trim() == "virtpy")
+            dist_info_path
+                .join("DISTRIBUTION_HASH")
+                .try_exists()
+                .expect("failed to read DISTRIBUTION_HASH")
+            // fs_err::read_to_string(dist_info_path.join("INSTALLER"))
+            //     .map_or(true, |installer| installer.trim() == "virtpy")
         })
         .map(stored_distribution_of_installed_dist)
 }
