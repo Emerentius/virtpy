@@ -786,7 +786,7 @@ fn _create_virtpy(
         .try_into_utf8_pathbuf()?;
     {
         let metadata_dir = central_path.join(CENTRAL_METADATA);
-        fs_err::create_dir(&metadata_dir)?;
+        // metadata dir already created, no need to it again.
         fs_err::write(metadata_dir.join(LINK_LOCATION), abs_path.as_str())?;
     }
 
@@ -822,6 +822,9 @@ fn _create_virtpy(
 }
 
 fn _create_bare_venv(python_path: &Path, path: &Path, prompt: &str) -> Result<()> {
+    // create directory and central metadata directory first. The deletion checks for the presence
+    // of this folder as a security precaution and this way it is highly unlikely to fail to be created.
+    fs_err::create_dir_all(path.join(CENTRAL_METADATA))?;
     check_status(
         Command::new(python_path)
             .args(["-m", "venv", "--without-pip", "--prompt", prompt])
