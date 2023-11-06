@@ -104,7 +104,7 @@ pub(crate) trait VirtpyPaths {
         venv_site_packages(self.location(), self.python_version())
     }
 
-    fn set_metadata(&self, name: &str, value: &str) -> Result<()> {
+    fn set_metadata(&self, name: &str, value: &str) -> std::io::Result<()> {
         fs_err::write(self.metadata_dir().join(name), value)?;
         Ok(())
     }
@@ -476,8 +476,8 @@ impl Virtpy {
     }
 
     pub(crate) fn set_check_strategy(&self, strategy: CheckStrategy) -> std::io::Result<()> {
-        fs_err::write(
-            self.metadata_dir().join("wheel_check_strategy"),
+        self.set_metadata(
+            "wheel_check_strategy",
             strategy
                 .to_possible_value()
                 .expect("skipped value")
