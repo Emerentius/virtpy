@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ master ]
+    branches: [master]
   pull_request:
-    branches: [ master ]
+    branches: [master]
   workflow_dispatch:
 
 env:
@@ -12,32 +12,31 @@ env:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
-    - name: Install Poetry
-      uses: snok/install-poetry@v1.3.0
-      with:
-        version: 1.4.2
-    - name: try poetry
-      run: poetry --version
-    - name: swap back to poetry's pip installer
-      run: poetry config installer.modern-installation false
-    - name: check pip version
-      run: python3 -m pip --version
-    - name: ensure up-to-date packaging tools
-      run: python3 -m pip install -v -U pip wheel
-    - name: install setuptools
-      run: sudo apt install python3-setuptools
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
-    - name: Interactive debug
-      uses: mxschmitt/action-tmate@v2
-      if: failure() && github.event_name == 'workflow_dispatch'
-    - name: Print pip log
-      run: cat $(cargo run path bin)/../pip.log
-      if: cancelled()
+      - uses: actions/checkout@v2
+      - name: Install Poetry
+        uses: snok/install-poetry@v1.3.0
+        with:
+          version: 1.4.2
+      - name: try poetry
+        run: poetry --version
+      - name: swap back to poetry's pip installer
+        run: poetry config installer.modern-installation false
+      - name: check pip version
+        run: python3 -m pip --version
+      - name: ensure up-to-date packaging tools
+        run: python3 -m pip install -v -U pip wheel
+      - name: install setuptools
+        run: sudo apt install python3-setuptools
+      - name: Build
+        run: cargo build --verbose
+      - name: Run tests
+        run: cargo test --verbose
+      - name: Interactive debug
+        uses: mxschmitt/action-tmate@v2
+        if: failure() && github.event_name == 'workflow_dispatch'
+      - name: Print pip log
+        run: cat $(cargo run path bin)/../pip.log
+        if: cancelled()
