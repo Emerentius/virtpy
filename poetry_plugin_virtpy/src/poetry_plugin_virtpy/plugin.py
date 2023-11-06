@@ -78,7 +78,8 @@ def install(self: WheelInstaller, wheel: Path, *args, **kwargs) -> None:
     debug_log(str(wheel))
     debug_log(f"path={self._env.path}")
     virtpy_add = lambda virtpy_path: subprocess.run(
-        ["virtpy", "add", wheel, "--virtpy-path", virtpy_path], check=True
+        [*virtpy_cmd(virtpy_path), "add", wheel, "--virtpy-path", virtpy_path],
+        check=True,
     )
     central_metadata = self._env.path.joinpath("virtpy_central_metadata")
     if central_metadata.exists():
@@ -93,3 +94,10 @@ def install(self: WheelInstaller, wheel: Path, *args, **kwargs) -> None:
         virtpy_add(self._env.path)
     else:
         old_install(self, wheel, *args, **kwargs)
+
+
+def virtpy_cmd(venv_path: Path) -> list[str]:
+    metadata = venv_path / "virtpy_link_metadata"
+    virtpy_exe = (metadata / "virtpy_exe").read_text()
+    proj_dir = (metadata / "proj_dir").read_text()
+    return [virtpy_exe, "--project-dir", proj_dir]
