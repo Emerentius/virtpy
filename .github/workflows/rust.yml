@@ -22,8 +22,12 @@ jobs:
           version: 1.6.1
       - name: try poetry
         run: poetry --version
-      - name: swap back to poetry's pip installer
-        run: poetry config installer.modern-installation false
+      - name: install poetry plugin
+        run: |
+          cd poetry_plugin_virtpy
+          poetry build
+          POETRY_PYTHON=$(head -n 1 $(which poetry) | cut -c 3-)
+          $POETRY_PYTHON -m pip install dist/poetry_plugin_virtpy-*.whl
       - name: check pip version
         run: python3 -m pip --version
       - name: ensure up-to-date packaging tools
