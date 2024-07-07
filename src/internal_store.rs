@@ -12,7 +12,7 @@ use crate::Ctx;
 use crate::{
     delete_virtpy_backing, package_info_from_dist_info_dirname,
     python::wheel::{RecordEntry, WheelRecord},
-    Path, PathBuf, Result,
+    Path, PathBuf,
 };
 use std::collections::HashSet;
 use std::marker::PhantomData;

@@ -77,10 +77,13 @@ def install(self: WheelInstaller, wheel: Path, *args, **kwargs) -> None:
     debug_log("WheelInstaller.install() (monkey_patch)")
     debug_log(str(wheel))
     debug_log(f"path={self._env.path}")
-    virtpy_add = lambda virtpy_path: subprocess.run(
-        [*virtpy_cmd(virtpy_path), "add", wheel, "--virtpy-path", virtpy_path],
-        check=True,
-    )
+
+    def virtpy_add(virtpy_path: Path) -> None:
+        subprocess.run(
+            [*virtpy_cmd(virtpy_path), "add", wheel, "--virtpy-path", virtpy_path],
+            check=True,
+        )
+
     central_metadata = self._env.path.joinpath("virtpy_central_metadata")
     if central_metadata.exists():
         debug_log(f"central metadata found at {central_metadata}")
@@ -88,7 +91,7 @@ def install(self: WheelInstaller, wheel: Path, *args, **kwargs) -> None:
             central_metadata.joinpath("link_location").read_text().removesuffix("\n")
         )
         debug_log(f"link_location={link_location}")
-        virtpy_add(link_location)
+        virtpy_add(Path(link_location))
     if self._env.path.joinpath("virtpy_link_metadata").exists():
         debug_log("virtpy link metadata found")
         virtpy_add(self._env.path)

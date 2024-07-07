@@ -412,7 +412,7 @@ fn main() -> Result<()> {
     let current_dir =
         PathBuf::try_from(std::env::current_dir().wrap_err("can't get current dir")?)?;
     let proj_dirs = match opt.project_dir {
-        Some(dir) => ProjectDirs::from_path(current_dir.join(&dir)),
+        Some(dir) => ProjectDirs::from_path(current_dir.join(dir)),
         None => ProjectDirs::new().ok_or_else(|| eyre!("failed to get proj dirs"))?,
     };
     proj_dirs.create_dirs()?;
