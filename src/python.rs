@@ -11,7 +11,7 @@ pub(crate) mod wheel;
 /// The version of the python language that the interpreter runs.
 // probably missing prereleases and such
 // TODO: check official scheme
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd)]
 pub(crate) struct PythonVersion {
     pub(crate) major: u32,
     pub(crate) minor: u32,

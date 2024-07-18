@@ -181,7 +181,7 @@ trait VirtpyPathsPrivate: VirtpyPaths {
         {
             return Ok(InstallPaths(install_paths));
         }
-        let install_paths = InstallPaths::detect(self.python());
+        let install_paths = InstallPaths::detect(self.python(), self.python_version());
         if let Some(serialized_paths) = install_paths
             .as_ref()
             .ok()
@@ -1001,11 +1001,73 @@ pub(crate) fn virtpy_status(virtpy_path: &Path) -> Result<VirtpyBacking, VirtpyB
 /// distutils.commands.install.install and we can seemingly extract them from there.
 /// Is this correct? Who knows with "standards" like in the python world.
 ///
+/// With Python3.12, the wheel specification now claims that sysconfig defines these paths.
+/// That is certainly more convenient, given that there's sysconfig.get_paths("venv"), which returns
+/// a dict of the paths or sysconfig.get_path(pathname, scheme) for a single path, but there's
+/// no "header" path.
+/// There is "include" and "platinclude", neither of which are confined to the venv like "headers"
+/// was with distutils.
+///
 /// This is a mapping like `{ "headers": "some/path/to/place/headers", "purelib": "other/path" }`.
 struct InstallPaths(HashMap<String, PathBuf>);
 
 impl InstallPaths {
-    fn detect(python_path: impl AsRef<Path>) -> Result<Self> {
+    /// Since 3.12, Python no longer contains the distutils module in the stdlib.
+    /// From python3.11 onwards, the sysconfig module contains an installation scheme for venv.
+    /// Unlike in other schemes, this one will not point outside the venv for some of the paths.
+    /// It is not a full replacement for distutils' install schemes, because it doesn't have
+    /// a "headers" install path. It has "include" and "platinclude" but both of those
+    /// will (may?) point outside the venv.
+    fn detect(python_path: impl AsRef<Path>, version: PythonVersion) -> Result<Self> {
+        if version
+            < (PythonVersion {
+                major: 3,
+                minor: 12,
+                patch: 0,
+            })
+        {
+            return Self::detect_legacy(python_path.as_ref());
+        }
+
+        let get_paths = r#"import json
+import sysconfig
+paths = sysconfig.get_paths("venv")
+print(json.dumps(paths))
+"#;
+
+        let output = check_output(Command::new(python_path.as_ref()).args(["-c", get_paths]))?;
+        let mut paths: HashMap<String, PathBuf> = serde_json::from_str(&output)?;
+        paths.retain(|key, _| {
+            ["purelib", "platlib", "headers", "scripts", "data"].contains(&key.as_str())
+        });
+
+        // The condition is always true as of 3.12. It might change in the future, but it probably won't.
+        if !paths.contains_key("headers") {
+            if let Some(venv_root) = paths.get("data").map(|p| p.to_owned()) {
+                // For comparison, pip is also adding "headers" to the scheme after querying distutils.
+                // https://github.com/pypa/pip/blob/af0087094e1a84552f180e011ad298ab1a725fa0/src/pip/_internal/locations/_distutils.py#L100
+                //
+                // I don't know why they vendor distutils, but then also define "headers" themselves afterwards.
+                // pip differs from distutils in that it includes a directory named "site" below "include" and above
+                // "python3.XX".
+                // With all of these path variations, how do C builds ever find their headers?
+                paths.insert(
+                    "headers".to_owned(),
+                    venv_root
+                        .join("include")
+                        .join(format!("python{}", version.as_string_without_patch()))
+                        // The final path component "venv" here is the scheme name.
+                        // I don't understand the point of that. It seems counterproductive to finding
+                        // headers, but distutils is also including that.
+                        .join("venv"),
+                );
+            }
+        }
+
+        Ok(InstallPaths(paths))
+    }
+
+    fn detect_legacy(python_path: impl AsRef<Path>) -> Result<Self> {
         let get_paths = |sys_name| {
             format!(
                 r#"import json
