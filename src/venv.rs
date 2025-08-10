@@ -95,7 +95,7 @@ pub(crate) trait VirtpyPaths {
                 .map(<_>::into_utf8_pathbuf)
                 .filter(|path| {
                     path.file_name()
-                        .map_or(false, |fn_| fn_.ends_with(".dist-info"))
+                        .is_some_and(|fn_| fn_.ends_with(".dist-info"))
                 }),
         )
     }
@@ -287,13 +287,12 @@ impl Virtpy {
 
         link_distributions_into_virtpy(ctx, self, vec![distribution])
             .wrap_err("failed to add packages to virtpy")
-            .map(|e| {
+            .inspect(|_| {
                 let _ = fs_err::OpenOptions::new()
                     .create(true)
                     .append(true)
                     .open(self.metadata_dir().join("installation.log"))
                     .map(|mut f| writeln!(&mut f, "{file}"));
-                e
             })
     }
 

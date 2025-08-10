@@ -166,6 +166,7 @@ impl WheelMetadata {
 pub struct DistributionMetadata {
     // name, version and metadatavversion are required, everything else is
     // optional
+    #[allow(unused)]
     pub metadata_version: String,
     pub name: String,
     pub version: String,
@@ -468,8 +469,8 @@ pub(crate) struct WheelChecked;
 /// https:///packaging.python.org/en/latest/specifications/binary-distribution-format/#the-dist-info-directory
 ///
 /// >During extraction, wheel installers verify all the hashes in RECORD against the file contents.
-/// Apart from RECORD and its signatures, installation will fail if any file in the archive is not both
-/// mentioned and correctly hashed in RECORD.
+/// >Apart from RECORD and its signatures, installation will fail if any file in the archive is not both
+/// >mentioned and correctly hashed in RECORD.
 ///
 /// Pip, THE python package manager, neglected to implement this so now there are lots of invalid wheels
 /// in the wild and we have to deal with them. Why am I not surprised?
