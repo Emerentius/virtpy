@@ -301,8 +301,8 @@ impl ProjectDirs {
         self.data().join("bin")
     }
 
-    // for unit tests
-    fn _executables_list(&self) -> Vec<String> {
+    #[cfg(test)]
+    fn executables_list(&self) -> Vec<String> {
         self.executables()
             .read_dir()
             .unwrap()
@@ -926,14 +926,14 @@ mod test {
 
             install_cmd.ok()?;
             assert_ne!(
-                ctx.proj_dirs._executables_list(),
+                ctx.proj_dirs.executables_list(),
                 Vec::<String>::new(),
                 "{package}"
             );
 
             uninstall_cmd.ok()?;
             assert_eq!(
-                ctx.proj_dirs._executables_list(),
+                ctx.proj_dirs.executables_list(),
                 Vec::<String>::new(),
                 "{package}"
             );
