@@ -752,11 +752,10 @@ impl StoredDistributions<Exclusive> {
 }
 
 fn lock_file<S: Share>(file: fs_err::File) -> Result<FileLockGuard<S>> {
-    use fs2::FileExt;
     if S::IS_EXCLUSIVE {
-        file.file().lock_exclusive()?;
+        fs2::FileExt::lock_exclusive(file.file())?;
     } else {
-        file.file().lock_shared()?;
+        fs2::FileExt::lock_shared(file.file())?;
     }
     Ok(FileLockGuard {
         file,
@@ -772,8 +771,7 @@ struct FileLockGuard<S: Share> {
 
 impl<S: Share> Drop for FileLockGuard<S> {
     fn drop(&mut self) {
-        use fs2::FileExt;
-        let _ = self.file.file().unlock();
+        let _ = fs2::FileExt::unlock(self.file.file());
     }
 }
 
