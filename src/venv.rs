@@ -1332,6 +1332,10 @@ pub(crate) fn python_version(venv: &Path) -> Result<PythonVersion, PythonVersion
 }
 
 fn add_package_resources(ctx: &Ctx, virtpy: &Virtpy) -> Result<()> {
+    // Since Python 3.12, package_resources is no longer included
+    if virtpy.python_version.major >= 3 && virtpy.python_version.minor >= 12 {
+        return Ok(());
+    }
     let pkg_res_wheel = package_resources_wheel(ctx, &virtpy.global_python()?)?;
     virtpy.add_dependency_from_file(ctx, &pkg_res_wheel, CheckStrategy::Repair, false)
 }
