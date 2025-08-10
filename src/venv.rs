@@ -943,7 +943,8 @@ pub(crate) fn virtpy_status(virtpy_path: &Path) -> Result<VirtpyBacking, VirtpyB
         }
     })?;
 
-    for expected_path in ["include", "lib", "lib64", "pyvenv.cfg"]
+    // On Windows, there's no lib64
+    for expected_path in ["include", "lib", "pyvenv.cfg"]
         .into_iter()
         .map(|p| virtpy_path.join(p))
         .chain(std::iter::once(executables_path(virtpy_path)))
