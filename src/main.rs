@@ -28,6 +28,8 @@ type Path = Utf8Path;
 type PathBuf = Utf8PathBuf;
 
 #[derive(Parser)]
+#[command(version)]
+/// Create slim venvs for Python using shared, symlinked dependencies.
 struct Opt {
     #[command(subcommand)] // Note that we mark a field as a subcommand
     cmd: Command,
