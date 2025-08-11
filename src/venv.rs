@@ -271,8 +271,12 @@ impl Virtpy {
         use_pep517: bool,
     ) -> Result<()> {
         let file_hash = DistributionHash::from_file(file)?;
-        let distribution =
-            Distribution::from_package_name(file.file_name().unwrap(), file_hash).unwrap();
+        let distribution = Distribution::from_package_name(
+            file.file_name()
+                .ok_or_else(|| eyre!("path has no file name: {file}"))?,
+            file_hash,
+        )
+        .wrap_err("failed to build Distribution from package name")?;
 
         if !wheel_is_already_registered(ctx, &distribution)? {
             install_and_register_distribution_from_file(
@@ -510,7 +514,7 @@ pub(crate) enum VirtpyError {
 fn virtpy_link_status(virtpy_link_path: &Path) -> Result<Virtpy, VirtpyError> {
     let supposed_location = virtpy_link_supposed_location(virtpy_link_path)
         .wrap_err("failed to read original location of virtpy")?;
-    if !paths_match(virtpy_link_path.as_ref(), supposed_location.as_ref()).unwrap() {
+    if !paths_match(virtpy_link_path.as_ref(), supposed_location.as_ref())? {
         return Err(VirtpyError::WrongLocation {
             should: supposed_location,
             actual: virtpy_link_path.to_owned(),
@@ -628,7 +632,7 @@ fn link_file_into_virtpy(
     filehash: &FileHash,
     dest: PathBuf,
     distribution: &Distribution,
-) {
+) -> Result<()> {
     let src = ctx.proj_dirs.package_file(filehash);
     fs_err::hard_link(&src, &dest)
         .or_else(|err| {
@@ -646,7 +650,6 @@ fn link_file_into_virtpy(
             }
         })
         .wrap_err_with(|| eyre!("distribution {}", distribution.name_and_version()))
-        .unwrap();
 }
 
 fn link_files_from_record_into_virtpy(
@@ -665,26 +668,29 @@ fn link_files_from_record_into_virtpy(
     // => use backing
     let paths = virtpy.virtpy_backing().install_paths()?;
 
-    let ensure_dir_exists = |dest: &Path| {
-        let dir = dest.parent().unwrap();
+    let ensure_dir_exists = |dest: &Path| -> Result<()> {
+        let dir = dest
+            .parent()
+            .ok_or_else(|| eyre!("path has no parent: {dest}"))?;
         // TODO: assert we're still in the virtpy
-        fs_err::create_dir_all(dir).unwrap();
+        fs_err::create_dir_all(dir)?;
+        Ok(())
     };
 
     for record in &mut record.files {
         match record.path.strip_prefix(&data_dir) {
             Ok(data_dir_subpath) => {
                 let mut iter = data_dir_subpath.iter();
-                let subdir = iter.next().unwrap();
+                let subdir = iter.next().expect("path must have base dir");
                 let subpath = iter.as_path();
                 let base_path = &paths.0[subdir];
 
                 let dest = base_path.join(subpath);
-                ensure_dir_exists(&dest);
+                ensure_dir_exists(&dest)?;
                 let is_executable = subdir == "scripts";
                 record.path = relative_path(site_packages, &dest)?;
                 if !is_executable {
-                    link_file_into_virtpy(ctx, &record.hash, dest, distribution);
+                    link_file_into_virtpy(ctx, &record.hash, dest, distribution)?;
                 } else {
                     let src = ctx.proj_dirs.package_file(&record.hash);
 
@@ -720,14 +726,14 @@ fn link_files_from_record_into_virtpy(
                             &virtpy.site_packages(),
                         )?;
                     } else {
-                        link_file_into_virtpy(ctx, &record.hash, dest, distribution);
+                        link_file_into_virtpy(ctx, &record.hash, dest, distribution)?;
                     }
                 }
             }
             Err(_) => {
                 let dest = site_packages.join(&record.path);
-                ensure_dir_exists(&dest);
-                link_file_into_virtpy(ctx, &record.hash, dest, distribution);
+                ensure_dir_exists(&dest)?;
+                link_file_into_virtpy(ctx, &record.hash, dest, distribution)?;
             }
         };
     }
@@ -840,7 +846,7 @@ fn install_executables(
     virtpy: &Virtpy,
     wheel_record: &mut WheelRecord,
 ) -> Result<(), color_eyre::Report> {
-    let entrypoints = stored_distrib.entrypoints(ctx).unwrap_or_default();
+    let entrypoints = stored_distrib.entrypoints(ctx)?;
     for entrypoint in entrypoints {
         let executables_path = virtpy.executables();
         let err = || eyre!("failed to install executable {}", entrypoint.name);
@@ -950,7 +956,7 @@ pub(crate) fn virtpy_status(virtpy_path: &Path) -> Result<VirtpyBacking, VirtpyB
         .chain(std::iter::once(executables_path(virtpy_path)))
     {
         if !expected_path.exists() {
-            let filename = expected_path.file_name().unwrap();
+            let filename = expected_path.file_name().expect("file name should exist");
             return Err(VirtpyBackingStatus::Broken {
                 link: link_location,
                 reason: format!("Missing file: {filename}"),
@@ -975,7 +981,7 @@ pub(crate) fn virtpy_status(virtpy_path: &Path) -> Result<VirtpyBacking, VirtpyB
         .map(PathBuf::from)
         .wrap_err("failed to read virtpy link target through backlink")?;
 
-    if !paths_match(virtpy_path.as_ref(), link_target.as_ref()).unwrap() {
+    if !paths_match(virtpy_path.as_ref(), link_target.as_ref())? {
         return Err(VirtpyBackingStatus::Orphaned { virtpy: backing });
     }
 
@@ -1107,9 +1113,9 @@ fn install_and_register_distribution_from_file(
     use_pep517: bool,
 ) -> Result<()> {
     let tmp_dir = tempdir::TempDir::new_in(ctx.proj_dirs.tmp(), "virtpy_wheel")?;
-    let (distrib_path, _wheel_tmp_dir) = match distrib_path.extension().unwrap() {
-        "whl" => (distrib_path.to_owned(), None),
-        _ => {
+    let (distrib_path, _wheel_tmp_dir) = match distrib_path.extension() {
+        Some("whl") => (distrib_path.to_owned(), None),
+        Some(_) => {
             if ctx.options.verbose >= 2 {
                 println!("converting to wheel: {distrib_path}");
             }
@@ -1124,8 +1130,9 @@ fn install_and_register_distribution_from_file(
 
             (wheel_path, Some(tmp_dir))
         }
+        None => bail!("distribution path has no file extension: {distrib_path}"),
     };
-    assert!(distrib_path.extension().unwrap() == "whl");
+    assert_eq!(distrib_path.extension(), Some("whl"));
     crate::python::wheel::unpack_wheel(&distrib_path, tmp_dir.path())?;
 
     let install_folder = tmp_dir.utf8_path();
@@ -1196,7 +1203,7 @@ fn generate_pkg_resources_wheel(
     let tmp_dir_path = tmp_dir.try_utf8_path()?;
     let wheel_path =
         find_wheel(tmp_dir_path)?.ok_or_else(|| eyre!("no pkg_resources wheel generated"))?;
-    let wheel_name = wheel_path.file_name().unwrap();
+    let wheel_name = wheel_path.file_name().expect("wheel should have file name");
 
     let target = wheel_dir.join(wheel_name);
 

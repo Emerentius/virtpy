@@ -80,7 +80,11 @@ impl FileHash {
 
     // files in the repository are named after their hash, so we can just use the filename
     pub(crate) fn from_filename(path: &Path) -> Self {
-        Self(path.file_name().unwrap().to_owned())
+        Self(
+            path.file_name()
+                .expect("path should have filename")
+                .to_owned(),
+        )
     }
 
     pub(crate) fn from_reader(reader: impl std::io::Read) -> Self {
@@ -138,16 +142,25 @@ pub(crate) struct EntryPoint {
 
 impl EntryPoint {
     // construct from entry_points ini entry
-    pub(crate) fn new(key: &str, value: &str) -> Self {
+    // Example of typical console scripts from
+    // https://packaging.python.org/en/latest/specifications/entry-points/#file-format
+    //
+    // [console_scripts]
+    // foo = foomod:main
+    // # One which depends on extras:
+    // foobar = foomod:main_bar [bar,baz]
+    pub(crate) fn new(key: &str, value: &str) -> Result<Self> {
+        // TODO: allow spaces in positions allowed by spec
+        // TODO: support extras
         let mut it = value.split(':');
         let module = it.next().unwrap().to_owned();
         let qualname = it.next().unwrap().to_owned();
 
-        EntryPoint {
+        Ok(EntryPoint {
             name: key.to_owned(),
             module,
             qualname,
-        }
+        })
     }
 
     // without shebang
@@ -321,24 +334,24 @@ impl Distribution {
     }
 }
 
-pub(crate) fn entrypoints(path: &Path) -> Option<Vec<EntryPoint>> {
+pub(crate) fn entrypoints(path: &Path) -> Result<Vec<EntryPoint>> {
     let ini = ini::Ini::load_from_file(path);
 
     match ini {
-        Err(ini::Error::Io(err)) if is_not_found(&err) => return None,
+        Err(ini::Error::Io(err)) if is_not_found(&err) => return Ok(vec![]),
         _ => (),
     };
-    let ini = ini.unwrap();
+    let ini = ini?;
 
-    let entrypoints = ini
-        .section(Some("console_scripts"))
-        .map_or(vec![], |console_scripts| {
-            console_scripts
-                .iter()
-                .map(|(key, val)| EntryPoint::new(key, val))
-                .collect()
-        });
-    Some(entrypoints)
+    let entrypoints =
+        ini.section(Some("console_scripts"))
+            .map_or(Ok(vec![]), |console_scripts| {
+                console_scripts
+                    .iter()
+                    .map(|(key, val)| EntryPoint::new(key, val))
+                    .collect()
+            })?;
+    Ok(entrypoints)
 }
 
 fn hash_of_file_sha256_base64(path: &Path) -> Result<String> {
@@ -369,7 +382,7 @@ fn _hash_of_file_sha256(path: &Path) -> Result<impl AsRef<[u8]>> {
 fn _hash_of_reader_sha256(mut reader: impl std::io::Read) -> impl AsRef<[u8]> {
     use sha2::Digest;
     let mut hasher = sha2::Sha256::new();
-    std::io::copy(&mut reader, &mut hasher).unwrap();
+    std::io::copy(&mut reader, &mut hasher).expect("hashing can't fail");
     hasher.finalize()
 }
 

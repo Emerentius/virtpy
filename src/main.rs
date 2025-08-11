@@ -597,10 +597,11 @@ fn main() -> Result<()> {
                 .proj_dirs
                 .virtpys()
                 .read_dir()?
-                .map(|entry| entry.unwrap())
+                .map(|entry| entry.expect("virtpy dir should be readable"))
                 .filter(|entry| entry.path().join(CENTRAL_METADATA).exists())
                 .map(|entry| entry.path().join(CENTRAL_METADATA).join(LINK_LOCATION))
-                .map(|path| fs_err::read_to_string(path).unwrap())
+                // CHECKME: Is this guaranteed by construction
+                .map(|path| fs_err::read_to_string(path).expect("link location should exist"))
                 .sorted()
                 .collect_vec();
             for path in link_locations {
@@ -805,7 +806,7 @@ fn python_path(virtpy: &Path) -> PathBuf {
 }
 
 fn dist_info_matches_package(dist_info: &Path, package: &str) -> bool {
-    let entry_name = dist_info.file_name().unwrap();
+    let entry_name = dist_info.file_name().expect("should be a dir path");
     let (distrib_name, _version) = package_info_from_dist_info_dirname(entry_name);
     distrib_name == package
 }
