@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::{ArgAction, Parser, Subcommand};
 use eyre::bail;
