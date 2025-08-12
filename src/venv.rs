@@ -329,7 +329,7 @@ impl Virtpy {
         }
 
         dist_infos.retain(|name| {
-            let dist = name.split('-').next().unwrap();
+            let dist = name.split('-').next().expect("first part always exists");
             // It should already be in normalized form as far as I know,
             // but of course that's not always the case.
             let dist = normalized_distribution_name_for_wheel(dist);

@@ -150,16 +150,17 @@ impl EntryPoint {
     // # One which depends on extras:
     // foobar = foomod:main_bar [bar,baz]
     pub(crate) fn new(key: &str, value: &str) -> Result<Self> {
-        // TODO: allow spaces in positions allowed by spec
         // TODO: support extras
-        let mut it = value.split(':');
-        let module = it.next().unwrap().to_owned();
-        let qualname = it.next().unwrap().to_owned();
+        let (_, module, qualname, _extras) = lazy_regex::regex_captures!(
+            r"([^:\s]+)\s*:\s*([^\s]+)(?: \[\s*([^\]]*)\s*\]\s*)?",
+            value
+        )
+        .ok_or_else(|| eyre!("console script for {key} couldn't be parsed: {value}"))?;
 
         Ok(EntryPoint {
             name: key.to_owned(),
-            module,
-            qualname,
+            module: module.to_owned(),
+            qualname: qualname.to_owned(),
         })
     }
 
