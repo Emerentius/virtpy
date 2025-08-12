@@ -80,24 +80,23 @@ pub(crate) trait VirtpyPaths {
 
     fn dist_info(&self, package: &str) -> Result<PathBuf> {
         let package = &normalized_distribution_name_for_wheel(package);
-        self.dist_infos()
+        self.dist_infos()?
+            .into_iter()
             .find(|path| dist_info_matches_package(path, package))
             .ok_or_else(|| eyre!("failed to find dist-info for {package}"))
     }
 
-    fn dist_infos(&self) -> Box<dyn Iterator<Item = PathBuf>> {
-        Box::new(
-            self.site_packages()
-                .read_dir()
-                .unwrap()
-                .map(Result::unwrap)
-                .map(|dir_entry| dir_entry.path())
-                .map(<_>::into_utf8_pathbuf)
-                .filter(|path| {
-                    path.file_name()
-                        .is_some_and(|fn_| fn_.ends_with(".dist-info"))
-                }),
-        )
+    fn dist_infos(&self) -> Result<Vec<PathBuf>> {
+        self.site_packages()
+            .read_dir()?
+            .map(|dir_entry| Ok(dir_entry?.path()))
+            .map(|path| path.map(|p| p.into_utf8_pathbuf()))
+            .filter_ok(|path| {
+                path.file_name()
+                    .expect("site package entries must have file name")
+                    .ends_with(".dist-info")
+            })
+            .collect()
     }
 
     fn site_packages(&self) -> PathBuf {
@@ -121,13 +120,15 @@ pub(crate) trait VirtpyPaths {
             })
     }
 
-    fn installed_distributions_metadata(&self) -> Vec<Result<DistributionMetadata>> {
-        self.dist_infos()
+    fn installed_distributions_metadata(&self) -> Result<Vec<Result<DistributionMetadata>>> {
+        Ok(self
+            .dist_infos()?
+            .into_iter()
             .map(|dist_info| {
                 let metadata = fs_err::read_to_string(dist_info.join("METADATA"))?;
                 DistributionMetadata::from_str(&metadata)
             })
-            .collect()
+            .collect())
     }
 }
 

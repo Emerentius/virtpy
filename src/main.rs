@@ -319,22 +319,22 @@ impl ProjectDirs {
         self.installations().join(format!("{package}.virtpy"))
     }
 
-    fn installed_distributions(&self) -> impl Iterator<Item = StoredDistribution> + '_ {
+    fn installed_distributions(&self) -> Result<Vec<StoredDistribution>> {
         self.records()
-            .read_dir()
-            .into_iter()
-            .flatten()
-            .map(|e| e.unwrap())
-            .map(|dist_info_entry| StoredDistribution {
-                distribution: python::Distribution::from_store_name(
-                    dist_info_entry
-                        .path()
-                        .file_name()
-                        .unwrap()
-                        .to_str()
-                        .unwrap(),
-                ),
+            .read_dir()?
+            .map(|dist_info_entry| {
+                Ok(StoredDistribution {
+                    distribution: python::Distribution::from_store_name(
+                        dist_info_entry?
+                            .path()
+                            .file_name()
+                            .expect("record file must have file name")
+                            .to_str()
+                            .expect("record path must be utf8"),
+                    ),
+                })
             })
+            .collect()
     }
 
     // Using a directory in our data directory for temporary files ensures
@@ -540,7 +540,7 @@ fn main() -> Result<()> {
             println!("{}", Virtpy::from_existing(&virtpy)?.global_python()?);
         }
         Command::InternalUseOnly(InternalUseOnly::ListPackages { virtpy }) => {
-            let packages = Virtpy::from_existing(&virtpy)?.installed_distributions_metadata();
+            let packages = Virtpy::from_existing(&virtpy)?.installed_distributions_metadata()?;
             let (successes, _failures): (Vec<_>, Vec<_>) = packages.into_iter().partition_result();
 
             // Print table of package name and version.

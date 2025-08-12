@@ -264,7 +264,8 @@ impl StoreDependencies {
         let mut virtpy_dists = VirtpyDists::new();
         let mut dist_virtpys: DistVirtpys = ctx
             .proj_dirs
-            .installed_distributions()
+            .installed_distributions()?
+            .into_iter()
             .map(|dist| (dist, <_>::default()))
             .collect();
         let mut dist_files = DistFiles::new();
@@ -292,13 +293,14 @@ impl StoreDependencies {
                 continue;
             };
             let distributions: HashSet<_> = distributions_used(&backing)
-                .collect::<Result<_>>()
                 .wrap_err_with(|| {
                     format!(
                         "can't read packages used by {}",
                         virtpy_link_location(&virtpy_path).unwrap_or(virtpy_path)
                     )
-                })?;
+                })?
+                .into_iter()
+                .collect();
             for dist in &distributions {
                 dist_virtpys
                     .entry(dist.clone())
@@ -455,11 +457,10 @@ pub(crate) fn print_stats(
     Ok(())
 }
 
-fn distributions_used(
-    virtpy_dirs: &VirtpyBacking,
-) -> impl Iterator<Item = Result<StoredDistribution>> {
+fn distributions_used(virtpy_dirs: &VirtpyBacking) -> Result<Vec<StoredDistribution>> {
     virtpy_dirs
-        .dist_infos()
+        .dist_infos()?
+        .into_iter()
         .filter(|dist_info_path| {
             // The intention is that only we ourselves install packages into
             // our venvs but some other tools may just see the venv structure
@@ -490,6 +491,7 @@ fn distributions_used(
             //     .map_or(true, |installer| installer.trim() == "virtpy")
         })
         .map(stored_distribution_of_installed_dist)
+        .collect()
 }
 
 pub(crate) fn stored_distribution_of_installed_dist(
