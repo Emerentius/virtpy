@@ -229,7 +229,7 @@ fn _generate_windows_executable(
     static LAUNCHER_CODE: &[u8] = include_bytes!("../windows_exe_wrappers/t64.exe");
     let mut zip_writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::<u8>::new()));
     zip_writer.start_file("__main__.py", zip::write::FileOptions::default())?;
-    write!(&mut zip_writer, "{code}").unwrap();
+    write!(&mut zip_writer, "{code}").expect("failed to zip code for executable");
     let mut wrapper = LAUNCHER_CODE.to_vec();
     wrapper.extend(shebang.as_bytes());
     wrapper.extend(b".exe");
@@ -280,7 +280,8 @@ pub(crate) struct Distribution {
 impl Distribution {
     pub(crate) fn from_store_name(store_name: &str) -> Self {
         let (_, name, version, hash) =
-            lazy_regex::regex_captures!(r"([^,]+),([^,]+),([^,]+)", store_name).unwrap();
+            lazy_regex::regex_captures!(r"([^,]+),([^,]+),([^,]+)", store_name)
+                .expect("failed to get Distribution data from internal store file name");
 
         Self {
             name: name.to_owned(),

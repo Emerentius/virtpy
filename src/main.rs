@@ -355,7 +355,7 @@ fn package_info_from_dist_info_dirname(dirname: &str) -> (&str, &str) {
         r"^([a-zA-Z_\.][a-zA-Z0-9_\.]*)-(\d*!.*|\d*\..*)\.dist-info$",
         dirname
     )
-    .unwrap();
+    .unwrap_or_else(|| panic!("directory name doesn't match expected pattern: {}", dirname));
     (distrib_name, version)
 }
 
