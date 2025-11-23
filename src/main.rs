@@ -365,7 +365,7 @@ fn path_to_virtpy(path_override: &Option<PathBuf>) -> &Path {
         .unwrap_or_else(|| DEFAULT_VIRTPY_PATH.as_ref())
 }
 
-fn shim_info(ctx: &Ctx) -> Result<ShimInfo> {
+fn shim_info(ctx: &Ctx) -> Result<ShimInfo<'_>> {
     Ok(ShimInfo {
         proj_dirs: &ctx.proj_dirs,
         virtpy_exe: PathBuf::try_from(

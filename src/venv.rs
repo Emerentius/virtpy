@@ -978,9 +978,7 @@ pub(crate) fn virtpy_status(virtpy_path: &Path) -> Result<VirtpyBacking, VirtpyB
         }
     }
 
-    let link_target = link_target
-        .map(PathBuf::from)
-        .wrap_err("failed to read virtpy link target through backlink")?;
+    let link_target = link_target.wrap_err("failed to read virtpy link target through backlink")?;
 
     if !paths_match(virtpy_path.as_ref(), link_target.as_ref())? {
         return Err(VirtpyBackingStatus::Orphaned { virtpy: backing });
