@@ -356,6 +356,7 @@ pub(crate) fn entrypoints(path: &Path) -> Result<Vec<EntryPoint>> {
     Ok(entrypoints)
 }
 
+// Used for files in RECORD
 fn hash_of_file_sha256_base64(path: &Path) -> Result<String> {
     let hash = _hash_of_file_sha256(path)?;
     Ok(base64::encode_config(
@@ -364,6 +365,7 @@ fn hash_of_file_sha256_base64(path: &Path) -> Result<String> {
     ))
 }
 
+// Used as distribution hash
 fn hash_of_file_sha256_base16(path: &Path) -> Result<String> {
     let hash = _hash_of_file_sha256(path)?;
     Ok(base16::encode_lower(hash.as_ref()))
