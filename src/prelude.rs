@@ -13,7 +13,7 @@ pub trait ToUtf8Path<'a> {
 
 impl<'a> ToUtf8Path<'a> for &'a std::path::Path {
     fn to_utf8_path(self) -> &'a Utf8Path {
-        self.try_to_utf8_path().unwrap()
+        self.try_to_utf8_path().expect("path should be utf8")
     }
 
     fn try_to_utf8_path(self) -> eyre::Result<&'a Utf8Path> {
@@ -32,7 +32,7 @@ impl IntoUtf8Pathbuf for std::path::PathBuf {
     }
 
     fn into_utf8_pathbuf(self) -> Utf8PathBuf {
-        self.try_into_utf8_pathbuf().unwrap()
+        self.try_into_utf8_pathbuf().expect("path should be utf8")
     }
 }
 
@@ -44,7 +44,7 @@ pub trait DirEntryExt {
 
 impl DirEntryExt for fs_err::DirEntry {
     fn utf8_path(&self) -> Utf8PathBuf {
-        self.try_utf8_path().unwrap()
+        self.try_utf8_path().expect("path should be utf8")
     }
 
     fn try_utf8_path(&self) -> eyre::Result<Utf8PathBuf> {
@@ -58,7 +58,7 @@ impl DirEntryExt for fs_err::DirEntry {
 
 impl DirEntryExt for std::fs::DirEntry {
     fn utf8_path(&self) -> Utf8PathBuf {
-        self.try_utf8_path().unwrap()
+        self.try_utf8_path().expect("path should be utf8")
     }
 
     fn try_utf8_path(&self) -> eyre::Result<Utf8PathBuf> {
@@ -77,7 +77,7 @@ pub trait TempDirExt<'a> {
 
 impl<'a> TempDirExt<'a> for &'a tempdir::TempDir {
     fn utf8_path(self) -> &'a Utf8Path {
-        self.try_utf8_path().unwrap()
+        self.try_utf8_path().expect("path should be utf8")
     }
 
     fn try_utf8_path(self) -> eyre::Result<&'a Utf8Path> {

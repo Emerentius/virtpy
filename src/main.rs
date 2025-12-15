@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::{ArgAction, Parser, Subcommand};
 use eyre::bail;
@@ -319,22 +320,22 @@ impl ProjectDirs {
         self.installations().join(format!("{package}.virtpy"))
     }
 
-    fn installed_distributions(&self) -> impl Iterator<Item = StoredDistribution> + '_ {
+    fn installed_distributions(&self) -> Result<Vec<StoredDistribution>> {
         self.records()
-            .read_dir()
-            .into_iter()
-            .flatten()
-            .map(|e| e.unwrap())
-            .map(|dist_info_entry| StoredDistribution {
-                distribution: python::Distribution::from_store_name(
-                    dist_info_entry
-                        .path()
-                        .file_name()
-                        .unwrap()
-                        .to_str()
-                        .unwrap(),
-                ),
+            .read_dir()?
+            .map(|dist_info_entry| {
+                Ok(StoredDistribution {
+                    distribution: python::Distribution::from_store_name(
+                        dist_info_entry?
+                            .path()
+                            .file_name()
+                            .expect("record file must have file name")
+                            .to_str()
+                            .expect("record path must be utf8"),
+                    ),
+                })
             })
+            .collect()
     }
 
     // Using a directory in our data directory for temporary files ensures
@@ -354,7 +355,7 @@ fn package_info_from_dist_info_dirname(dirname: &str) -> (&str, &str) {
         r"^([a-zA-Z_\.][a-zA-Z0-9_\.]*)-(\d*!.*|\d*\..*)\.dist-info$",
         dirname
     )
-    .unwrap();
+    .unwrap_or_else(|| panic!("directory name doesn't match expected pattern: {}", dirname));
     (distrib_name, version)
 }
 
@@ -364,7 +365,7 @@ fn path_to_virtpy(path_override: &Option<PathBuf>) -> &Path {
         .unwrap_or_else(|| DEFAULT_VIRTPY_PATH.as_ref())
 }
 
-fn shim_info(ctx: &Ctx) -> Result<ShimInfo> {
+fn shim_info(ctx: &Ctx) -> Result<ShimInfo<'_>> {
     Ok(ShimInfo {
         proj_dirs: &ctx.proj_dirs,
         virtpy_exe: PathBuf::try_from(
@@ -540,7 +541,7 @@ fn main() -> Result<()> {
             println!("{}", Virtpy::from_existing(&virtpy)?.global_python()?);
         }
         Command::InternalUseOnly(InternalUseOnly::ListPackages { virtpy }) => {
-            let packages = Virtpy::from_existing(&virtpy)?.installed_distributions_metadata();
+            let packages = Virtpy::from_existing(&virtpy)?.installed_distributions_metadata()?;
             let (successes, _failures): (Vec<_>, Vec<_>) = packages.into_iter().partition_result();
 
             // Print table of package name and version.
@@ -597,10 +598,11 @@ fn main() -> Result<()> {
                 .proj_dirs
                 .virtpys()
                 .read_dir()?
-                .map(|entry| entry.unwrap())
+                .map(|entry| entry.expect("virtpy dir should be readable"))
                 .filter(|entry| entry.path().join(CENTRAL_METADATA).exists())
                 .map(|entry| entry.path().join(CENTRAL_METADATA).join(LINK_LOCATION))
-                .map(|path| fs_err::read_to_string(path).unwrap())
+                // CHECKME: Is this guaranteed by construction
+                .map(|path| fs_err::read_to_string(path).expect("link location should exist"))
                 .sorted()
                 .collect_vec();
             for path in link_locations {
@@ -805,7 +807,7 @@ fn python_path(virtpy: &Path) -> PathBuf {
 }
 
 fn dist_info_matches_package(dist_info: &Path, package: &str) -> bool {
-    let entry_name = dist_info.file_name().unwrap();
+    let entry_name = dist_info.file_name().expect("should be a dir path");
     let (distrib_name, _version) = package_info_from_dist_info_dirname(entry_name);
     distrib_name == package
 }

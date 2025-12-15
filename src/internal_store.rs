@@ -189,8 +189,12 @@ fn all_virtpy_backings(
         .read_dir()
         .wrap_err("failed to read virtpy dir")?
         .filter_map(|virtpy| {
-            let virtpy = virtpy.unwrap();
-            if !(virtpy.file_type().unwrap().is_dir()) {
+            let virtpy = virtpy.expect("failed to read virtpy dir");
+            if !(virtpy
+                .file_type()
+                .expect("file type of virtpy dir should be readable")
+                .is_dir())
+            {
                 return None;
             }
             let path = virtpy.utf8_path();
@@ -260,7 +264,8 @@ impl StoreDependencies {
         let mut virtpy_dists = VirtpyDists::new();
         let mut dist_virtpys: DistVirtpys = ctx
             .proj_dirs
-            .installed_distributions()
+            .installed_distributions()?
+            .into_iter()
             .map(|dist| (dist, <_>::default()))
             .collect();
         let mut dist_files = DistFiles::new();
@@ -288,13 +293,14 @@ impl StoreDependencies {
                 continue;
             };
             let distributions: HashSet<_> = distributions_used(&backing)
-                .collect::<Result<_>>()
                 .wrap_err_with(|| {
                     format!(
                         "can't read packages used by {}",
                         virtpy_link_location(&virtpy_path).unwrap_or(virtpy_path)
                     )
-                })?;
+                })?
+                .into_iter()
+                .collect();
             for dist in &distributions {
                 dist_virtpys
                     .entry(dist.clone())
@@ -451,11 +457,10 @@ pub(crate) fn print_stats(
     Ok(())
 }
 
-fn distributions_used(
-    virtpy_dirs: &VirtpyBacking,
-) -> impl Iterator<Item = Result<StoredDistribution>> {
+fn distributions_used(virtpy_dirs: &VirtpyBacking) -> Result<Vec<StoredDistribution>> {
     virtpy_dirs
-        .dist_infos()
+        .dist_infos()?
+        .into_iter()
         .filter(|dist_info_path| {
             // The intention is that only we ourselves install packages into
             // our venvs but some other tools may just see the venv structure
@@ -486,6 +491,7 @@ fn distributions_used(
             //     .map_or(true, |installer| installer.trim() == "virtpy")
         })
         .map(stored_distribution_of_installed_dist)
+        .collect()
 }
 
 pub(crate) fn stored_distribution_of_installed_dist(
@@ -497,7 +503,11 @@ pub(crate) fn stored_distribution_of_installed_dist(
 fn _stored_distribution_of_installed_dist(dist_info_path: &Path) -> Result<StoredDistribution> {
     let hash_path = dist_info_path.join(crate::DIST_HASH_FILE);
     let hash = fs_err::read_to_string(hash_path).wrap_err("failed to get distribution hash")?;
-    let (name, version) = package_info_from_dist_info_dirname(dist_info_path.file_name().unwrap());
+    let (name, version) = package_info_from_dist_info_dirname(
+        dist_info_path
+            .file_name()
+            .expect("dist_info_path should have a dirname"),
+    );
 
     Ok(StoredDistribution {
         distribution: Distribution {
@@ -598,7 +608,7 @@ impl StoredDistribution {
         // but it's only called once per package when installing it into
         // a new virtpy right now, so it doesn't matter.
         let path_in_record = PathBuf::from(self.distribution.dist_info_name()).join(file);
-        let record = WheelRecord::from_file(record_path).unwrap();
+        let record = WheelRecord::from_file(record_path).expect("wheel record should be readable");
         record
             .files
             .into_iter()
@@ -606,8 +616,11 @@ impl StoredDistribution {
             .map(|entry| ctx.proj_dirs.package_file(&entry.hash))
     }
 
-    pub(crate) fn entrypoints(&self, ctx: &Ctx) -> Option<Vec<EntryPoint>> {
-        crate::python::entrypoints(&self.dist_info_file(ctx, "entry_points.txt")?)
+    pub(crate) fn entrypoints(&self, ctx: &Ctx) -> Result<Vec<EntryPoint>> {
+        self.dist_info_file(ctx, "entry_points.txt")
+            .map_or(Ok(vec![]), |entry_points| {
+                crate::python::entrypoints(&entry_points)
+            })
     }
 
     // Returns the directory where the RECORD of this distribution is stored.
@@ -633,8 +646,7 @@ impl StoredDistribution {
     // for the legacy pip installed distributions it is just the entrypoints.
     pub(crate) fn executable_names(&self, ctx: &Ctx) -> eyre::Result<Vec<String>> {
         let entrypoint_exes = self
-            .entrypoints(ctx)
-            .unwrap_or_default()
+            .entrypoints(ctx)?
             .into_iter()
             .map(|ep| ep.name)
             .collect::<Vec<_>>();

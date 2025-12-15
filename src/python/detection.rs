@@ -1,4 +1,4 @@
-use eyre::{bail, eyre, WrapErr};
+use eyre::{ensure, eyre, WrapErr};
 use itertools::Itertools;
 use std::path::PathBuf as StdPathBuf;
 
@@ -12,17 +12,16 @@ pub(crate) fn detect(python: &str) -> Result<PathBuf> {
     // If `python` is definitely a path, use it, if it exists.
     // For a path like 'foo/bar', .ancestors() returns "foo/bar", "foo", ""
     if path.is_absolute() || path.ancestors().take(3).count() == 3 {
-        if path.exists() {
-            return Ok(path.to_owned());
-        } else {
-            bail!("python not found at {path}");
-        }
+        ensure!(path.exists(), "python not found at {path}");
+        return Ok(path.to_owned());
     }
 
     let version_pattern = lazy_regex::regex!(r"^(\d)(\.(\d+))?$");
     if let Some(captures) = version_pattern.captures(python) {
-        let major = captures[1].parse().unwrap();
-        let minor = captures.get(3).map(|n| n.as_str().parse().unwrap());
+        let major = captures[1].parse().expect("major version parse failure");
+        let minor = captures
+            .get(3)
+            .map(|n| n.as_str().parse().expect("minor version parse failure"));
 
         return find_python_by_version(major, minor);
     }

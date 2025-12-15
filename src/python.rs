@@ -80,7 +80,11 @@ impl FileHash {
 
     // files in the repository are named after their hash, so we can just use the filename
     pub(crate) fn from_filename(path: &Path) -> Self {
-        Self(path.file_name().unwrap().to_owned())
+        Self(
+            path.file_name()
+                .expect("path should have filename")
+                .to_owned(),
+        )
     }
 
     pub(crate) fn from_reader(reader: impl std::io::Read) -> Self {
@@ -138,16 +142,26 @@ pub(crate) struct EntryPoint {
 
 impl EntryPoint {
     // construct from entry_points ini entry
-    pub(crate) fn new(key: &str, value: &str) -> Self {
-        let mut it = value.split(':');
-        let module = it.next().unwrap().to_owned();
-        let qualname = it.next().unwrap().to_owned();
+    // Example of typical console scripts from
+    // https://packaging.python.org/en/latest/specifications/entry-points/#file-format
+    //
+    // [console_scripts]
+    // foo = foomod:main
+    // # One which depends on extras:
+    // foobar = foomod:main_bar [bar,baz]
+    pub(crate) fn new(key: &str, value: &str) -> Result<Self> {
+        // TODO: support extras
+        let (_, module, qualname, _extras) = lazy_regex::regex_captures!(
+            r"([^:\s]+)\s*:\s*([^\s]+)(?: \[\s*([^\]]*)\s*\]\s*)?",
+            value
+        )
+        .ok_or_else(|| eyre!("console script for {key} couldn't be parsed: {value}"))?;
 
-        EntryPoint {
+        Ok(EntryPoint {
             name: key.to_owned(),
-            module,
-            qualname,
-        }
+            module: module.to_owned(),
+            qualname: qualname.to_owned(),
+        })
     }
 
     // without shebang
@@ -215,7 +229,7 @@ fn _generate_windows_executable(
     static LAUNCHER_CODE: &[u8] = include_bytes!("../windows_exe_wrappers/t64.exe");
     let mut zip_writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::<u8>::new()));
     zip_writer.start_file("__main__.py", zip::write::FileOptions::default())?;
-    write!(&mut zip_writer, "{code}").unwrap();
+    write!(&mut zip_writer, "{code}").expect("failed to zip code for executable");
     let mut wrapper = LAUNCHER_CODE.to_vec();
     wrapper.extend(shebang.as_bytes());
     wrapper.extend(b".exe");
@@ -266,7 +280,8 @@ pub(crate) struct Distribution {
 impl Distribution {
     pub(crate) fn from_store_name(store_name: &str) -> Self {
         let (_, name, version, hash) =
-            lazy_regex::regex_captures!(r"([^,]+),([^,]+),([^,]+)", store_name).unwrap();
+            lazy_regex::regex_captures!(r"([^,]+),([^,]+),([^,]+)", store_name)
+                .expect("failed to get Distribution data from internal store file name");
 
         Self {
             name: name.to_owned(),
@@ -321,24 +336,24 @@ impl Distribution {
     }
 }
 
-pub(crate) fn entrypoints(path: &Path) -> Option<Vec<EntryPoint>> {
+pub(crate) fn entrypoints(path: &Path) -> Result<Vec<EntryPoint>> {
     let ini = ini::Ini::load_from_file(path);
 
     match ini {
-        Err(ini::Error::Io(err)) if is_not_found(&err) => return None,
+        Err(ini::Error::Io(err)) if is_not_found(&err) => return Ok(vec![]),
         _ => (),
     };
-    let ini = ini.unwrap();
+    let ini = ini?;
 
-    let entrypoints = ini
-        .section(Some("console_scripts"))
-        .map_or(vec![], |console_scripts| {
-            console_scripts
-                .iter()
-                .map(|(key, val)| EntryPoint::new(key, val))
-                .collect()
-        });
-    Some(entrypoints)
+    let entrypoints =
+        ini.section(Some("console_scripts"))
+            .map_or(Ok(vec![]), |console_scripts| {
+                console_scripts
+                    .iter()
+                    .map(|(key, val)| EntryPoint::new(key, val))
+                    .collect()
+            })?;
+    Ok(entrypoints)
 }
 
 fn hash_of_file_sha256_base64(path: &Path) -> Result<String> {
@@ -369,7 +384,7 @@ fn _hash_of_file_sha256(path: &Path) -> Result<impl AsRef<[u8]>> {
 fn _hash_of_reader_sha256(mut reader: impl std::io::Read) -> impl AsRef<[u8]> {
     use sha2::Digest;
     let mut hasher = sha2::Sha256::new();
-    std::io::copy(&mut reader, &mut hasher).unwrap();
+    std::io::copy(&mut reader, &mut hasher).expect("hashing can't fail");
     hasher.finalize()
 }
 
