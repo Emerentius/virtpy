@@ -3,21 +3,42 @@
 A poetry plugin that makes poetry capable of detecting existing virtpys and installing packages into them the right way.
 
 # Installation
-The usual way of installing plugins is `poetry self add <plugin>`, but that command currently does not work with paths or git links, it can only install from PyPi and I haven't yet uploaded the package.
+The installation depends on how poetry is installed ([official docs](https://python-poetry.org/docs/plugins/#using-plugins)).
+Installing via `poetry self add <plugin>` doesn't work, as the package is not on PyPi.
 
-Therefore, you have to build and install the package locally from the cloned repo and then install the wheel into your poetry's environment using the pip present in that venv.
+Therefore, you have to build and install the package locally from the cloned repo and then install the wheel into your poetry's environment.
 
+In any case, build the package file before performing the next step.
 ```
 poetry build
-# On linux, the pip path would be this by default
-~/.local/share/pypoetry/venv/bin/pip install dist/poetry_plugin_virtpy-0.1.0-py3-none-any.whl
+```
+
+## pipx
+```
+pipx inject poetry ./dist/poetry_plugin_virtpy-0.1.0-py3-none-any.wh
+```
+
+## poetry installer
+When poetry was installed via its installed, find the venv in which it is located and run the pip executable
+from that venv to install the plugin.
+```
+# On linux, the pip path would be this by default.
+# POETRY_HOME=~/.local/share/pypoetry/venv
+
+$POETRY_HOME/bin/pip install dist/poetry_plugin_virtpy-0.1.0-py3-none-any.whl
 ```
 
 # Uninstallation
-Like with installation, the usual way of uninstalling the plugin doesn't work. You have to use the pip from poetry's environment.
 
+## pipx
 ```
-~/.local/share/pypoetry/venv/bin/pip uninstall poetry_plugin_virtpy
+pipx uninject poetry poetry_plugin_virtpy
+```
+
+## poetry installer
+Like during the installation, use pip from poetry's venv to uninstall the plugin.
+```
+$POETRY_HOME/bin/pip uninstall poetry_plugin_virtpy
 ```
 
 # Usage

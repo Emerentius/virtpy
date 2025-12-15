@@ -8,7 +8,7 @@ packages = [{ include = "poetry_plugin_virtpy", from = "src" }]
 
 [tool.poetry.dependencies]
 python = "^3.10"
-poetry = "^1.5"
+poetry = "^2.0"
 
 # [tool.poetry.group.dev.dependencies]
 # mypy = "^1.2.0"

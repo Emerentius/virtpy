@@ -34,6 +34,7 @@ thiserror = "1.0.30"
 configparser = "3.0.0"
 glob = "0.3.0"
 clap = { version = "4.0.4", features = ["derive", "wrap_help"] }
+same-file = "1.0.6"
 
 [profile.release]
 debug = true

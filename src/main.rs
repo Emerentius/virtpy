@@ -6,6 +6,7 @@ use eyre::{ensure, eyre, WrapErr};
 use internal_store::StoredDistribution;
 use itertools::Itertools;
 use prelude::*;
+use std::ffi::OsStr;
 use std::path::Path as StdPath;
 
 mod internal_store;
@@ -24,6 +25,8 @@ pub(crate) use fs_err::os::windows::fs::symlink_dir;
 pub(crate) use fs_err::os::unix::fs::symlink as symlink_file;
 #[cfg(windows)]
 pub(crate) use fs_err::os::windows::fs::symlink_file;
+
+use crate::python::FileHash;
 
 type Path = Utf8Path;
 type PathBuf = Utf8PathBuf;
@@ -98,6 +101,12 @@ enum Command {
     InternalUseOnly(InternalUseOnly),
     /// List paths of all virtpys
     ListAll,
+    /// Verify virtpy integrity.
+    /// Checks if any packages were installed by other installers.
+    Verify {
+        #[arg(long)]
+        virtpy_path: Option<PathBuf>,
+    },
 }
 
 #[allow(unused)]
@@ -607,6 +616,39 @@ fn main() -> Result<()> {
                 .collect_vec();
             for path in link_locations {
                 println!("{path}");
+            }
+        }
+        Command::Verify { virtpy_path } => {
+            let virtpy = Virtpy::from_existing(path_to_virtpy(&virtpy_path))?;
+
+            let package_files = ctx.proj_dirs.package_files();
+            for entry in walkdir::WalkDir::new(virtpy.site_packages())
+                .into_iter()
+                .filter_entry(|entry| !(entry.path().is_dir() && entry.path().ends_with("pip")))
+            {
+                let entry = entry?;
+
+                let filename = entry.file_name();
+                // skip non-hardlinked files
+                if entry.path().is_dir()
+                    || ["RECORD", INSTALLER_FILE, DIST_HASH_FILE]
+                        .map(OsStr::new)
+                        .contains(&filename)
+                {
+                    continue;
+                }
+                let venv_filepath = entry.path().to_utf8_path();
+                // TODO: error handling
+                let hash = FileHash::from_file(entry.path().to_utf8_path())?;
+                let package_file_path = package_files.join(hash);
+                // TODO: empty files are not properly handled and may be reported as foreign
+                if package_file_path.exists()
+                    && same_file::is_same_file(package_file_path.as_std_path(), entry.path())?
+                {
+                    println!("virtpy-managed file: {venv_filepath}");
+                } else {
+                    println!("foreign file: {venv_filepath}");
+                }
             }
         }
     }
