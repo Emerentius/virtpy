@@ -1,6 +1,9 @@
 # poetry_plugin_virtpy
 
-A poetry plugin that makes poetry capable of detecting existing virtpys and installing packages into them the right way.
+A poetry plugin that swaps poetry's venv handling over to prefer virtpy.
+
+Newly created venvs will be virtpys, unless `poetry config virtpy.use_virtpy false` is set.
+Packages will be installed the right way for virtpys. Regular venvs will continue to work as usual.
 
 # Installation
 The installation depends on how poetry is installed ([official docs](https://python-poetry.org/docs/plugins/#using-plugins)).

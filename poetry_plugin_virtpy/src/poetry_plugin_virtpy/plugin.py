@@ -1,19 +1,26 @@
 from __future__ import annotations
 
+from poetry.config.config import boolean_normalizer
+from poetry.config.config import boolean_validator
 import subprocess
 import typing
 from pathlib import Path
 
 from poetry.installation.wheel_installer import WheelInstaller
 from poetry.plugins.application_plugin import ApplicationPlugin
+from poetry.console.commands.config import ConfigCommand
+from typing import Any
 
-# from poetry.utils.env import EnvManager
+from poetry.utils.env import EnvManager
+from poetry.config.config import Config
 
 if typing.TYPE_CHECKING:
     from poetry.console.application import Application
 
 DEBUG_LOG = False
 
+# poetry config we're injecting to activate / deactivate automatic virtpy creation
+USE_VIRTPY_SETTING = "virtpy.use_virtpy"
 
 def debug_log(message: str) -> None:
     # stdout logging gets swallowed by poetry
@@ -21,11 +28,25 @@ def debug_log(message: str) -> None:
     # so it's plain string formatting.
     Path("/tmp/poetry_plugin_virtpy_log").open("a").write(message.rstrip("\n") + "\n")
 
+class VirtpyPlugin(ApplicationPlugin):
+    def __init__(self) -> None:
+        debug_log("VirtpyPlugin.__init__()")
+        self.application: Application | None = None
 
-# TODO: Allow making virtpy creation the default for poetry.
-#       Requires custom config logic in virtpy.
-#       Right now, only package installation is overridden, if a virtpy is detected.
-# original_build_venv = EnvManager.build_venv
+    def activate(self, application: Application):
+        debug_log("VirtpyPlugin.activate()")
+        self.application = application
+        self.application.configure_installer_for_command
+        EnvManager.build_venv = build_venv  # type: ignore
+        WheelInstaller.install = install  # type: ignore
+
+
+
+def should_create_virtpy() -> bool:
+    return Config.create().get("virtpy.use_virtpy", True)
+
+
+original_build_venv = EnvManager.build_venv
 
 
 # # This function replaces the original EnvManager.build_venv and creates
@@ -35,38 +56,30 @@ def debug_log(message: str) -> None:
 # # All arguments are the same for the *args and **kwargs (which are all ignored)
 # # and the return value is also different, as we can't return some type from virtualenv.
 # # However, at time of implementation, the return value isn't used anywhere
-# def build_venv(
-#     cls: EnvManager,
-#     path: Path,
-#     executable: Path | None = None,
-#     flags: dict[str, bool] | None = None,
-#     with_pip: bool | None = None,
-#     with_wheel: bool | None = None,
-#     with_setuptools: bool | None = None,
-#     prompt: str | None = None,
-#     *args,
-#     **kwargs,
-# ) -> None:  # virtualenv.run.session.Session:
-#     # TODO: allow overriding prompt
-#     # cls._poetry.config.
+def build_venv(
+    cls: EnvManager,
+    path: Path,
+    *args, # currently empty
+    executable: Path | None = None,
+    # flags: dict[str, bool] | None = None,
+    # with_pip: bool | None = None,
+    # with_wheel: bool | None = None,
+    # with_setuptools: bool | None = None,
+    # prompt: str | None = None,
+    **kwargs,
+) -> None:  # virtualenv.run.session.Session:
+    should_create_virtpy_ = should_create_virtpy()
+    debug_log(f"virtpy build_venv called. {should_create_virtpy_=}")
 
-#     executable_args = (
-#         ["--python", executable.resolve().as_posix()] if executable is not None else []
-#     )
-#     subprocess.run(["virtpy", "new", path, *executable_args])
+    if should_create_virtpy_:
+        executable_args = (
+            ["--python", executable.resolve().as_posix()] if executable is not None else []
+        )
+        subprocess.run(["virtpy", "new", path, *executable_args])
+    else:
+        return original_build_venv(path, *args, executable=executable, **kwargs)
 
 
-class VirtpyPlugin(ApplicationPlugin):
-    def __init__(self) -> None:
-        debug_log("VirtpyPlugin.__init__()")
-        self.application: Application | None = None
-
-    # def activate(self, poetry: Poetry, io: IO):
-    def activate(self, application: Application):
-        debug_log("VirtpyPlugin.activate()")
-        self.application = application
-        # EnvManager.build_venv = build_venv  # type: ignore
-        WheelInstaller.install = install  # type: ignore
 
 
 old_install = WheelInstaller.install
@@ -104,3 +117,14 @@ def virtpy_cmd(venv_path: Path) -> list[str]:
     virtpy_exe = (metadata / "virtpy_exe").read_text()
     proj_dir = (metadata / "proj_dir").read_text()
     return [virtpy_exe, "--project-dir", proj_dir]
+
+original_unique_config_values = ConfigCommand.unique_config_values
+
+@property
+def unique_config_values(self) -> dict[str, tuple[Any, Any]]:
+    
+    # We're expanding a property from ConfigCommand, so extract the getter function and call that,
+    # then extend return val
+    return original_unique_config_values.fget(self) | { USE_VIRTPY_SETTING: (boolean_validator, boolean_normalizer) }
+
+ConfigCommand.unique_config_values = unique_config_values
