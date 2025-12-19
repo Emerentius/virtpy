@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [master]
   workflow_dispatch:
+    inputs:
+      interactive_debug:
+        description: Open an SSH shell for interactive debug
+        required: false
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,11 +21,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install Poetry
-        uses: snok/install-poetry@v1.3
+        uses: snok/install-poetry@v1 # 1.4.1+
         with:
-          version: 1.6.1
+          version: 2.2.1
       - name: try poetry
         run: poetry --version
       - name: install poetry plugin
@@ -40,7 +46,7 @@ jobs:
         run: cargo test --verbose
       - name: Interactive debug
         uses: mxschmitt/action-tmate@v3
-        if: failure() && github.event_name == 'workflow_dispatch'
+        if: failure() && github.event_name == 'workflow_dispatch' && inputs.interactive_debug
       - name: Print pip log
         run: cat $(cargo run path bin)/../pip.log
         if: cancelled()
