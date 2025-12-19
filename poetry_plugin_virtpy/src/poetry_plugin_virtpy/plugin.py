@@ -56,6 +56,7 @@ original_build_venv = EnvManager.build_venv
 # # All arguments are the same for the *args and **kwargs (which are all ignored)
 # # and the return value is also different, as we can't return some type from virtualenv.
 # # However, at time of implementation, the return value isn't used anywhere
+@classmethod
 def build_venv(
     cls: EnvManager,
     path: Path,
