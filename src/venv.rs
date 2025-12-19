@@ -24,7 +24,7 @@ use crate::{
 };
 use crate::{prelude::*, INSTALLER_FILE};
 use clap::ValueEnum;
-use eyre::{bail, eyre, Context};
+use eyre::{bail, ensure, eyre, Context};
 use fs_err::PathExt;
 use itertools::Itertools;
 use rand::Rng;
@@ -394,7 +394,10 @@ impl Virtpy {
         // TODO: if an error occured, don't delete the dist-info, especially not the RECORD
         //       so deletion can retry.
         for path in &files_to_remove {
-            assert!(path.starts_with(&site_packages));
+            ensure!(
+                path.starts_with(self.location()),
+                "RECORD contains file outside virtpy: {path}"
+            );
 
             if false {
                 if path.extension() != Some("pyc") {
@@ -409,8 +412,10 @@ impl Virtpy {
         }
 
         for dir in directories {
-            assert!(dir.starts_with(&site_packages));
-            if dir == site_packages {
+            // Clean up additional directories that aren't part of the standard dirs.
+            // We should also clean outside site-packages, but for simplicity it's limited to that
+            // dir only.
+            if dir == site_packages || !dir.starts_with(&site_packages) {
                 continue;
             }
 
