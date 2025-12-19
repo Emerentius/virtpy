@@ -21,14 +21,24 @@ poetry build
 pipx inject poetry ./dist/poetry_plugin_virtpy-0.1.0-py3-none-any.wh
 ```
 
+On Windows, I've had trouble with poetry installed into pipx. The poetry installer works fine, but
+with pipx it manifested as poetry not being callable. It fails in Python subprocesses, Rust Commands
+and from bare Powershell with the error:
+```
+    + CategoryInfo          : ResourceUnavailable: (:) [], ApplicationFailedException
+    + FullyQualifiedErrorId : NativeCommandFailed
+```
+
 ## poetry installer
 When poetry was installed via its installed, find the venv in which it is located and run the pip executable
 from that venv to install the plugin.
 ```
 # On linux, the pip path would be this by default.
 # POETRY_HOME=~/.local/share/pypoetry/venv
-
 $POETRY_HOME/bin/pip install dist/poetry_plugin_virtpy-0.1.0-py3-none-any.whl
+
+# And on Windows from a CMD shell (not Powershell)
+%APPDATA%\pypoetry\venv\Scripts\pip install dist/poetry_plugin_virtpy-0.1.0-py3-none-any.whl
 ```
 
 # Uninstallation
