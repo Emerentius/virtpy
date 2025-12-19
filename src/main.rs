@@ -832,8 +832,11 @@ fn init_temporary_poetry_project(path: &StdPath) -> Result<()> {
         // Could also be done with `poetry config virtualenvs.create false --local`
         // but that's much slower, because poetry is a typical python project
         // that imports EVERYTHING at startup.
-        fs_err::write(path.join("poetry.toml"), "[virtualenvs]\nin-project = true")
-        .wrap_err("failed to activate in-project venv creation for tmp poetry project"))
+        // Note: When the poetry plugin is installed, this venv will also be a virtpy,
+        // unless the poetry config virtpy.use_virtpy is set to false (and we could force that in the toml).
+        // fs_err::write(path.join("poetry.toml"), "[virtualenvs]\nin-project = true\n[virtpy]\nuse_virtpy = false\n") 
+        fs_err::write(path.join("poetry.toml"), "[virtualenvs]\nin-project = true\n")
+            .wrap_err("failed to activate in-project venv creation for tmp poetry project"))
     .wrap_err("failed to init poetry project")
 }
 
