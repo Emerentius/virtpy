@@ -51,7 +51,11 @@ pipx uninject poetry poetry_plugin_virtpy
 ## poetry installer
 Like during the installation, use pip from poetry's venv to uninstall the plugin.
 ```
+# unix-oid
 $POETRY_HOME/bin/pip uninstall poetry_plugin_virtpy
+
+# Windows from CMD
+%APPDATA%\pypoetry\venv\Scripts\pip uninstall poetry_plugin_virtpy
 ```
 
 # Usage

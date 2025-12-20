@@ -263,6 +263,7 @@ def uninstall_package(package_name: str) -> None:
     )
 
 
+# duplicated in poetry plugin
 def virtpy_cmd(venv_path: Union[str, pathlib.Path]) -> List[str]:
     metadata = os.path.join(venv_path, "virtpy_link_metadata")
     virtpy_exe = open(os.path.join(metadata, "virtpy_exe")).read()

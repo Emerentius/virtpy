@@ -40,6 +40,7 @@ struct Opt {
     /// Increase verbosity of output.
     #[arg(short, action = ArgAction::Count, global = true)]
     verbose: u8,
+    // Override path to internal project directories, used to test using an isolated setup.
     #[arg(long, hide = true)]
     project_dir: Option<PathBuf>,
 }
@@ -722,6 +723,13 @@ fn install_executable_package(
     if allow_prereleases {
         cmd.arg("--allow-prereleases");
     }
+    // Inject variables for poetry plugin so it can use the right setup during testing.
+    cmd.env(
+        "VIRTPY_EXECUTABLE",
+        std::env::current_exe().wrap_err("failed to read own exe path")?,
+    );
+    cmd.env("VIRTPY_PROJECT_DIR", ctx.proj_dirs.data());
+
     match ctx.options.verbose {
         // poetry uses -v for normal output
         // -vv for verbose

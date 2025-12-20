@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 
 from poetry.config.config import boolean_normalizer
 from poetry.config.config import boolean_validator
@@ -76,7 +77,7 @@ def build_venv(
         executable_args = (
             ["--python", executable.resolve().as_posix()] if executable is not None else []
         )
-        subprocess.run(["virtpy", "new", path, *executable_args])
+        subprocess.run([*virtpy_cmd_from_env(), "new", path, *executable_args])
     else:
         return original_build_venv(path, *args, executable=executable, **kwargs)
 
@@ -113,11 +114,27 @@ def install(self: WheelInstaller, wheel: Path, *args, **kwargs) -> None:
         old_install(self, wheel, *args, **kwargs)
 
 
+# duplicated in pip shim
 def virtpy_cmd(venv_path: Path) -> list[str]:
+    """Use the virtpy executable associated with virtpy"""
     metadata = venv_path / "virtpy_link_metadata"
     virtpy_exe = (metadata / "virtpy_exe").read_text()
     proj_dir = (metadata / "proj_dir").read_text()
     return [virtpy_exe, "--project-dir", proj_dir]
+
+# necessary during venv creation
+def virtpy_cmd_from_env() -> list[str]:
+    """Use virtpy executable set in ENV variable or default to global executable."""
+    # `virtpy install` forwards the virtpy setup using env variables.
+    # venv creation initiated by poetry will not => use global setup.
+    project_dir_ = os.environ.get("VIRTPY_PROJECT_DIR")
+    virtpy_exe_ = os.environ.get("VIRTPY_EXECUTABLE")
+
+    virtpy_exe = virtpy_exe_ if virtpy_exe_ is not None else "virtpy"
+    project_dir = ["--project-dir", project_dir_] if project_dir_ is not None else []
+
+    return [virtpy_exe] + project_dir
+
 
 original_unique_config_values = ConfigCommand.unique_config_values
 
