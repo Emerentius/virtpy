@@ -94,6 +94,11 @@ def install(self: WheelInstaller, wheel: Path, *args, **kwargs) -> None:
     debug_log(f"path={self._env.path}")
 
     def virtpy_add(virtpy_path: Path) -> None:
+        # Don't overwrite our pip shim.
+        # Poetry wants to install it, when virtualenvs.options.no-pip is set to false
+        if virtpy_path.name.startswith("pip-"):
+            return
+
         subprocess.run(
             [*virtpy_cmd(virtpy_path), "add", wheel, "--virtpy-path", virtpy_path],
             check=True,
